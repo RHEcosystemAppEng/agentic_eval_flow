@@ -110,17 +110,56 @@ class VariantSummary(BaseModel):
 
 
 class Provenance(BaseModel):
-    """Run provenance metadata for reproducibility."""
+    """Run provenance metadata for reproducibility and forge/trace join keys.
+
+    See Docs/provenance_forge_pointers.md for the cross-project join contract.
+    """
 
     generated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     commit_sha: str | None = None
     pipeline_run_id: str | None = None
+    pipeline_run_url: str | None = Field(
+        default=None,
+        description="CI pipeline run URL (convenience; complements pipeline_run_id)",
+    )
+    ref_name: str | None = Field(
+        default=None,
+        description="Branch or tag short name (OTel vcs.ref.head.name)",
+    )
     treatment_image_ref: str | None = None
     control_image_ref: str | None = None
     harbor_fork_revision: str | None = None
     eval_engine: str = Field(
         default="harbor",
-        description="Evaluation engine used: 'harbor', 'ase', or 'both'",
+        description="Evaluation engine used: 'harbor', 'ase', 'a2a', 'aeh', 'mcpchecker', or 'both'",
+    )
+    repository_url: str | None = Field(
+        default=None,
+        description="Canonical repo URL (OTel vcs.repository.url.full)",
+    )
+    change_id: str | None = Field(
+        default=None,
+        description="PR/MR number (OTel vcs.change.id)",
+    )
+    trace_id: str | None = Field(
+        default=None,
+        description="W3C or MLflow trace id for the evaluation run",
+    )
+    session_id: str | None = Field(
+        default=None,
+        description="Session / conversation id (OTel gen_ai.conversation.id)",
+    )
+    eval_run_id: str | None = Field(
+        default=None,
+        description="Eval engine batch/case run id when applicable",
+    )
+    harness_fingerprint: str | None = Field(
+        default=None,
+        description="Harness/config content hash for reproducibility",
+    )
+    forge_platform: str | None = Field(
+        default=None,
+        description="Git hosting platform: github | gitlab | bitbucket | forgejo",
     )
 
 
