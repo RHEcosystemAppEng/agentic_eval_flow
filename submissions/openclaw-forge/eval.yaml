@@ -54,6 +54,18 @@ execution:
 dataset:
   workspace:
     files:
+      # OpenClaw's skill_workshop discovers workspace plugins from
+      # ~/.openclaw/plugin-skills (HOME=/sandbox in the OpenShell runner).
+      # Keep the workspace copies below as well because the catalog skills
+      # reference schemas/ and tools/ relative to the workspace root.
+      - dest: .openclaw/plugin-skills/daily-briefing/SKILL.md
+        source: _forge-agent-catalog/chief-of-staff/workspace/skills/daily-briefing/SKILL.md
+      - dest: .openclaw/plugin-skills/microsoft365/SKILL.md
+        source: _forge-agent-catalog/chief-of-staff/workspace/skills/microsoft365/SKILL.md
+      - dest: .openclaw/plugin-skills/forge-drafts/SKILL.md
+        source: _forge-agent-catalog/chief-of-staff/workspace/skills/forge-drafts/SKILL.md
+      - dest: AGENTS.md
+        source: _forge-agent-catalog/chief-of-staff/workspace/AGENTS.md
       - dest: skills/daily-briefing/SKILL.md
         source: _forge-agent-catalog/chief-of-staff/workspace/skills/daily-briefing/SKILL.md
       - dest: skills/microsoft365/SKILL.md
