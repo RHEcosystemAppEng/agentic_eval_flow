@@ -65,35 +65,35 @@ dataset:
       # Keep the workspace copies below as well because the catalog skills
       # reference schemas/ and tools/ relative to the workspace root.
       - dest: .openclaw/plugin-skills/daily-briefing/SKILL.md
-        source: _forge-agent-catalog/chief-of-staff/workspace/skills/daily-briefing/SKILL.md
+        source: workspace/skills/daily-briefing/SKILL.md
       - dest: .openclaw/plugin-skills/microsoft365/SKILL.md
-        source: _forge-agent-catalog/chief-of-staff/workspace/skills/microsoft365/SKILL.md
+        source: workspace/skills/microsoft365/SKILL.md
       - dest: .openclaw/plugin-skills/forge-drafts/SKILL.md
-        source: _forge-agent-catalog/chief-of-staff/workspace/skills/forge-drafts/SKILL.md
+        source: workspace/skills/forge-drafts/SKILL.md
       - dest: AGENTS.md
-        source: _forge-agent-catalog/chief-of-staff/workspace/AGENTS.md
+        source: workspace/AGENTS.md
       - dest: IDENTITY.md
-        source: _forge-agent-catalog/chief-of-staff/workspace/IDENTITY.md
+        source: workspace/IDENTITY.md
       - dest: CLAW.md
-        source: _forge-agent-catalog/chief-of-staff/CLAW.md
+        source: CLAW.md
       - dest: bin/m365
         source: adapters/m365
       - dest: skills/daily-briefing/SKILL.md
-        source: _forge-agent-catalog/chief-of-staff/workspace/skills/daily-briefing/SKILL.md
+        source: workspace/skills/daily-briefing/SKILL.md
       - dest: skills/microsoft365/SKILL.md
-        source: _forge-agent-catalog/chief-of-staff/workspace/skills/microsoft365/SKILL.md
+        source: workspace/skills/microsoft365/SKILL.md
       - dest: skills/forge-drafts/SKILL.md
-        source: _forge-agent-catalog/chief-of-staff/workspace/skills/forge-drafts/SKILL.md
+        source: workspace/skills/forge-drafts/SKILL.md
       - dest: schemas/briefing-evidence-v1.md
-        source: _forge-agent-catalog/chief-of-staff/workspace/schemas/briefing-evidence-v1.md
+        source: workspace/schemas/briefing-evidence-v1.md
       - dest: schemas/briefing-v1.md
-        source: _forge-agent-catalog/chief-of-staff/workspace/schemas/briefing-v1.md
+        source: workspace/schemas/briefing-v1.md
       - dest: schemas/onboarding-preferences-v1.md
-        source: _forge-agent-catalog/chief-of-staff/workspace/schemas/onboarding-preferences-v1.md
+        source: workspace/schemas/onboarding-preferences-v1.md
       - dest: tools/collect-brief-evidence.mjs
-        source: _forge-agent-catalog/chief-of-staff/workspace/tools/collect-brief-evidence.mjs
+        source: workspace/tools/collect-brief-evidence.mjs
       - dest: tools/publish-brief.mjs
-        source: _forge-agent-catalog/chief-of-staff/workspace/tools/publish-brief.mjs
+        source: workspace/tools/publish-brief.mjs
 
   path: cases
   schema: |
