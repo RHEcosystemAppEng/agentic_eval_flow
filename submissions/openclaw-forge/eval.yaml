@@ -53,6 +53,7 @@ execution:
     M365_CLIENT_ID: "$M365_CLIENT_ID"
     M365_CLIENT_SECRET: "$M365_CLIENT_SECRET"
     FORGE_SOURCES: "m365-only"
+    CLIMICROSOFT365_GRAPH_BASE_URL: "http://m365.local"
 
 dataset:
   workspace:
@@ -73,6 +74,8 @@ dataset:
         source: _forge-agent-catalog/chief-of-staff/workspace/IDENTITY.md
       - dest: CLAW.md
         source: _forge-agent-catalog/chief-of-staff/CLAW.md
+      - dest: bin/m365
+        source: adapters/m365
       - dest: skills/daily-briefing/SKILL.md
         source: _forge-agent-catalog/chief-of-staff/workspace/skills/daily-briefing/SKILL.md
       - dest: skills/microsoft365/SKILL.md
