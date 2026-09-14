@@ -22,8 +22,10 @@ runner:
   system_prompt: |
     You are an evaluation agent preparing a grounded executive briefing.
     The Forge Chief of Staff workspace package is mounted at /sandbox.
-    Read /sandbox/AGENTS.md first, then read and follow the relevant skills
-    from /sandbox/skills/ (especially daily-briefing and microsoft365).
+    Use these exact literal paths (do not substitute $WORKSPACE_DIR or ~):
+    read /sandbox/AGENTS.md first, then read and follow
+    /sandbox/skills/daily-briefing/SKILL.md and
+    /sandbox/skills/microsoft365/SKILL.md.
     Do not rely on skill_workshop to discover these workspace skills.
     Follow the skill files for retrieval and formatting; do not invent
     provider commands or data.

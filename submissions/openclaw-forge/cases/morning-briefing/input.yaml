@@ -1,4 +1,9 @@
 prompt: |
+  Read these exact workspace files before retrieving data:
+  /sandbox/AGENTS.md,
+  /sandbox/skills/daily-briefing/SKILL.md, and
+  /sandbox/skills/microsoft365/SKILL.md. Do not substitute $WORKSPACE_DIR or ~.
+
   Prepare the user's executive morning briefing using the connected information
   sources available in the workspace. First verify and follow the installed
   daily-briefing skill and its source-retrieval skills.
