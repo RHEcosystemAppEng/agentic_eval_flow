@@ -2,7 +2,7 @@ prompt: |
   Read these exact workspace files before retrieving data:
   /sandbox/AGENTS.md,
   /sandbox/skills/daily-briefing/SKILL.md, and
-  /sandbox/skills/microsoft365/SKILL.md. Do not substitute $WORKSPACE_DIR or ~.
+  /sandbox/skills/microsoft365/SKILL.md. Do not substitute another workspace or home-directory path.
 
   Prepare the user's executive morning briefing using the connected information
   sources available in the workspace. First verify and follow the installed

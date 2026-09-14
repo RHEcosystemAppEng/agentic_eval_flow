@@ -2,7 +2,7 @@ prompt: |
   Read these exact workspace files before retrieving data:
   /sandbox/AGENTS.md,
   /sandbox/skills/daily-briefing/SKILL.md, and
-  /sandbox/skills/microsoft365/SKILL.md. Do not substitute $WORKSPACE_DIR or ~.
+  /sandbox/skills/microsoft365/SKILL.md. Do not substitute another workspace or home-directory path.
 
   Produce a detailed analysis panel for the Watson Orchestrate GA go/no-go
   item. First verify and follow the installed daily-briefing skill and its
