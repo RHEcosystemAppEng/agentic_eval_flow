@@ -183,10 +183,6 @@ spec:
     - name: shared-workspace
       description: Shared PVC for all pipeline artifacts
 
-  timeouts:
-    pipeline: "4h"
-    tasks: "3h"
-
   tasks:
     - name: prepare
       taskRef:
