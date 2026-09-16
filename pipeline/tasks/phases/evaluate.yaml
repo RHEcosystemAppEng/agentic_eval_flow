@@ -1779,6 +1779,11 @@ spec:
           cp -f "$MTLS_SRC/tls.crt" "$MTLS_DST/"
           cp -f "$MTLS_SRC/tls.key" "$MTLS_DST/"
           chmod 600 "$MTLS_DST"/* 2>/dev/null || true
+          echo "OpenShell mTLS profile files:"
+          find "$HOME/.config/openshell/gateways/$GW_NAME" -maxdepth 3 -type f -printf '%p %s bytes\n' 2>/dev/null || true
+          openssl x509 -in "$MTLS_DST/tls.crt" -noout -subject -issuer -fingerprint -sha256 2>/dev/null || true
+          echo "OpenShell profile metadata:"
+          sed -E 's/(client_secret|token|secret)[^,}]*/\1=REDACTED/g' "$HOME/.config/openshell/gateways/$GW_NAME/metadata.json" 2>/dev/null || true
         fi
 
         echo "=== EVALUATE PHASE: AEH OpenShell OpenClaw ==="
