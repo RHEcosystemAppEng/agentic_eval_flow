@@ -39,6 +39,10 @@ runner:
       baseUrl: https://host.containers.internal:18084/v1
       api: openai-completions
       apiKey: "$FORGE_AI_GATEWAY_BEARER"
+      # OpenClaw's SSRF protection requires this explicit, per-provider opt-in
+      # before it will call the governed private SAW bridge.
+      request:
+        allowPrivateNetwork: true
       models:
         - id: rits/zai-org/glm-5-3
           name: GLM 5.3
