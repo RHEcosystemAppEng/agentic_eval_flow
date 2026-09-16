@@ -1658,6 +1658,8 @@ spec:
           value: $(workspaces.source.path)/reports
         - name: OPENSHELL_GATEWAY_ENDPOINT
           value: "$(params.openshell-gateway-endpoint)"
+        - name: OPENSHELL_GATEWAY_NAME
+          value: "ci-gateway"
         - name: AGENT_EVAL_OPENSHELL_IMAGE
           value: "$(params.openshell-sandbox-image)"
         - name: AGENT_EVAL_OPENSHELL_PROVIDER
@@ -2085,7 +2087,7 @@ spec:
           else
             echo "Installing mlflow-skinny + pandas into ${MLFLOW_PKG_DIR} (fallback) ..."
             set +e
-            python -m pip install --no-cache-dir --target "$MLFLOW_PKG_DIR" 'mlflow-skinny' 'pandas' 2>&1 | tee /tmp/mlflow-pip.log | tail -30
+            python -m pip install --no-cache-dir --target "$MLFLOW_PKG_DIR" 'mlflow-skinny' 'pandas' 'boto3' 2>&1 | tee /tmp/mlflow-pip.log | tail -30
             PIP_RC=${PIPESTATUS[0]}
             set -e
             if [ "$PIP_RC" -ne 0 ]; then
@@ -2367,7 +2369,7 @@ spec:
           else
             echo "Installing mlflow-skinny + pandas into ${MLFLOW_PKG_DIR} (fallback) ..."
             set +e
-            python -m pip install --no-cache-dir --target "$MLFLOW_PKG_DIR" 'mlflow-skinny' 'pandas' 2>&1 | tee /tmp/mlflow-pip.log | tail -30
+            python -m pip install --no-cache-dir --target "$MLFLOW_PKG_DIR" 'mlflow-skinny' 'pandas' 'boto3' 2>&1 | tee /tmp/mlflow-pip.log | tail -30
             PIP_RC=${PIPESTATUS[0]}
             set -e
             if [ "$PIP_RC" -ne 0 ]; then
