@@ -11,9 +11,8 @@ mlflow:
   experiment: forge-eval-rubrics
 
 models:
-  # LiteLLM in-cluster alias (override via aeh-model-override). OpenClaw
-  # --model is qualified as inference/<id> by the harness from providers below.
-  skill: inference/glm-5-3
+  # SAW's forge-ai-gateway provider routes the sandbox agent to the GLM proxy.
+  skill: forge-ai-gateway/glm-5-3
   # Vertex publisher id (short alias "claude-sonnet-4" also remapped in score.py)
   judge: rits/zai-org/glm-5-3
 
