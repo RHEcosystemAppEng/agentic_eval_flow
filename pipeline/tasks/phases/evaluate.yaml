@@ -1724,13 +1724,42 @@ spec:
           export PATH="/tmp/bin:$PATH"
         fi
 
+        # Materialize the CI client certificate before registering the gateway.
+        # gateway add inspects this directory when selecting mTLS transport.
+        export XDG_CONFIG_HOME="${HOME}/.config"
+        GW_NAME="${OPENSHELL_GATEWAY_NAME:-ci-gateway}"
+        MTLS_SRC="/tmp/.config/openshell"
+        MTLS_DST="${XDG_CONFIG_HOME}/openshell/gateways/${GW_NAME}/mtls"
+        mkdir -p "${XDG_CONFIG_HOME}/openshell"
+        if [ -f "$MTLS_SRC/tls.crt" ] && [ -f "$MTLS_SRC/tls.key" ]; then
+          mkdir -p "$MTLS_DST"
+          cp -f "$MTLS_SRC/ca.crt" "$MTLS_DST/" 2>/dev/null || true
+          cp -f "$MTLS_SRC/tls.crt" "$MTLS_DST/"
+          cp -f "$MTLS_SRC/tls.key" "$MTLS_DST/"
+          chmod 600 "$MTLS_DST"/* 2>/dev/null || true
+          echo "OpenShell mTLS material staged before gateway registration"
+        else
+          echo "ERROR: openshell-mtls client certificate is missing" >&2
+          exit 1
+        fi
+
         # Configure the remote SAW gateway with the dedicated CI OIDC client.
         # The client secret is injected from openshell-oidc-credentials and is
         # never printed. The insecure flag is intentionally test-only and is
         # supplied by the Secret until the SAW route has a trusted certificate.
-        if [ -n "${OPENSHELL_OIDC_CLIENT_SECRET:-}" ] && [ -n "${OPENSHELL_OIDC_CLIENT_ID:-}" ] \
+        if [[ "${OPENSHELL_GATEWAY_ENDPOINT}" == *".svc.cluster.local:"* ]]; then
+          # The in-cluster SAW endpoint requires client-certificate auth. Do
+          # not register it as OIDC, which can create a profile without mTLS.
+          openshell gateway add "$OPENSHELL_GATEWAY_ENDPOINT" \
+            --name "$GW_NAME" \
+            >/tmp/openshell-gateway-add.log 2>&1 || {
+              grep -vE 'client.secret|token|secret' /tmp/openshell-gateway-add.log || true
+              exit 1
+            }
+          export OPENSHELL_GATEWAY="$GW_NAME"
+          echo "OpenShell mTLS gateway configured: ${GW_NAME}"
+        elif [ -n "${OPENSHELL_OIDC_CLIENT_SECRET:-}" ] && [ -n "${OPENSHELL_OIDC_CLIENT_ID:-}" ] \
           && [ -n "${OPENSHELL_OIDC_ISSUER:-}" ]; then
-          GW_NAME="${OPENSHELL_GATEWAY_NAME:-ci-gateway}"
           openshell gateway add "$OPENSHELL_GATEWAY_ENDPOINT" \
             --name "$GW_NAME" \
             --oidc-issuer "$OPENSHELL_OIDC_ISSUER" \
@@ -1753,17 +1782,7 @@ spec:
 
         # Secret mounts flat at $HOME/.config/openshell. OpenShell CLI expects
         # gateways/<sandbox>/mtls/{ca.crt,tls.crt,tls.key}.
-        GW_NAME="${OPENSHELL_GATEWAY_NAME:-openshell}"
-        MTLS_SRC="/tmp/.config/openshell"
-        MTLS_DST="${HOME}/.config/openshell/gateways/${GW_NAME}/mtls"
-        mkdir -p "${HOME}/.config/openshell"
-        if [ -f "$MTLS_SRC/tls.crt" ] && [ -f "$MTLS_SRC/tls.key" ]; then
-          mkdir -p "$MTLS_DST"
-          cp -f "$MTLS_SRC/ca.crt" "$MTLS_DST/" 2>/dev/null || true
-          cp -f "$MTLS_SRC/tls.crt" "$MTLS_DST/"
-          cp -f "$MTLS_SRC/tls.key" "$MTLS_DST/"
-          chmod 600 "$MTLS_DST"/* 2>/dev/null || true
-
+        if [ -f "$MTLS_DST/tls.crt" ] && [ -f "$MTLS_DST/tls.key" ]; then
           echo "OpenShell mTLS profile files:"
           find "$HOME/.config/openshell/gateways/$GW_NAME" -maxdepth 3 -type f -printf '%p %s bytes\n' 2>/dev/null || true
           openssl x509 -in "$MTLS_DST/tls.crt" -noout -subject -issuer -fingerprint -sha256 2>/dev/null || true
