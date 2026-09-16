@@ -34,6 +34,8 @@ spec:
     - name: llm-api-key
       value: "mock"
     - name: aeh-model-override
+      value: "inference/glm-5-3"
+    - name: aeh-judge-model-override
       value: "rits/zai-org/glm-5-3"
     - name: enable-mlflow
       value: "true"

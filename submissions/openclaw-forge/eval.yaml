@@ -13,7 +13,7 @@ mlflow:
 models:
   # LiteLLM in-cluster alias (override via aeh-model-override). OpenClaw
   # --model is qualified as inference/<id> by the harness from providers below.
-  skill: rits/zai-org/glm-5-3
+  skill: inference/glm-5-3
   # Vertex publisher id (short alias "claude-sonnet-4" also remapped in score.py)
   judge: rits/zai-org/glm-5-3
 
@@ -40,7 +40,7 @@ runner:
       api: openai-completions
       apiKey: "$ANTHROPIC_API_KEY"
       models:
-        - id: rits/zai-org/glm-5-3
+        - id: glm-5-3
           name: GLM 5.3
           api: openai-completions
 
