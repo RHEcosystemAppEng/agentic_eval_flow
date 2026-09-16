@@ -59,10 +59,11 @@ execution:
     M365_CLIENT_SECRET: "$M365_CLIENT_SECRET"
     FORGE_SOURCES: "m365-only"
     CLIMICROSOFT365_GRAPH_BASE_URL: "http://m365.local"
-    # The SAW VM-local bridge is an internal endpoint and must bypass any
-    # external HTTP proxy inherited by the sandbox.
-    NO_PROXY: "host.containers.internal"
-    no_proxy: "host.containers.internal"
+    # Internal service calls must bypass the external proxy inherited by the
+    # sandbox. This includes the namespace-local LiteLLM endpoint and the
+    # SAW/M365 provider aliases used by the agent.
+    NO_PROXY: "localhost,127.0.0.1,host.containers.internal,host.openshell.internal,litellm.gz-forge-eval.svc.cluster.local,.gz-forge-eval.svc.cluster.local,.svc.cluster.local,.cluster.local,m365.local"
+    no_proxy: "localhost,127.0.0.1,host.containers.internal,host.openshell.internal,litellm.gz-forge-eval.svc.cluster.local,.gz-forge-eval.svc.cluster.local,.svc.cluster.local,.cluster.local,m365.local"
 
 dataset:
   workspace:
