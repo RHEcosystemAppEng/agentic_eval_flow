@@ -35,7 +35,7 @@ runner:
     # Local OpenShell can instead use https://inference.local/v1 when the
     # gateway inference provider is registered.
     forge-ai-gateway:
-      baseUrl: https://inference.local/v1
+      baseUrl: https://host.containers.internal:18084/v1
       api: openai-completions
       apiKey: "$ANTHROPIC_API_KEY"
       models:
