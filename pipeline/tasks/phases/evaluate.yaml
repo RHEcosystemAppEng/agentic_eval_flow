@@ -1764,26 +1764,16 @@ spec:
           cp -f "$MTLS_SRC/tls.key" "$MTLS_DST/"
           chmod 600 "$MTLS_DST"/* 2>/dev/null || true
 
-          # The SAW gateway requires client mTLS. Re-register the profile in
-          # local mode after the Secret is mounted; OIDC/edge registration
-          # does not make the CLI present the client certificate.
-          openshell gateway remove "$GW_NAME" >/dev/null 2>&1 || true
-          openshell gateway add "$OPENSHELL_GATEWAY_ENDPOINT" \
-            --name "$GW_NAME" --local \
-            >/tmp/openshell-gateway-mtls-refresh.log 2>&1 || {
-              grep -vE 'client.secret|secret|token' /tmp/openshell-gateway-mtls-refresh.log || true
-              exit 1
-            }
-          mkdir -p "$MTLS_DST"
-          cp -f "$MTLS_SRC/ca.crt" "$MTLS_DST/" 2>/dev/null || true
-          cp -f "$MTLS_SRC/tls.crt" "$MTLS_DST/"
-          cp -f "$MTLS_SRC/tls.key" "$MTLS_DST/"
-          chmod 600 "$MTLS_DST"/* 2>/dev/null || true
           echo "OpenShell mTLS profile files:"
           find "$HOME/.config/openshell/gateways/$GW_NAME" -maxdepth 3 -type f -printf '%p %s bytes\n' 2>/dev/null || true
           openssl x509 -in "$MTLS_DST/tls.crt" -noout -subject -issuer -fingerprint -sha256 2>/dev/null || true
           echo "OpenShell profile metadata:"
           sed -E 's/(client_secret|token|secret)[^,}]*/\1=REDACTED/g' "$HOME/.config/openshell/gateways/$GW_NAME/metadata.json" 2>/dev/null || true
+          if [ -s "$HOME/.config/openshell/gateways/$GW_NAME/oidc_token.json" ]; then
+            echo "OpenShell OIDC token cache: present"
+          else
+            echo "OpenShell OIDC token cache: missing"
+          fi
         fi
 
         echo "=== EVALUATE PHASE: AEH OpenShell OpenClaw ==="
