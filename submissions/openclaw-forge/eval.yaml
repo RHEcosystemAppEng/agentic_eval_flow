@@ -35,9 +35,9 @@ runner:
     # The model call uses namespace-local LiteLLM; SAW remains attached
     # separately for governed tool providers.
     openai:
-      # Fresh OpenShell sandboxes do not consistently resolve cluster-local
-      # DNS names. Use the stable ClusterIP of the namespace-local Service.
-      baseUrl: http://172.30.211.172:4000/v1
+      # The namespace-local SAW VM exposes the Forge AI/LiteLLM forward to
+      # sandboxes through the OpenShell host alias.
+      baseUrl: http://host.containers.internal:18084/v1
       api: openai-completions
       apiKey: "mock"
       # OpenClaw's SSRF protection requires this explicit, per-provider opt-in.
@@ -63,8 +63,8 @@ execution:
     # Internal service calls must bypass the external proxy inherited by the
     # sandbox. This includes the namespace-local LiteLLM endpoint and the
     # SAW/M365 provider aliases used by the agent.
-    NO_PROXY: "localhost,127.0.0.1,172.30.211.172,host.containers.internal,host.openshell.internal,litellm.gz-forge-eval.svc.cluster.local,.gz-forge-eval.svc.cluster.local,.svc.cluster.local,.cluster.local,m365.local"
-    no_proxy: "localhost,127.0.0.1,172.30.211.172,host.containers.internal,host.openshell.internal,litellm.gz-forge-eval.svc.cluster.local,.gz-forge-eval.svc.cluster.local,.svc.cluster.local,.cluster.local,m365.local"
+    NO_PROXY: "localhost,127.0.0.1,host.containers.internal,host.openshell.internal,litellm.gz-forge-eval.svc.cluster.local,.gz-forge-eval.svc.cluster.local,.svc.cluster.local,.cluster.local,m365.local"
+    no_proxy: "localhost,127.0.0.1,host.containers.internal,host.openshell.internal,litellm.gz-forge-eval.svc.cluster.local,.gz-forge-eval.svc.cluster.local,.svc.cluster.local,.cluster.local,m365.local"
 
 dataset:
   workspace:
