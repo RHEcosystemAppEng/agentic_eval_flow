@@ -41,7 +41,7 @@ runner:
       baseUrl: https://host.containers.internal:18084/v1
       api: openai-completions
       # The namespace provider instance injects and rewrites this capability token.
-      apiKey: "$FORGE_AI_GATEWAY_BEARER"
+      apiKey: "$INFERENCE_API_KEY"
       # OpenClaw's SSRF protection requires this explicit, per-provider opt-in.
       request:
         allowPrivateNetwork: true
@@ -61,6 +61,10 @@ execution:
     M365_CLIENT_ID: "$M365_CLIENT_ID"
     M365_CLIENT_SECRET: "$M365_CLIENT_SECRET"
     FORGE_SOURCES: "m365-only"
+    # Use the namespace Forge inference credential directly. The OpenShell
+    # provider still gates the endpoint, but this avoids depending on a
+    # shared provider instance's rotated credential.
+    INFERENCE_API_KEY: "$INFERENCE_API_KEY"
     CLIMICROSOFT365_GRAPH_BASE_URL: "http://m365.local"
     # Internal service calls must bypass the external proxy inherited by the
     # sandbox. This includes the namespace-local LiteLLM endpoint and the
