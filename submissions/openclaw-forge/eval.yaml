@@ -37,7 +37,7 @@ runner:
     openai:
       # The namespace-local SAW VM exposes the Forge AI/LiteLLM forward to
       # sandboxes through the OpenShell host alias.
-      baseUrl: http://host.containers.internal:18084/v1
+      baseUrl: https://host.containers.internal:18084/v1
       api: openai-completions
       apiKey: "mock"
       # OpenClaw's SSRF protection requires this explicit, per-provider opt-in.
