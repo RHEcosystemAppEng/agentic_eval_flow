@@ -53,6 +53,10 @@ execution:
     M365_CLIENT_SECRET: "$M365_CLIENT_SECRET"
     FORGE_SOURCES: "m365-only"
     CLIMICROSOFT365_GRAPH_BASE_URL: "http://m365.local"
+    # Keep the internal SAW inference request on the cluster network rather
+    # than sending it through the sandbox's external HTTP proxy.
+    NO_PROXY: "forge-ai-gateway.saw-cchase.svc.cluster.local"
+    no_proxy: "forge-ai-gateway.saw-cchase.svc.cluster.local"
 
 dataset:
   workspace:
