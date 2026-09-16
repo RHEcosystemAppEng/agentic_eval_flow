@@ -35,9 +35,9 @@ runner:
     # The model call uses namespace-local LiteLLM; SAW remains attached
     # separately for governed tool providers.
     openai:
-      # The namespace-local SAW VM exposes the Forge AI/LiteLLM forward to
-      # sandboxes through the OpenShell host alias.
-      baseUrl: https://host.containers.internal:18084/v1
+      # Use the namespace-local Forge AI gateway directly. Its certificate
+      # covers this service DNS name, so no SAW VM forward is required.
+      baseUrl: https://forge-ai-gateway.gz-forge-eval.svc.cluster.local:18486/v1
       api: openai-completions
       # The attached SAW provider injects and rewrites this capability token.
       apiKey: "$FORGE_AI_GATEWAY_BEARER"
