@@ -1763,6 +1763,22 @@ spec:
           cp -f "$MTLS_SRC/tls.crt" "$MTLS_DST/"
           cp -f "$MTLS_SRC/tls.key" "$MTLS_DST/"
           chmod 600 "$MTLS_DST"/* 2>/dev/null || true
+
+          # The SAW gateway requires client mTLS. Re-register the profile in
+          # local mode after the Secret is mounted; OIDC/edge registration
+          # does not make the CLI present the client certificate.
+          openshell gateway remove "$GW_NAME" >/dev/null 2>&1 || true
+          openshell gateway add "$OPENSHELL_GATEWAY_ENDPOINT" \
+            --name "$GW_NAME" --local \
+            >/tmp/openshell-gateway-mtls-refresh.log 2>&1 || {
+              grep -vE 'client.secret|secret|token' /tmp/openshell-gateway-mtls-refresh.log || true
+              exit 1
+            }
+          mkdir -p "$MTLS_DST"
+          cp -f "$MTLS_SRC/ca.crt" "$MTLS_DST/" 2>/dev/null || true
+          cp -f "$MTLS_SRC/tls.crt" "$MTLS_DST/"
+          cp -f "$MTLS_SRC/tls.key" "$MTLS_DST/"
+          chmod 600 "$MTLS_DST"/* 2>/dev/null || true
         fi
 
         echo "=== EVALUATE PHASE: AEH OpenShell OpenClaw ==="
@@ -1834,7 +1850,7 @@ spec:
         PREFLIGHT
 
         if command -v openshell >/dev/null 2>&1; then
-          openshell --gateway-endpoint "$OPENSHELL_GATEWAY_ENDPOINT" sandbox list \
+          openshell -g "${OPENSHELL_GATEWAY_NAME:-ci-gateway}" sandbox list \
             || echo "WARN: openshell sandbox list failed (mTLS/OIDC?); continuing to run"
         else
           echo "WARN: openshell CLI not on PATH in orchestrator image"
