@@ -13,9 +13,9 @@ mlflow:
 models:
   # LiteLLM in-cluster alias (override via aeh-model-override). OpenClaw
   # --model is qualified as inference/<id> by the harness from providers below.
-  skill: claude-sonnet
+  skill: rits/zai-org/glm-5-3
   # Vertex publisher id (short alias "claude-sonnet-4" also remapped in score.py)
-  judge: claude-sonnet-4-5@20250929
+  judge: rits/zai-org/glm-5-3
 
 runner:
   type: openclaw
@@ -36,12 +36,12 @@ runner:
     # Local OpenShell can instead use https://inference.local/v1 when the
     # gateway inference provider is registered.
     inference:
-      baseUrl: http://litellm.ab-eval-flow.svc.cluster.local:4000/v1
+      baseUrl: http://litellm.gz-forge-eval.svc.cluster.local:4000/v1
       api: openai-completions
       apiKey: "$ANTHROPIC_API_KEY"
       models:
-        - id: claude-sonnet
-          name: Claude Sonnet
+        - id: rits/zai-org/glm-5-3
+          name: GLM 5.3
           api: openai-completions
 
 execution:

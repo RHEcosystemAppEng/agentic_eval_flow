@@ -28,13 +28,13 @@ spec:
     - name: aeh-openshell-image
       value: "registry.access.redhat.com/ubi9/python-311:9.6"
     - name: llm-model
-      value: "claude-sonnet"
+      value: "rits/zai-org/glm-5-3"
     - name: llm-api-base
       value: "http://litellm.ab-eval-flow.svc.cluster.local:4000"
     - name: llm-api-key
       value: "mock"
     - name: aeh-model-override
-      value: "claude-sonnet"
+      value: "rits/zai-org/glm-5-3"
     - name: enable-mlflow
       value: "true"
     - name: mlflow-tracking-uri

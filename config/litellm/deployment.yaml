@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: litellm
-  namespace: ab-eval-flow
+  namespace: gz-forge-eval
   labels:
     app.kubernetes.io/part-of: abevalflow
     app.kubernetes.io/name: litellm
@@ -17,10 +17,9 @@ spec:
         app.kubernetes.io/name: litellm
         app.kubernetes.io/part-of: abevalflow
     spec:
-      serviceAccountName: litellm
       containers:
         - name: litellm
-          image: ghcr.io/berriai/litellm:main-v1.82.6
+          image: ghcr.io/berriai/litellm:main-latest
           ports:
             - containerPort: 4000
               name: http
@@ -30,19 +29,19 @@ spec:
             - "--port"
             - "4000"
           env:
-            - name: LITELLM_MASTER_KEY
+            - name: INFERENCE_ENDPOINT_URL
               valueFrom:
                 secretKeyRef:
-                  name: litellm-credentials
-                  key: LITELLM_MASTER_KEY
-            - name: GOOGLE_APPLICATION_CREDENTIALS
-              value: /app/credentials/gcp-sa-key.json
+                  name: inference
+                  key: endpoint_url
+            - name: INFERENCE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: inference
+                  key: api_key
           volumeMounts:
             - name: config
               mountPath: /app/config
-              readOnly: true
-            - name: credentials
-              mountPath: /app/credentials
               readOnly: true
           resources:
             requests:
@@ -55,13 +54,15 @@ spec:
             httpGet:
               path: /health
               port: 4000
-            initialDelaySeconds: 10
+            initialDelaySeconds: 30
+            timeoutSeconds: 5
             periodSeconds: 10
           livenessProbe:
             httpGet:
               path: /health
               port: 4000
-            initialDelaySeconds: 15
+            initialDelaySeconds: 45
+            timeoutSeconds: 5
             periodSeconds: 30
           securityContext:
             runAsNonRoot: true
@@ -74,9 +75,3 @@ spec:
         - name: config
           configMap:
             name: litellm-config
-        - name: credentials
-          secret:
-            secretName: litellm-credentials
-            items:
-              - key: GOOGLE_APPLICATION_CREDENTIALS_JSON
-                path: gcp-sa-key.json

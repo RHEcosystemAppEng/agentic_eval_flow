@@ -38,10 +38,10 @@ spec:
       description: Must stay aeh_openshell_openclaw for this profile
     - name: llm-model
       type: string
-      default: "claude-sonnet"
+      default: "rits/zai-org/glm-5-3"
     - name: llm-api-base
       type: string
-      default: "http://litellm.ab-eval-flow.svc:4000"
+      default: "http://litellm.gz-forge-eval.svc:4000"
     - name: llm-api-key
       type: string
       default: "mock"
@@ -50,7 +50,7 @@ spec:
       default: "http://litellm.ab-eval-flow.svc:4000/v1"
     - name: llm-generation-model
       type: string
-      default: "claude-sonnet"
+      default: "rits/zai-org/glm-5-3"
     - name: enable-ai-generation
       type: string
       default: "false"
