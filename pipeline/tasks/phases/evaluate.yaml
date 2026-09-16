@@ -451,6 +451,16 @@ spec:
       env:
         - name: HOME
           value: /tmp/openshell-home
+        - name: INFERENCE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: inference
+              key: api_key
+        - name: OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: inference
+              key: api_key
         - name: XDG_CONFIG_HOME
           value: /tmp/openshell-home/.config
       script: |
