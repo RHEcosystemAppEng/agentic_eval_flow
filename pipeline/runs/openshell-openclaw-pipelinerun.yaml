@@ -22,7 +22,7 @@ spec:
     - name: openshell-gateway-endpoint
       # Use the verified cross-namespace mTLS Service path. The external
       # OpenShift Route currently returns a malformed 503 to gRPC clients.
-      value: "https://openshell-saw-agent-gateway.saw-cchase.svc.cluster.local:17670"
+      value: "https://openshell.openshell.svc.cluster.local:17670"
     - name: openshell-sandbox-image
       value: "ghcr.io/rh-forge/openclaw-saw-agent@sha256:bcc55e9b7a36d5f65e8ffc75962496f8b3617762a4cdb37fd1cf54611b72d41a"
     - name: aeh-openshell-image
