@@ -119,6 +119,9 @@ spec:
     - name: openshell-mtls-secret
       type: string
       default: "openshell-mtls"
+    - name: openshell-ai-gateway-ca-secret
+      type: string
+      default: "forge-ai-gateway-ca"
     - name: openshell-credentials-secret
       type: string
       default: "openshell-credentials"
@@ -278,6 +281,8 @@ spec:
           value: $(params.openshell-provider)
         - name: openshell-mtls-secret
           value: $(params.openshell-mtls-secret)
+        - name: openshell-ai-gateway-ca-secret
+          value: $(params.openshell-ai-gateway-ca-secret)
         - name: openshell-credentials-secret
           value: $(params.openshell-credentials-secret)
         - name: openshell-oidc-secret

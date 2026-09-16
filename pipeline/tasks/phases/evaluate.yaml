@@ -219,6 +219,10 @@ spec:
       type: string
       default: "openshell-mtls"
       description: Secret in the PipelineRun namespace with OpenShell CLI mTLS files
+    - name: openshell-ai-gateway-ca-secret
+      type: string
+      default: "forge-ai-gateway-ca"
+      description: Public CA for Node TLS validation of SAW's Forge AI bridge
     - name: openshell-credentials-secret
       type: string
       default: "openshell-credentials"
@@ -234,6 +238,10 @@ spec:
     - name: openshell-mtls
       secret:
         secretName: $(params.openshell-mtls-secret)
+        optional: true
+    - name: forge-ai-gateway-ca
+      secret:
+        secretName: $(params.openshell-ai-gateway-ca-secret)
         optional: true
   workspaces:
     - name: source
@@ -1640,6 +1648,9 @@ spec:
         - name: openshell-mtls
           mountPath: /tmp/.config/openshell
           readOnly: true
+        - name: forge-ai-gateway-ca
+          mountPath: /tmp/forge-ai-gateway-ca
+          readOnly: true
       envFrom:
         # Inject every key from openshell-credentials (M365_*). optional so
         # Crabline OpenShell evals still start when the Secret is absent.
@@ -1668,6 +1679,8 @@ spec:
           value: "$(params.openshell-sandbox-image)"
         - name: AGENT_EVAL_OPENSHELL_PROVIDER
           value: "$(params.openshell-provider)"
+        - name: AGENT_EVAL_FORGE_AI_GATEWAY_CA_FILE
+          value: "/tmp/forge-ai-gateway-ca/ca.crt"
         - name: FORGE_SAW_PROFILE
           value: "forge-outlook-slack"
         - name: ANTHROPIC_BASE_URL
