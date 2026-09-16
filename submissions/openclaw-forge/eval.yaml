@@ -33,7 +33,10 @@ runner:
     # The bearer is injected by SAW's forge-ai-gateway provider into each
     # sandbox and resolved there by the OpenShell runner.
     openai:
-      baseUrl: https://forge-ai-gateway.saw-cchase.svc.cluster.local:18486/v1
+      # SAW attaches this provider as a governed VM-local TLS bridge.  The
+      # sandbox cannot resolve Kubernetes Service DNS, so use the bridge
+      # hostname that is part of the SAW provider contract.
+      baseUrl: https://host.containers.internal:18084/v1
       api: openai-completions
       apiKey: "$FORGE_AI_GATEWAY_BEARER"
       models:
@@ -53,10 +56,10 @@ execution:
     M365_CLIENT_SECRET: "$M365_CLIENT_SECRET"
     FORGE_SOURCES: "m365-only"
     CLIMICROSOFT365_GRAPH_BASE_URL: "http://m365.local"
-    # Keep the internal SAW inference request on the cluster network rather
-    # than sending it through the sandbox's external HTTP proxy.
-    NO_PROXY: "forge-ai-gateway.saw-cchase.svc.cluster.local"
-    no_proxy: "forge-ai-gateway.saw-cchase.svc.cluster.local"
+    # The SAW VM-local bridge is an internal endpoint and must bypass any
+    # external HTTP proxy inherited by the sandbox.
+    NO_PROXY: "host.containers.internal"
+    no_proxy: "host.containers.internal"
 
 dataset:
   workspace:
