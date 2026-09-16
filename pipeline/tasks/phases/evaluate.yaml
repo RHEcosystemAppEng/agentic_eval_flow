@@ -208,7 +208,7 @@ spec:
         governed M365/Slack tools.
     - name: openshell-cli-version
       type: string
-      default: "0.0.111"
+      default: "0.0.116"
       description: >-
         OpenShell CLI release. 0.0.111+ is required for `sandbox create --detach`.
     - name: openshell-provider

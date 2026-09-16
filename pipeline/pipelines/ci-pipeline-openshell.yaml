@@ -106,7 +106,7 @@ spec:
       description: Harness revision with agent_eval.openshell (feature-branch pin)
     - name: openshell-cli-version
       type: string
-      default: "0.0.111"
+      default: "0.0.116"
     - name: openshell-gateway-endpoint
       type: string
       default: "https://openshell.openshell.svc.cluster.local:17670"
