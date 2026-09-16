@@ -34,7 +34,7 @@ runner:
     # openai-completions against in-cluster LiteLLM (not Anthropic native).
     # Local OpenShell can instead use https://inference.local/v1 when the
     # gateway inference provider is registered.
-    inference:
+    forge-ai-gateway:
       baseUrl: https://inference.local/v1
       api: openai-completions
       apiKey: "$ANTHROPIC_API_KEY"
