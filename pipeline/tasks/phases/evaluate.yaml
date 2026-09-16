@@ -194,14 +194,6 @@ spec:
       description: >-
         Branch or tag of GuyZivRH/agent-eval-harness to clone. Must include the
         OpenShell create keep-alive fix (`--detach` + `sleep infinity`).
-    - name: forge-agent-catalog-repo-url
-      type: string
-      default: "https://github.com/rh-forge/forge-agent-catalog.git"
-      description: Portable Forge agent/skill catalog repository.
-    - name: forge-agent-catalog-revision
-      type: string
-      default: "main"
-      description: Immutable catalog branch, tag, or commit to stage into OpenClaw.
     - name: openshell-gateway-endpoint
       type: string
       default: "http://openshell.openshell.svc.cluster.local:8080"
@@ -210,12 +202,10 @@ spec:
         Override only if using a different gateway (e.g. forge-saw :17670).
     - name: openshell-sandbox-image
       type: string
-      default: "quay.io/aipcc/base-images/agentic/openclaw:0.0.1-1787755593"
+      default: "ghcr.io/rh-forge/openclaw-saw-agent@sha256:bcc55e9b7a36d5f65e8ffc75962496f8b3617762a4cdb37fd1cf54611b72d41a"
       description: >-
-        OpenClaw image for OpenShell Kubernetes sandboxes. Must include
-        nsenter (util-linux). RHEL 9.8 0.0.1-1787755593 works. amd64
-        :latest / 2026.8.1-beta.3 is Hummingbird without nsenter; the
-        supervisor exits and the gateway reports PodFailed.
+        Immutable SAW Chief-of-Staff image with the daily-briefing skill and
+        governed M365/Slack tools.
     - name: openshell-cli-version
       type: string
       default: "0.0.111"
@@ -236,6 +226,10 @@ spec:
         Secret with M365_ACCESS_TOKEN and M365_USER (optional TENANT_ID /
         CLIENT_ID / CLIENT_SECRET). Required for openclaw-forge Graph scenes.
         Keys are optional for Crabline-only OpenShell evals.
+    - name: openshell-oidc-secret
+      type: string
+      default: "openshell-oidc-credentials"
+      description: Secret containing the SAW OIDC client settings.
   volumes:
     - name: openshell-mtls
       secret:
@@ -266,43 +260,30 @@ spec:
         
         # Clone/update pipeline repo
         PIPELINE_DIR="$(workspaces.source.path)/_pipeline"
+        echo "=== Cloning pipeline repo: $(params.pipeline-repo-url) @ $(params.pipeline-repo-revision) ==="
         if [ -d "$PIPELINE_DIR/.git" ]; then
           cd "$PIPELINE_DIR"
-          git fetch origin "$(params.pipeline-repo-revision)" --depth 1 2>/dev/null || true
-          git reset --hard FETCH_HEAD 2>/dev/null || true
+          git fetch origin "$(params.pipeline-repo-revision)" --depth 1
+          git reset --hard FETCH_HEAD
         else
           git clone --depth 1 --branch "$(params.pipeline-repo-revision)" \
             "$(params.pipeline-repo-url)" "$PIPELINE_DIR"
         fi
+        echo "Pipeline repo ready at $(git -C "$PIPELINE_DIR" rev-parse --short HEAD)"
 
         # Clone/update agent-eval-harness repo (required for latest OpenShell logic)
         HARNESS_DIR="$(workspaces.source.path)/_harness"
+        echo "=== Cloning harness repo: $(params.agent-eval-harness-repo-url) @ $(params.agent-eval-harness-repo-revision) ==="
         if [ -d "$HARNESS_DIR/.git" ]; then
           cd "$HARNESS_DIR"
-          git fetch origin "$(params.agent-eval-harness-repo-revision)" --depth 1 2>/dev/null || true
-          git reset --hard FETCH_HEAD 2>/dev/null || true
+          git fetch origin "$(params.agent-eval-harness-repo-revision)" --depth 1
+          git reset --hard FETCH_HEAD
         else
           git clone --depth 1 --branch "$(params.agent-eval-harness-repo-revision)" \
             "$(params.agent-eval-harness-repo-url)" "$HARNESS_DIR"
         fi
+        echo "Harness repo ready at $(git -C "$HARNESS_DIR" rev-parse --short HEAD)"
 
-        # Stage the portable Forge skills separately from the OpenShell image.
-        # The image supplies OpenClaw and deployment-owned binaries; the catalog
-        # supplies versioned workspace skills and schemas for this evaluation.
-        if [ "$(params.eval-engine)" = "aeh_openshell_openclaw" ]; then
-          CATALOG_DIR="$(workspaces.source.path)/submissions/$(params.submission-dir)/_forge-agent-catalog"
-          if [ -d "$CATALOG_DIR/.git" ]; then
-            cd "$CATALOG_DIR"
-            git fetch origin "$(params.forge-agent-catalog-revision)" --depth 1
-            git reset --hard FETCH_HEAD
-          else
-            git clone --depth 1 --branch "$(params.forge-agent-catalog-revision)" \
-              "$(params.forge-agent-catalog-repo-url)" "$CATALOG_DIR"
-          fi
-          echo "Forge catalog staged at $CATALOG_DIR"
-          git -C "$CATALOG_DIR" rev-parse HEAD
-        fi
-        
         # Create results directories
         mkdir -p "$(workspaces.source.path)/eval-results/$(params.submission-name)"
         mkdir -p "$(workspaces.source.path)/reports/$(params.submission-name)"
@@ -449,7 +430,11 @@ spec:
 
     # Step 5: Harbor - Run Evaluation (uses pre-built image with Harbor installed)
     - name: harbor-eval
-      image: image-registry.openshift-image-registry.svc:5000/ab-eval-flow/eval-base:local-env
+      when:
+        - input: "$(params.eval-engine)"
+          operator: in
+          values: ["harbor", "both"]
+      image: registry.access.redhat.com/ubi9/python-311:9.6
       computeResources:
         requests:
           memory: 512Mi
@@ -457,7 +442,9 @@ spec:
           memory: 1Gi
       env:
         - name: HOME
-          value: /tmp
+          value: /tmp/openshell-home
+        - name: XDG_CONFIG_HOME
+          value: /tmp/openshell-home/.config
       script: |
         #!/usr/bin/env bash
         set -euo pipefail
@@ -558,6 +545,10 @@ spec:
 
     # Step 5b: Generate edge case evals from SKILL.md via LLM
     - name: generate-edge-case-evals
+      when:
+        - input: "$(params.eval-engine)"
+          operator: in
+          values: ["harbor", "both"]
       image: registry.access.redhat.com/ubi9/python-311:9.6
       env:
         - name: LLM_BASE_URL
@@ -612,6 +603,10 @@ spec:
 
     # Step 5c: ASE - Run Edge Case Evaluations (one ASE run per edge case)
     - name: ase-eval-edge-cases
+      when:
+        - input: "$(params.eval-engine)"
+          operator: in
+          values: ["harbor", "both"]
       image: registry.access.redhat.com/ubi9/nodejs-20:latest
       env:
         - name: OPENAI_API_KEY
@@ -734,6 +729,10 @@ spec:
 
     # Step 5d: Aggregate edge case results
     - name: ase-aggregate-edge-cases
+      when:
+        - input: "$(params.eval-engine)"
+          operator: in
+          values: ["harbor", "both"]
       image: registry.access.redhat.com/ubi9/python-311:9.6
       script: |
         #!/usr/bin/env bash
@@ -764,6 +763,10 @@ spec:
 
     # Step 6: ASE - Run Evaluation
     - name: ase-eval
+      when:
+        - input: "$(params.eval-engine)"
+          operator: in
+          values: ["harbor", "both"]
       image: registry.access.redhat.com/ubi9/nodejs-20:latest
       env:
         - name: OPENAI_API_KEY
@@ -856,6 +859,10 @@ spec:
 
     # Step 7: ASE - Aggregate
     - name: ase-aggregate
+      when:
+        - input: "$(params.eval-engine)"
+          operator: in
+          values: ["harbor", "both"]
       image: registry.access.redhat.com/ubi9/python-311:9.6
       script: |
         #!/usr/bin/env bash
@@ -909,7 +916,11 @@ spec:
 
     # Step 8: MCPChecker - Run Evaluation
     - name: mcpchecker-eval
-      image: image-registry.openshift-image-registry.svc:5000/ab-eval-flow/mcpchecker-runner:latest
+      when:
+        - input: "$(params.eval-engine)"
+          operator: in
+          values: ["harbor", "both"]
+      image: registry.access.redhat.com/ubi9/python-311:9.6
       env:
         - name: MCP_URL
           valueFrom:
@@ -975,6 +986,10 @@ spec:
 
     # Step 9: MCPChecker - Aggregate
     - name: mcpchecker-aggregate
+      when:
+        - input: "$(params.eval-engine)"
+          operator: in
+          values: ["harbor", "both"]
       image: registry.access.redhat.com/ubi9/python-311:9.6
       script: |
         #!/bin/bash
@@ -1014,6 +1029,10 @@ spec:
 
     # Step 10: A2A - Deploy Agent as Deployment+Service (if no endpoint provided)
     - name: a2a-deploy-agent
+      when:
+        - input: "$(params.eval-engine)"
+          operator: in
+          values: ["a2a", "both"]
       image: image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
       script: |
         #!/usr/bin/env bash
@@ -1132,6 +1151,10 @@ spec:
 
     # Step 10.5: A2A - Pre-flight health check
     - name: a2a-pre-flight
+      when:
+        - input: "$(params.eval-engine)"
+          operator: in
+          values: ["a2a", "both"]
       image: registry.access.redhat.com/ubi9/ubi-minimal:latest
       script: |
         #!/usr/bin/env bash
@@ -1172,7 +1195,11 @@ spec:
 
     # Step 11: A2A Agent Evaluation
     - name: a2a-eval
-      image: image-registry.openshift-image-registry.svc:5000/ab-eval-flow/eval-base:local-env
+      when:
+        - input: "$(params.eval-engine)"
+          operator: in
+          values: ["a2a", "both"]
+      image: registry.access.redhat.com/ubi9/python-311:9.6
       computeResources:
         requests:
           cpu: 50m
@@ -1621,9 +1648,12 @@ spec:
         - secretRef:
             name: $(params.openshell-credentials-secret)
             optional: true
+        - secretRef:
+            name: $(params.openshell-oidc-secret)
+            optional: true
       env:
         - name: HOME
-          value: /tmp
+          value: /tmp/openshell-home
         - name: AGENT_EVAL_RUNS_DIR
           value: $(workspaces.source.path)/reports
         - name: OPENSHELL_GATEWAY_ENDPOINT
@@ -1632,6 +1662,8 @@ spec:
           value: "$(params.openshell-sandbox-image)"
         - name: AGENT_EVAL_OPENSHELL_PROVIDER
           value: "$(params.openshell-provider)"
+        - name: FORGE_SAW_PROFILE
+          value: "forge-outlook-slack"
         - name: ANTHROPIC_BASE_URL
           value: "$(params.llm-api-base)"
         - name: ANTHROPIC_API_KEY
@@ -1681,30 +1713,54 @@ spec:
 
         unset ANTHROPIC_VERTEX_PROJECT_ID || true
 
+        # Ensure openshell CLI is available before gateway/OIDC setup.
+        if ! command -v openshell >/dev/null 2>&1; then
+          echo "Installing openshell CLI v$(params.openshell-cli-version)..."
+          mkdir -p /tmp/bin
+          OS_ARCH="x86_64-unknown-linux-musl"
+          curl -fsSL "https://github.com/NVIDIA/OpenShell/releases/download/v$(params.openshell-cli-version)/openshell-${OS_ARCH}.tar.gz" | tar -xz -C /tmp/bin openshell
+          export PATH="/tmp/bin:$PATH"
+        fi
+
+        # Configure the remote SAW gateway with the dedicated CI OIDC client.
+        # The client secret is injected from openshell-oidc-credentials and is
+        # never printed. The insecure flag is intentionally test-only and is
+        # supplied by the Secret until the SAW route has a trusted certificate.
+        if [ -n "${OPENSHELL_OIDC_CLIENT_SECRET:-}" ] && [ -n "${OPENSHELL_OIDC_CLIENT_ID:-}" ] \
+          && [ -n "${OPENSHELL_OIDC_ISSUER:-}" ]; then
+          GW_NAME="${OPENSHELL_GATEWAY_NAME:-ci-gateway}"
+          openshell gateway add "$OPENSHELL_GATEWAY_ENDPOINT" \
+            --name "$GW_NAME" \
+            --oidc-issuer "$OPENSHELL_OIDC_ISSUER" \
+            --oidc-client-id "$OPENSHELL_OIDC_CLIENT_ID" \
+            --oidc-audience "${OPENSHELL_OIDC_AUDIENCE:-openshell-cli}" \
+            >/tmp/openshell-gateway-add.log 2>&1 || {
+              grep -vE 'client.secret|secret|token' /tmp/openshell-gateway-add.log || true
+              exit 1
+            }
+          OPENSHELL_GATEWAY="$GW_NAME" openshell gateway login "$GW_NAME" \
+            >/tmp/openshell-gateway-login.log 2>&1 || {
+              grep -vE 'client.secret|secret|token' /tmp/openshell-gateway-login.log || true
+              exit 1
+            }
+          export OPENSHELL_GATEWAY="$GW_NAME"
+          echo "OpenShell OIDC gateway configured: ${GW_NAME}"
+        else
+          echo "OpenShell OIDC Secret not configured; using existing gateway auth"
+        fi
+
         # Secret mounts flat at $HOME/.config/openshell. OpenShell CLI expects
         # gateways/<sandbox>/mtls/{ca.crt,tls.crt,tls.key}.
         GW_NAME="${OPENSHELL_GATEWAY_NAME:-openshell}"
-        MTLS_SRC="${HOME}/.config/openshell"
+        MTLS_SRC="/tmp/.config/openshell"
         MTLS_DST="${HOME}/.config/openshell/gateways/${GW_NAME}/mtls"
+        mkdir -p "${HOME}/.config/openshell"
         if [ -f "$MTLS_SRC/tls.crt" ] && [ -f "$MTLS_SRC/tls.key" ]; then
           mkdir -p "$MTLS_DST"
           cp -f "$MTLS_SRC/ca.crt" "$MTLS_DST/" 2>/dev/null || true
           cp -f "$MTLS_SRC/tls.crt" "$MTLS_DST/"
           cp -f "$MTLS_SRC/tls.key" "$MTLS_DST/"
           chmod 600 "$MTLS_DST"/* 2>/dev/null || true
-          python3 - "$HOME/.config/openshell/gateways/${GW_NAME}/metadata.json" "$GW_NAME" "${OPENSHELL_GATEWAY_ENDPOINT:-}" <<'META'
-        import json, sys, urllib.parse
-        path, name, endpoint = sys.argv[1:4]
-        parsed = urllib.parse.urlparse(endpoint)
-        payload = {
-            "name": name,
-            "gateway_endpoint": endpoint,
-            "is_remote": True,
-            "gateway_port": parsed.port or 8080,
-            "auth_mode": "none",
-        }
-        open(path, "w").write(json.dumps(payload))
-        META
         fi
 
         echo "=== EVALUATE PHASE: AEH OpenShell OpenClaw ==="
@@ -1832,6 +1888,13 @@ spec:
                             needed.append(key)
         if not needed:
             print("M365 not required for this submission")
+            sys.exit(0)
+        saw_profile = os.environ.get("FORGE_SAW_PROFILE", "").strip()
+        if saw_profile:
+            print(
+                f"M365 access delegated to SAW profile {saw_profile}; "
+                "Graph token Secret is not required"
+            )
             sys.exit(0)
         missing = [k for k in needed if not usable(os.environ.get(k))]
         if missing:
