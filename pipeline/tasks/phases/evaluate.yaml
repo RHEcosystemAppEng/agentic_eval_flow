@@ -1660,6 +1660,10 @@ spec:
           value: "$(params.openshell-gateway-endpoint)"
         - name: OPENSHELL_GATEWAY_NAME
           value: "ci-gateway"
+        # The internal SAW Service requires the client certificate. Do not
+        # let the test-only insecure setting from the Secret disable mTLS.
+        - name: OPENSHELL_GATEWAY_INSECURE
+          value: "false"
         - name: AGENT_EVAL_OPENSHELL_IMAGE
           value: "$(params.openshell-sandbox-image)"
         - name: AGENT_EVAL_OPENSHELL_PROVIDER
