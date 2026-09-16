@@ -36,7 +36,7 @@ runner:
     # Local OpenShell can instead use https://inference.local/v1 when the
     # gateway inference provider is registered.
     inference:
-      baseUrl: http://litellm.gz-forge-eval.svc.cluster.local:4000/v1
+      baseUrl: https://inference.local/v1
       api: openai-completions
       apiKey: "$ANTHROPIC_API_KEY"
       models:

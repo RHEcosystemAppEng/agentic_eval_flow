@@ -30,7 +30,7 @@ spec:
     - name: llm-model
       value: "rits/zai-org/glm-5-3"
     - name: llm-api-base
-      value: "http://litellm.ab-eval-flow.svc.cluster.local:4000"
+      value: "http://litellm.gz-forge-eval.svc.cluster.local:4000"
     - name: llm-api-key
       value: "mock"
     - name: aeh-model-override
