@@ -34,12 +34,12 @@ runner:
   providers:
     # The model call uses namespace-local LiteLLM; SAW remains attached
     # separately for governed tool providers.
-    openai:
+    forge-ai-gateway-local:
       # Use the namespace-local Forge AI gateway directly. Its certificate
       # covers this service DNS name, so no SAW VM forward is required.
       baseUrl: https://forge-ai-gateway.gz-forge-eval.svc.cluster.local:18486/v1
       api: openai-completions
-      # The attached SAW provider injects and rewrites this capability token.
+      # The namespace-local provider injects and rewrites this capability token.
       apiKey: "$FORGE_AI_GATEWAY_BEARER"
       # OpenClaw's SSRF protection requires this explicit, per-provider opt-in.
       request:

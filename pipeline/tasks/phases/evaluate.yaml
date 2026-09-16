@@ -213,7 +213,7 @@ spec:
         OpenShell CLI release. 0.0.111+ is required for `sandbox create --detach`.
     - name: openshell-provider
       type: string
-      default: "forge-ai-gateway"
+      default: "forge-ai-gateway-local"
       description: SAW provider explicitly attached to each evaluation sandbox
     - name: openshell-mtls-secret
       type: string
