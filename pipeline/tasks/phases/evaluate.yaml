@@ -1748,14 +1748,21 @@ spec:
         # never printed. The insecure flag is intentionally test-only and is
         # supplied by the Secret until the SAW route has a trusted certificate.
         if [[ "${OPENSHELL_GATEWAY_ENDPOINT}" == *".svc.cluster.local:"* ]]; then
-          # The in-cluster SAW endpoint requires client-certificate auth. Do
-          # not register it as OIDC, which can create a profile without mTLS.
-          openshell gateway add "$OPENSHELL_GATEWAY_ENDPOINT" \
-            --name "$GW_NAME" \
-            >/tmp/openshell-gateway-add.log 2>&1 || {
-              grep -vE 'client.secret|token|secret' /tmp/openshell-gateway-add.log || true
-              exit 1
-            }
+          # The CLI auto-detects HTTPS Services as cloud/edge gateways. Write
+          # the profile explicitly so the internal SAW endpoint always uses
+          # the staged client certificate and never starts browser auth.
+          GW_DIR="${XDG_CONFIG_HOME}/openshell/gateways/${GW_NAME}"
+          mkdir -p "$GW_DIR"
+          cat >"$GW_DIR/metadata.json" <<EOF
+        {
+          "name": "${GW_NAME}",
+          "gateway_endpoint": "${OPENSHELL_GATEWAY_ENDPOINT}",
+          "is_remote": false,
+          "gateway_port": 0,
+          "auth_mode": "mtls"
+        }
+        EOF
+          printf '%s\n' "$GW_NAME" >"${XDG_CONFIG_HOME}/openshell/active_gateway"
           export OPENSHELL_GATEWAY="$GW_NAME"
           echo "OpenShell mTLS gateway configured: ${GW_NAME}"
         elif [ -n "${OPENSHELL_OIDC_CLIENT_SECRET:-}" ] && [ -n "${OPENSHELL_OIDC_CLIENT_ID:-}" ] \
