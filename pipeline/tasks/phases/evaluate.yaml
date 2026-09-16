@@ -1675,7 +1675,7 @@ spec:
         # than for its cross-namespace Service DNS name. Keep client mTLS
         # enabled, but skip only server-name verification for this CI path.
         - name: OPENSHELL_GATEWAY_INSECURE
-          value: "true"
+          value: "false"
         - name: AGENT_EVAL_OPENSHELL_IMAGE
           value: "$(params.openshell-sandbox-image)"
         - name: AGENT_EVAL_OPENSHELL_PROVIDER
@@ -1766,10 +1766,23 @@ spec:
         # never printed. The insecure flag is intentionally test-only and is
         # supplied by the Secret until the SAW route has a trusted certificate.
         if [[ "${OPENSHELL_GATEWAY_ENDPOINT}" == *".svc.cluster.local:"* ]]; then
+          CLI_GATEWAY_ENDPOINT="$OPENSHELL_GATEWAY_ENDPOINT"
+          if [[ "$OPENSHELL_GATEWAY_ENDPOINT" == *"openshell-saw-agent-gateway.saw-cchase.svc.cluster.local"* ]]; then
+            SAW_IP="$(getent ahostsv4 openshell-saw-agent-gateway.saw-cchase.svc.cluster.local 2>/dev/null | awk 'NR==1 {print $1}')"
+            if [ -z "$SAW_IP" ]; then
+              echo "ERROR: could not resolve the SAW gateway Service IP" >&2
+              exit 1
+            fi
+            if ! grep -Eq "^[[:space:]]*${SAW_IP}[[:space:]]+openshell\.openshell\.svc\.cluster\.local([[:space:]]|$)" /etc/hosts; then
+              printf '%s openshell.openshell.svc.cluster.local\n' "$SAW_IP" >> /etc/hosts
+            fi
+            CLI_GATEWAY_ENDPOINT="https://openshell.openshell.svc.cluster.local:17670"
+            echo "OpenShell mTLS endpoint mapped to certificate-valid hostname: ${CLI_GATEWAY_ENDPOINT}"
+          fi
           # Use the CLI's supported local/mTLS registration path. This lets
           # the installed CLI create metadata in the exact shape it expects
           # and associate the staged client bundle with the gateway profile.
-          openshell gateway add "$OPENSHELL_GATEWAY_ENDPOINT" \
+          openshell gateway add "$CLI_GATEWAY_ENDPOINT" \
             --local \
             --name "$GW_NAME" \
             >/tmp/openshell-gateway-add.log 2>&1 || {
