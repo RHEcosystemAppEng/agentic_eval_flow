@@ -20,9 +20,11 @@ spec:
     - name: pipeline-repo-revision
       value: "feat/aeh-openshell-openclaw"
     - name: openshell-gateway-endpoint
-      value: "http://openshell.openshell.svc.cluster.local:8080"
+      # Use the verified cross-namespace mTLS Service path. The external
+      # OpenShift Route currently returns a malformed 503 to gRPC clients.
+      value: "https://openshell-saw-agent-gateway.saw-cchase.svc.cluster.local:17670"
     - name: openshell-sandbox-image
-      value: "quay.io/aipcc/base-images/agentic/openclaw:0.0.1-1787755593"
+      value: "ghcr.io/rh-forge/openclaw-saw-agent@sha256:bcc55e9b7a36d5f65e8ffc75962496f8b3617762a4cdb37fd1cf54611b72d41a"
     - name: aeh-openshell-image
       value: "registry.access.redhat.com/ubi9/python-311:9.6"
     - name: llm-model
@@ -36,7 +38,7 @@ spec:
     - name: enable-mlflow
       value: "true"
     - name: mlflow-tracking-uri
-      value: "http://abevalflow-mlflow.ab-eval-flow.svc.cluster.local:5000"
+      value: "http://abevalflow-mlflow.gz-forge-eval.svc.cluster.local:5000"
   taskRunTemplate:
     serviceAccountName: pipeline
   timeouts:

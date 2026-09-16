@@ -109,10 +109,10 @@ spec:
       default: "0.0.111"
     - name: openshell-gateway-endpoint
       type: string
-      default: "http://openshell.openshell.svc.cluster.local:8080"
+      default: "https://openshell-saw-agent-gateway.saw-cchase.svc.cluster.local:17670"
     - name: openshell-sandbox-image
       type: string
-      default: "quay.io/aipcc/base-images/agentic/openclaw:0.0.1-1787755593"
+      default: "ghcr.io/rh-forge/openclaw-saw-agent@sha256:bcc55e9b7a36d5f65e8ffc75962496f8b3617762a4cdb37fd1cf54611b72d41a"
     - name: openshell-provider
       type: string
       default: ""
@@ -122,13 +122,16 @@ spec:
     - name: openshell-credentials-secret
       type: string
       default: "openshell-credentials"
+    - name: openshell-oidc-secret
+      type: string
+      default: "openshell-oidc-credentials"
     - name: enable-mlflow
       type: string
       default: "true"
       description: Export MLFLOW_TRACKING_URI for AEH and run log_aeh_mlflow.py after evaluate
     - name: mlflow-tracking-uri
       type: string
-      default: "http://abevalflow-mlflow.ab-eval-flow.svc.cluster.local:5000"
+      default: "http://abevalflow-mlflow.gz-forge-eval.svc.cluster.local:5000"
       description: In-cluster MLflow tracking URI
     - name: enable-aeh-regression-check
       type: string
@@ -281,6 +284,8 @@ spec:
           value: $(params.openshell-mtls-secret)
         - name: openshell-credentials-secret
           value: $(params.openshell-credentials-secret)
+        - name: openshell-oidc-secret
+          value: $(params.openshell-oidc-secret)
         - name: enable-mlflow
           value: $(params.enable-mlflow)
         - name: mlflow-tracking-uri
