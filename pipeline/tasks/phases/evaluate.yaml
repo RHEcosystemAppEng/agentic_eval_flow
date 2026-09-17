@@ -202,7 +202,7 @@ spec:
         Override only if using a different gateway (e.g. forge-saw :17670).
     - name: openshell-sandbox-image
       type: string
-      default: "ghcr.io/rh-forge/openclaw-saw-agent@sha256:bcc55e9b7a36d5f65e8ffc75962496f8b3617762a4cdb37fd1cf54611b72d41a"
+      default: "ghcr.io/rh-forge/package-perms/openclaw-saw@sha256:fe0e7cd6f769fe4a1535ff8705331ae10f6148433e8a6c78d81eb1c019a68f16"
       description: >-
         Immutable SAW Chief-of-Staff image with the daily-briefing skill and
         governed M365/Slack tools.
