@@ -38,7 +38,11 @@ runner:
       # The namespace gateway exposes a certificate-valid local forward for
       # OpenShell sandboxes. The attached governed provider supplies the
       # bearer and rewrites it on this endpoint.
-      baseUrl: https://host.containers.internal:18084/v1
+      # Reach the namespace gateway directly from the sandbox. The VM-local
+      # host.containers.internal forward is not reachable from sandbox
+      # networking; this Service DNS name is policy-allowed and certificate-
+      # valid.
+      baseUrl: https://forge-ai-gateway.gz-forge-eval.svc.cluster.local:18486/v1
       api: openai-completions
       # The namespace provider instance injects and rewrites this capability token.
       # The vended OpenShell provider injects this governed Forge bearer into
