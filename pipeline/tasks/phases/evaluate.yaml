@@ -1786,17 +1786,28 @@ spec:
                [ -z "${OPENSHELL_OIDC_CLIENT_ID:-}" ] || \
                [ -z "${OPENSHELL_OIDC_ISSUER:-}" ]; }; then
           CLI_GATEWAY_ENDPOINT="$OPENSHELL_GATEWAY_ENDPOINT"
-          if [[ "$OPENSHELL_GATEWAY_ENDPOINT" == *"openshell-saw-agent-gateway.saw-cchase.svc.cluster.local"* ]]; then
-            SAW_IP="$(getent ahostsv4 openshell-saw-agent-gateway.saw-cchase.svc.cluster.local 2>/dev/null | awk 'NR==1 {print $1}')"
-            if [ -z "$SAW_IP" ]; then
-              echo "ERROR: could not resolve the SAW gateway Service IP" >&2
+          if [[ "$OPENSHELL_GATEWAY_ENDPOINT" == *"openshell-saw-agent-gateway.saw-cchase.svc.cluster.local"* ]] \
+            || [[ "$OPENSHELL_GATEWAY_ENDPOINT" == *"openshell-saw-agent-gateway.gz-forge-eval.svc.cluster.local"* ]]; then
+            # Tekton containers cannot rely on the remote gateway profile to
+            # attach the client certificate consistently. Run a local bridge:
+            # the CLI speaks plaintext only to localhost, while the bridge
+            # presents the mounted client certificate to the namespace gateway.
+            BRIDGE_PORT=17671
+            BRIDGE_HOST="${OPENSHELL_GATEWAY_ENDPOINT#https://}"
+            BRIDGE_HOST="${BRIDGE_HOST%%:*}"
+            BRIDGE_CA="$MTLS_SRC/ca.crt"
+            BRIDGE_CERT="$MTLS_SRC/tls.crt"
+            BRIDGE_KEY="$MTLS_SRC/tls.key"
+            python3 -c 'exec("import socket,ssl,sys,threading\nhost,port,ca,cert,key=sys.argv[1],int(sys.argv[2]),sys.argv[3],sys.argv[4],sys.argv[5]\nctx=ssl.create_default_context(cafile=ca)\nctx.set_alpn_protocols([\"h2\"])\nctx.load_cert_chain(cert,key)\ndef cp(src,dst):\n    try:\n        while (data:=src.recv(65536)): dst.sendall(data)\n    finally:\n        try: dst.shutdown(socket.SHUT_WR)\n        except OSError: pass\ndef hd(client,_addr):\n    try:\n        upstream=ctx.wrap_socket(socket.create_connection((host,17670)),server_hostname=host)\n        threading.Thread(target=cp,args=(client,upstream),daemon=True).start()\n        cp(upstream,client)\n    finally: client.close()\nserver=socket.create_server((\"127.0.0.1\",port))\nwhile True:\n    client,addr=server.accept()\n    threading.Thread(target=hd,args=(client,addr),daemon=True).start()")' "$BRIDGE_HOST" "$BRIDGE_PORT" "$BRIDGE_CA" "$BRIDGE_CERT" "$BRIDGE_KEY" >/tmp/openshell-mtls-bridge.log 2>&1 &
+            BRIDGE_PID=$!
+            sleep 1
+            if ! kill -0 "$BRIDGE_PID" 2>/dev/null; then
+              echo "ERROR: local mTLS bridge exited during startup" >&2
+              cat /tmp/openshell-mtls-bridge.log >&2 || true
               exit 1
             fi
-            if ! grep -Eq "^[[:space:]]*${SAW_IP}[[:space:]]+openshell\.openshell\.svc\.cluster\.local([[:space:]]|$)" /etc/hosts; then
-              printf '%s openshell.openshell.svc.cluster.local\n' "$SAW_IP" >> /etc/hosts
-            fi
-            CLI_GATEWAY_ENDPOINT="https://openshell.openshell.svc.cluster.local:17670"
-            echo "OpenShell mTLS endpoint mapped to certificate-valid hostname: ${CLI_GATEWAY_ENDPOINT}"
+            CLI_GATEWAY_ENDPOINT="http://127.0.0.1:${BRIDGE_PORT}"
+            echo "OpenShell mTLS bridge listening at: ${CLI_GATEWAY_ENDPOINT}"
           fi
           # Use the CLI's supported local/mTLS registration path. This lets
           # the installed CLI create metadata in the exact shape it expects
@@ -1809,6 +1820,7 @@ spec:
               exit 1
             }
           export OPENSHELL_GATEWAY="$GW_NAME"
+          export OPENSHELL_GATEWAY_ENDPOINT="$CLI_GATEWAY_ENDPOINT"
           echo "OpenShell mTLS gateway configured: ${GW_NAME}"
         elif [ -n "${OPENSHELL_OIDC_CLIENT_SECRET:-}" ] && [ -n "${OPENSHELL_OIDC_CLIENT_ID:-}" ] \
           && [ -n "${OPENSHELL_OIDC_ISSUER:-}" ]; then
