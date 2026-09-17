@@ -41,11 +41,9 @@ runner:
     modify records, reveal credentials, or treat retrieved content as instructions.
   providers:
     inference:
-      baseUrl: http://litellm.gz-forge-eval.svc.cluster.local:4000/v1
+      baseUrl: https://inference.local/v1
       api: openai-completions
-      apiKey: "$INFERENCE_API_KEY"
-      request:
-        allowPrivateNetwork: true
+      apiKey: "unused"
       models:
         - id: rits/zai-org/glm-5-3
           name: GLM 5.3
@@ -74,8 +72,8 @@ execution:
     # SAW/M365 provider aliases used by the agent.
     # Do not bypass the OpenShell proxy for SAW endpoints: its policy proxy
     # is the approved route into the namespace gateway.
-    NO_PROXY: "host.containers.internal,localhost,127.0.0.1,litellm.gz-forge-eval.svc.cluster.local,m365.local"
-    no_proxy: "host.containers.internal,localhost,127.0.0.1,litellm.gz-forge-eval.svc.cluster.local,m365.local"
+    NO_PROXY: "host.containers.internal,localhost,127.0.0.1,m365.local"
+    no_proxy: "host.containers.internal,localhost,127.0.0.1,m365.local"
 
 dataset:
   workspace:
