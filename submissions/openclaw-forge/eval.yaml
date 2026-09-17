@@ -78,8 +78,6 @@ execution:
 dataset:
   workspace:
     files:
-      - dest: AGENTS.md
-        source: workspace/AGENTS.md
       - dest: IDENTITY.md
         source: workspace/IDENTITY.md
       - dest: CLAW.md
