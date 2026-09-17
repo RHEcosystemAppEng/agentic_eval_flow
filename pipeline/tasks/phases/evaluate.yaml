@@ -1808,6 +1808,16 @@ spec:
               grep -vE 'client_secret|token|secret' /tmp/openshell-gateway-add.log || true
               exit 1
             }
+          # Some CLI versions recreate the profile directory during gateway
+          # registration. Restage the client bundle after registration so the
+          # first mTLS request cannot be sent without a certificate.
+          POST_ADD_MTLS_DST="${XDG_CONFIG_HOME}/openshell/gateways/${GW_NAME}/mtls"
+          mkdir -p "$POST_ADD_MTLS_DST"
+          cp -f "$MTLS_SRC/ca.crt" "$POST_ADD_MTLS_DST/"
+          cp -f "$MTLS_SRC/tls.crt" "$POST_ADD_MTLS_DST/"
+          cp -f "$MTLS_SRC/tls.key" "$POST_ADD_MTLS_DST/"
+          chmod 600 "$POST_ADD_MTLS_DST"/*
+          echo "OpenShell mTLS material restaged after gateway registration"
           export OPENSHELL_GATEWAY="$GW_NAME"
           export OPENSHELL_GATEWAY_ENDPOINT="$CLI_GATEWAY_ENDPOINT"
           echo "OpenShell mTLS gateway configured: ${GW_NAME}"
