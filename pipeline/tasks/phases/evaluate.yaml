@@ -1836,11 +1836,24 @@ spec:
               grep -vE 'client.secret|secret|token' /tmp/openshell-gateway-add.log || true
               exit 1
             }
-          OPENSHELL_GATEWAY="$GW_NAME" openshell gateway login "$GW_NAME" \
-            >/tmp/openshell-gateway-login.log 2>&1 || {
-              grep -vE 'client.secret|secret|token' /tmp/openshell-gateway-login.log || true
-              exit 1
-            }
+          OIDC_TOKEN_JSON=/tmp/openshell-oidc-token.json
+          curl -ksSf --max-time 20 \
+            -u "${OPENSHELL_OIDC_CLIENT_ID}:${OPENSHELL_OIDC_CLIENT_SECRET}" \
+            -d grant_type=client_credentials \
+            "${OPENSHELL_OIDC_ISSUER%/}/protocol/openid-connect/token" \
+            >"$OIDC_TOKEN_JSON"
+          python3 - "$OIDC_TOKEN_JSON" "$HOME/.config/openshell/gateways/$GW_NAME/oidc_token.json" \
+            "$OPENSHELL_OIDC_ISSUER" "$OPENSHELL_OIDC_CLIENT_ID" <<'PY'
+import json, sys, time
+src, dst, issuer, client_id = sys.argv[1:]
+payload = json.load(open(src, encoding="utf-8"))
+token = payload["access_token"]
+expires_at = int(time.time()) + int(payload.get("expires_in", 300))
+json.dump({"access_token": token, "expires_at": expires_at,
+           "issuer": issuer, "client_id": client_id}, open(dst, "w", encoding="utf-8"))
+PY
+          chmod 600 "$HOME/.config/openshell/gateways/$GW_NAME/oidc_token.json"
+          echo "OpenShell OIDC token cache populated via client credentials"
           export OPENSHELL_GATEWAY="$GW_NAME"
           echo "OpenShell OIDC gateway configured: ${GW_NAME}"
         else
