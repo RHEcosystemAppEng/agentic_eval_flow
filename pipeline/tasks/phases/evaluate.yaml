@@ -1688,7 +1688,10 @@ spec:
         # than for its cross-namespace Service DNS name. Keep client mTLS
         # enabled, but skip only server-name verification for this CI path.
         - name: OPENSHELL_GATEWAY_INSECURE
-          value: "false"
+          # The namespace gateway certificate is issued for the VM bridge
+          # hostname, while CI reaches the gateway through its Service DNS.
+          # Keep mTLS enabled and skip only server-name verification here.
+          value: "true"
         - name: AGENT_EVAL_OPENSHELL_IMAGE
           value: "$(params.openshell-sandbox-image)"
         - name: AGENT_EVAL_OPENSHELL_PROVIDER
