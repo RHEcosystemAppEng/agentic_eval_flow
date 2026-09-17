@@ -451,16 +451,6 @@ spec:
       env:
         - name: HOME
           value: /tmp/openshell-home
-        - name: INFERENCE_API_KEY
-          valueFrom:
-            secretKeyRef:
-              name: inference
-              key: api_key
-        - name: OPENAI_API_KEY
-          valueFrom:
-            secretKeyRef:
-              name: inference
-              key: api_key
         - name: XDG_CONFIG_HOME
           value: /tmp/openshell-home/.config
       script: |
@@ -1678,6 +1668,16 @@ spec:
       env:
         - name: HOME
           value: /tmp/openshell-home
+        - name: INFERENCE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: inference
+              key: api_key
+        - name: OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: inference
+              key: api_key
         - name: AGENT_EVAL_RUNS_DIR
           value: $(workspaces.source.path)/reports
         - name: OPENSHELL_GATEWAY_ENDPOINT
