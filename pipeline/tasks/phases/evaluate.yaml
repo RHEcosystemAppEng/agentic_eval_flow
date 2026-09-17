@@ -1781,10 +1781,7 @@ spec:
         # The client secret is injected from openshell-oidc-credentials and is
         # never printed. The insecure flag is intentionally test-only and is
         # supplied by the Secret until the SAW route has a trusted certificate.
-        if [[ "${OPENSHELL_GATEWAY_ENDPOINT}" == *".svc.cluster.local:"* ]] \
-          && { [ -z "${OPENSHELL_OIDC_CLIENT_SECRET:-}" ] || \
-               [ -z "${OPENSHELL_OIDC_CLIENT_ID:-}" ] || \
-               [ -z "${OPENSHELL_OIDC_ISSUER:-}" ]; }; then
+        if [[ "${OPENSHELL_GATEWAY_ENDPOINT}" == *".svc.cluster.local:"* ]]; then
           CLI_GATEWAY_ENDPOINT="$OPENSHELL_GATEWAY_ENDPOINT"
           if [[ "$OPENSHELL_GATEWAY_ENDPOINT" == *"openshell-saw-agent-gateway.saw-cchase.svc.cluster.local"* ]]; then
             SAW_IP="$(getent ahostsv4 openshell-saw-agent-gateway.saw-cchase.svc.cluster.local 2>/dev/null | awk 'NR==1 {print $1}')"
