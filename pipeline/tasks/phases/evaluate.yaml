@@ -1783,8 +1783,22 @@ spec:
         # supplied by the Secret until the SAW route has a trusted certificate.
         if [[ "${OPENSHELL_GATEWAY_ENDPOINT}" == *".svc.cluster.local:"* ]]; then
           CLI_GATEWAY_ENDPOINT="$OPENSHELL_GATEWAY_ENDPOINT"
-          if [[ "$OPENSHELL_GATEWAY_ENDPOINT" == *"openshell-saw-agent-gateway.saw-cchase.svc.cluster.local"* ]] \
-            || [[ "$OPENSHELL_GATEWAY_ENDPOINT" == *"openshell-saw-agent-gateway.gz-forge-eval.svc.cluster.local"* ]]; then
+          # The SAW gateway certificate is issued for the shared service name,
+          # not the namespace-local alias. Keep the connection mTLS-native and
+          # make the certificate-valid name resolve to the local gateway IP.
+          if [[ "$OPENSHELL_GATEWAY_ENDPOINT" == *"openshell-saw-agent-gateway.gz-forge-eval.svc.cluster.local"* ]]; then
+            SAW_IP="$(getent ahostsv4 openshell-saw-agent-gateway.gz-forge-eval.svc.cluster.local 2>/dev/null | awk 'NR==1 {print $1}')"
+            if [ -z "$SAW_IP" ]; then
+              echo "ERROR: could not resolve the gz-forge-eval SAW gateway Service IP" >&2
+              exit 1
+            fi
+            if ! grep -Eq "^[[:space:]]*${SAW_IP}[[:space:]]+openshell\\.openshell\\.svc\\.cluster\\.local([[:space:]]|$)" /etc/hosts; then
+              printf '%s openshell.openshell.svc.cluster.local\n' "$SAW_IP" >> /etc/hosts
+            fi
+            CLI_GATEWAY_ENDPOINT="https://openshell.openshell.svc.cluster.local:17670"
+            echo "OpenShell mTLS endpoint mapped to certificate-valid hostname: ${CLI_GATEWAY_ENDPOINT}"
+          fi
+          if [[ "$OPENSHELL_GATEWAY_ENDPOINT" == *"openshell-saw-agent-gateway.saw-cchase.svc.cluster.local"* ]]; then
             BRIDGE_PORT=17671
             BRIDGE_HOST="${OPENSHELL_GATEWAY_ENDPOINT#https://}"
             BRIDGE_HOST="${BRIDGE_HOST%%:*}"
