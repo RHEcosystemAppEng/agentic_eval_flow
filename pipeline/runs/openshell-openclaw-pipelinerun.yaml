@@ -25,7 +25,7 @@ spec:
     - name: openshell-sandbox-image
       value: "ghcr.io/rh-forge/openclaw-saw-agent@sha256:bcc55e9b7a36d5f65e8ffc75962496f8b3617762a4cdb37fd1cf54611b72d41a"
     - name: openshell-provider
-      value: "openai"
+      value: "forge-ai-gateway,m365-read-intervm,slack-read-proxy,drafts-service-agent"
     - name: aeh-openshell-image
       value: "registry.access.redhat.com/ubi9/python-311:9.6"
     - name: llm-model
