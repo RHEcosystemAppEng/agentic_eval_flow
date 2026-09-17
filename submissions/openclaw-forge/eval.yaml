@@ -41,10 +41,9 @@ runner:
       baseUrl: https://host.containers.internal:18084/v1
       api: openai-completions
       # The namespace provider instance injects and rewrites this capability token.
-      # Let the attached OpenShell provider inject the governed Forge bearer.
-      # Do not substitute the cluster inference Secret here: it is not the
-      # credential accepted by the namespace Forge gateway.
-      apiKey: "openshell:placeholder"
+      # The vended OpenShell provider injects this governed Forge bearer into
+      # the sandbox. Do not substitute the cluster inference Secret here.
+      apiKey: "$FORGE_AI_GATEWAY_BEARER"
       # OpenClaw's SSRF protection requires this explicit, per-provider opt-in.
       request:
         allowPrivateNetwork: true
