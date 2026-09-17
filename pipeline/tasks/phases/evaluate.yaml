@@ -1781,26 +1781,33 @@ spec:
         # The client secret is injected from openshell-oidc-credentials and is
         # never printed. The insecure flag is intentionally test-only and is
         # supplied by the Secret until the SAW route has a trusted certificate.
-        if [[ "${OPENSHELL_GATEWAY_ENDPOINT}" == *".svc.cluster.local:"* ]] \
-          && { [ -z "${OPENSHELL_OIDC_CLIENT_SECRET:-}" ] || \
-               [ -z "${OPENSHELL_OIDC_CLIENT_ID:-}" ] || \
-               [ -z "${OPENSHELL_OIDC_ISSUER:-}" ]; }; then
+        if [[ "${OPENSHELL_GATEWAY_ENDPOINT}" == *".svc.cluster.local:"* ]]; then
           CLI_GATEWAY_ENDPOINT="$OPENSHELL_GATEWAY_ENDPOINT"
-          if [[ "$OPENSHELL_GATEWAY_ENDPOINT" == *"openshell-saw-agent-gateway.saw-cchase.svc.cluster.local"* ]]; then
-            SAW_IP="$(getent ahostsv4 openshell-saw-agent-gateway.saw-cchase.svc.cluster.local 2>/dev/null | awk 'NR==1 {print $1}')"
-            if [ -z "$SAW_IP" ]; then
-              echo "ERROR: could not resolve the SAW gateway Service IP" >&2
-              exit 1
-            fi
-            if ! grep -Eq "^[[:space:]]*${SAW_IP}[[:space:]]+openshell\.openshell\.svc\.cluster\.local([[:space:]]|$)" /etc/hosts; then
-              printf '%s openshell.openshell.svc.cluster.local\n' "$SAW_IP" >> /etc/hosts
-            fi
-            CLI_GATEWAY_ENDPOINT="https://openshell.openshell.svc.cluster.local:17670"
-            echo "OpenShell mTLS endpoint mapped to certificate-valid hostname: ${CLI_GATEWAY_ENDPOINT}"
+          if [[ "$OPENSHELL_GATEWAY_ENDPOINT" == *"openshell-saw-agent-gateway.saw-cchase.svc.cluster.local"* ]] \
+            || [[ "$OPENSHELL_GATEWAY_ENDPOINT" == *"openshell-saw-agent-gateway.gz-forge-eval.svc.cluster.local"* ]]; then
+            BRIDGE_PORT=17671
+            BRIDGE_HOST="${OPENSHELL_GATEWAY_ENDPOINT#https://}"
+            BRIDGE_HOST="${BRIDGE_HOST%%:*}"
+            BRIDGE_CA="$MTLS_SRC/ca.crt"
+            BRIDGE_CERT="$MTLS_SRC/tls.crt"
+            BRIDGE_KEY="$MTLS_SRC/tls.key"
+            BRIDGE_SERVER_CERT=/tmp/openshell-bridge.crt
+            BRIDGE_SERVER_KEY=/tmp/openshell-bridge.key
+            openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+              -subj '/CN=localhost' -keyout "$BRIDGE_SERVER_KEY" -out "$BRIDGE_SERVER_CERT" \
+              >/dev/null 2>&1
+            python3 -c 'exec("import socket,ssl,sys,threading\nhost,port,ca,cert,key,scert,skey=sys.argv[1],int(sys.argv[2]),sys.argv[3],sys.argv[4],sys.argv[5],sys.argv[6],sys.argv[7]\nup=ssl.create_default_context(cafile=ca)\nup.set_alpn_protocols([\"h2\"])\nup.load_cert_chain(cert,key)\nsv=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)\nsv.set_alpn_protocols([\"h2\"])\nsv.load_cert_chain(scert,skey)\ndef cp(src,dst):\n    try:\n        while (data:=src.recv(65536)): dst.sendall(data)\n    finally:\n        try: dst.shutdown(socket.SHUT_WR)\n        except OSError: pass\ndef hd(raw,_addr):\n    try:\n        client=sv.wrap_socket(raw,server_side=True)\n        upstream=up.wrap_socket(socket.create_connection((host,17670)),server_hostname=host)\n        threading.Thread(target=cp,args=(client,upstream),daemon=True).start()\n        cp(upstream,client)\n    except Exception:\n        raw.close()\nserver=socket.create_server((\"127.0.0.1\",port))\nwhile True:\n    client,addr=server.accept()\n    threading.Thread(target=hd,args=(client,addr),daemon=True).start()\")' "$BRIDGE_HOST" "$BRIDGE_PORT" "$BRIDGE_CA" "$BRIDGE_CERT" "$BRIDGE_KEY" "$BRIDGE_SERVER_CERT" "$BRIDGE_SERVER_KEY" >/tmp/openshell-mtls-bridge.log 2>&1 &
+            BRIDGE_PID=$!
+            sleep 1
+            kill -0 "$BRIDGE_PID" 2>/dev/null || { cat /tmp/openshell-mtls-bridge.log >&2 || true; exit 1; }
+            CLI_GATEWAY_ENDPOINT="https://127.0.0.1:${BRIDGE_PORT}"
+            export OPENSHELL_GATEWAY_INSECURE=true
+            echo "OpenShell TLS mTLS bridge listening at: ${CLI_GATEWAY_ENDPOINT}"
           fi
           # Use the CLI's supported local/mTLS registration path. This lets
           # the installed CLI create metadata in the exact shape it expects
           # and associate the staged client bundle with the gateway profile.
+          openshell gateway remove "$GW_NAME" >/dev/null 2>&1 || true
           openshell gateway add "$CLI_GATEWAY_ENDPOINT" \
             --local \
             --name "$GW_NAME" \
@@ -1808,6 +1815,13 @@ spec:
               grep -vE 'client_secret|token|secret' /tmp/openshell-gateway-add.log || true
               exit 1
             }
+          POST_ADD_MTLS_DST="${XDG_CONFIG_HOME}/openshell/gateways/${GW_NAME}/mtls"
+          mkdir -p "$POST_ADD_MTLS_DST"
+          cp -f "$MTLS_SRC/ca.crt" "$POST_ADD_MTLS_DST/"
+          cp -f "$MTLS_SRC/tls.crt" "$POST_ADD_MTLS_DST/"
+          cp -f "$MTLS_SRC/tls.key" "$POST_ADD_MTLS_DST/"
+          chmod 600 "$POST_ADD_MTLS_DST"/*
+          echo "OpenShell mTLS material restaged after gateway registration"
           export OPENSHELL_GATEWAY="$GW_NAME"
           export OPENSHELL_GATEWAY_ENDPOINT="$CLI_GATEWAY_ENDPOINT"
           echo "OpenShell mTLS gateway configured: ${GW_NAME}"
