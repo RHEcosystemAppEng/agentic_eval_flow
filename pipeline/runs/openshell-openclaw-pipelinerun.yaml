@@ -23,7 +23,7 @@ spec:
       # Use the namespace-local SAW gateway with OIDC + mTLS.
       value: "https://openshell-saw-agent-gateway.gz-forge-eval.svc.cluster.local:17670"
     - name: openshell-sandbox-image
-      value: "ghcr.io/rh-forge/package-perms/openclaw-saw@sha256:fe0e7cd6f769fe4a1535ff8705331ae10f6148433e8a6c78d81eb1c019a68f16"
+      value: "ghcr.io/rh-forge/package-perms/openclaw-saw:latest"
     - name: openshell-provider
       value: "openai"
     - name: aeh-openshell-image

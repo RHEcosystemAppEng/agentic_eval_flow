@@ -112,7 +112,7 @@ spec:
       default: "https://openshell.openshell.svc.cluster.local:17670"
     - name: openshell-sandbox-image
       type: string
-      default: "ghcr.io/rh-forge/package-perms/openclaw-saw@sha256:fe0e7cd6f769fe4a1535ff8705331ae10f6148433e8a6c78d81eb1c019a68f16"
+      default: "ghcr.io/rh-forge/package-perms/openclaw-saw:latest"
     - name: openshell-provider
       type: string
       default: "forge-ai-gateway-local"
