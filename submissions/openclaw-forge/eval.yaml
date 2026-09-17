@@ -51,7 +51,7 @@ runner:
 execution:
   mode: case
   prompt: "{{ input.prompt }}"
-  timeout: 300
+  timeout: 900
   env:
     # The provider is vended by the namespace-local OpenShell gateway.
     INFERENCE_API_KEY: "$INFERENCE_API_KEY"
