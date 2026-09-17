@@ -1806,6 +1806,7 @@ spec:
           # Use the CLI's supported local/mTLS registration path. This lets
           # the installed CLI create metadata in the exact shape it expects
           # and associate the staged client bundle with the gateway profile.
+          openshell gateway remove "$GW_NAME" >/dev/null 2>&1 || true
           openshell gateway add "$CLI_GATEWAY_ENDPOINT" \
             --local \
             --name "$GW_NAME" \
