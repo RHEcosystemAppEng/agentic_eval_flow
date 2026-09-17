@@ -19,6 +19,14 @@ models:
 
 runner:
   type: openclaw
+  # Memory sync is unrelated to this evaluation and otherwise probes the
+  # public OpenAI embeddings endpoint with the namespace inference key.
+  # Disable it so the only model request is the intended GLM call.
+  settings:
+    plugins:
+      entries:
+        memory-core:
+          enabled: false
   system_prompt: |
     You are an evaluation agent preparing a grounded executive briefing.
     The Forge Chief of Staff workspace package is mounted at /sandbox.
@@ -66,8 +74,8 @@ execution:
     # SAW/M365 provider aliases used by the agent.
     # Do not bypass the OpenShell proxy for SAW endpoints: its policy proxy
     # is the approved route into the namespace gateway.
-    NO_PROXY: "host.containers.internal,localhost,127.0.0.1,m365.local"
-    no_proxy: "host.containers.internal,localhost,127.0.0.1,m365.local"
+    NO_PROXY: "host.containers.internal,localhost,127.0.0.1,litellm.gz-forge-eval.svc.cluster.local,m365.local"
+    no_proxy: "host.containers.internal,localhost,127.0.0.1,litellm.gz-forge-eval.svc.cluster.local,m365.local"
 
 dataset:
   workspace:
