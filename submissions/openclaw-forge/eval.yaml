@@ -57,6 +57,14 @@ execution:
   prompt: "{{ input.prompt }}"
   timeout: 300
   env:
+    # The Forge forward is a namespace-local endpoint. Do not send sandbox
+    # model traffic through the ambient cluster HTTP proxy.
+    HTTP_PROXY: ""
+    HTTPS_PROXY: ""
+    http_proxy: ""
+    https_proxy: ""
+    NO_PROXY: "host.containers.internal,127.0.0.1,localhost"
+    no_proxy: "host.containers.internal,127.0.0.1,localhost"
     M365_ACCESS_TOKEN: "$M365_ACCESS_TOKEN"
     M365_USER: "$M365_USER"
     M365_TENANT_ID: "$M365_TENANT_ID"
