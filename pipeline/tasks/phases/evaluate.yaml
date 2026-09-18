@@ -1802,6 +1802,10 @@ spec:
             kill -0 "$BRIDGE_PID" 2>/dev/null || { cat /tmp/openshell-mtls-bridge.log >&2 || true; exit 1; }
             CLI_GATEWAY_ENDPOINT="https://127.0.0.1:${BRIDGE_PORT}"
             export OPENSHELL_GATEWAY_INSECURE=true
+            # The bridge owns the upstream client certificate. Force the CLI
+            # to use the local endpoint directly so it cannot replace it with
+            # the service-DNS profile or attempt a second client handshake.
+            export OPENSHELL_GATEWAY_NAME=""
             echo "OpenShell TLS mTLS bridge listening at: ${CLI_GATEWAY_ENDPOINT}"
           fi
           # Use the CLI's supported local/mTLS registration path. This lets
