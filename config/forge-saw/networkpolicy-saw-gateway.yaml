@@ -1,0 +1,79 @@
+# NetworkPolicies for the OpenShell gateway VM when it shares a namespace with
+# ABEvalFlow and the forge-workspace default-deny rules.
+#
+# The standalone openshell-saw chart does not label its setup Job
+# app.kubernetes.io/component=setup, so the chart's own
+# forge-workspace-allow-kubernetes-api policy never matches it and the Job hangs
+# on "couldn't get current server API group list". Both the Job and the VM pod do
+# carry app.kubernetes.io/part-of=openshell-cnv-fedora, so select on that.
+#
+#     oc apply -n <your-namespace> -f networkpolicy-saw-gateway.yaml
+#
+# NODE_CIDR: see the note in networkpolicy-eval-stack.yaml.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: abevalflow-allow-saw-egress
+  labels: {app.kubernetes.io/part-of: abevalflow}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/part-of: openshell-cnv-fedora}
+  policyTypes: [Egress]
+  egress:
+    # DNS — the chart's <release>-default policy allows this too, but do not
+    # depend on it: any policy selecting the pod makes unlisted egress denied.
+    - ports:
+        - {protocol: UDP, port: 5353}
+        - {protocol: TCP, port: 5353}
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+      to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: openshift-dns}
+    - ports:
+        - {protocol: TCP, port: 443}
+        - {protocol: TCP, port: 6443}
+      to:
+        - ipBlock: {cidr: 172.30.0.1/32}   # kubernetes.default.svc ClusterIP
+        - ipBlock: {cidr: 10.0.0.0/16}     # NODE_CIDR
+    # model traffic to the namespace-local LiteLLM, plus MLflow and minio
+    - to:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/part-of: abevalflow}
+    # Image registries. The chart's own <release>-default policy selects the VM
+    # for Egress and allows only DNS, so podman inside the VM cannot pull the
+    # OpenShell binaries or the sandbox image: the setup Job fails with
+    # "pinging container registry ghcr.io: ... i/o timeout" and, because the
+    # upgrade step has already replaced the binaries, the gateway service then
+    # fails to start. Narrow this with an EgressFirewall if your cluster
+    # restricts egress by destination.
+    - ports:
+        - {protocol: TCP, port: 443}
+        - {protocol: TCP, port: 80}
+      to:
+        - ipBlock: {cidr: 0.0.0.0/0}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: abevalflow-allow-saw-ingress
+  labels: {app.kubernetes.io/part-of: abevalflow}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/part-of: openshell-cnv-fedora}
+  policyTypes: [Ingress]
+  ingress:
+    # pipeline pods create sandboxes over the gateway port
+    - from:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/managed-by: tekton-pipelines}
+      ports:
+        - {protocol: TCP, port: 17670}
+        - {protocol: TCP, port: 8443}
+    # OpenShift Virtualization needs to reach the VM
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: openshift-cnv}
+    - from:
+        - ipBlock: {cidr: 10.0.0.0/16}     # NODE_CIDR

@@ -1,0 +1,40 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: eval-stack-probe
+  # Deliberately not labelled app.kubernetes.io/part-of: abevalflow — the probe
+  # must be seen by NetworkPolicy as an ordinary Tekton pod, otherwise it passes
+  # through the stack's own allow-rules and reports connectivity the pipeline
+  # does not actually have.
+spec:
+  description: >-
+    Probes every dependency an ABEvalFlow pipeline pod needs. Run it before and
+    after NetworkPolicy changes to see exactly which paths are blocked.
+  steps:
+    - name: probe
+      image: registry.access.redhat.com/ubi9/python-311:9.6
+      script: |
+        #!/usr/bin/env bash
+        NS="$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace 2>/dev/null || echo current)"
+        fail=0
+        probe() { # name url
+          if curl -sS --max-time 8 -o /dev/null -w "%{http_code}" $2 >/tmp/code 2>/tmp/err; then
+            echo "  PASS  $1  (HTTP $(cat /tmp/code))"
+          else
+            echo "  FAIL  $1  -> $(tr -d '\n' </tmp/err | cut -c1-110)"; fail=1
+          fi
+        }
+        echo "=== eval stack probe from a Tekton pod in $NS ==="
+        probe "mlflow   api"   "http://abevalflow-mlflow.$NS.svc.cluster.local:5000/api/2.0/mlflow/experiments/search?max_results=1"
+        probe "litellm  health" "http://litellm.$NS.svc.cluster.local:4000/health/liveliness"
+        probe "minio    health" "http://minio.$NS.svc.cluster.local:9000/minio/health/live"
+        probe "k8s api"         "--cacert /var/run/secrets/kubernetes.io/serviceaccount/ca.crt https://kubernetes.default.svc/version"
+        probe "github (clone)"  "https://github.com"
+        # postgres: TCP only, no client needed
+        if timeout 8 bash -c 'cat < /dev/null > /dev/tcp/postgres.'"$NS"'.svc.cluster.local/5432' 2>/tmp/pgerr; then
+          echo "  PASS  postgres tcp5432"
+        else
+          echo "  FAIL  postgres tcp5432 -> $(tr -d '\n' </tmp/pgerr | cut -c1-110)"; fail=1
+        fi
+        echo "=== $( [ $fail -eq 0 ] && echo 'ALL PASSED' || echo 'FAILURES PRESENT' ) ==="
+        exit $fail
