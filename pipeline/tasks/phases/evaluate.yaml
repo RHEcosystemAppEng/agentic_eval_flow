@@ -2,7 +2,6 @@ apiVersion: tekton.dev/v1
 kind: Task
 metadata:
   name: evaluate
-  namespace: ab-eval-flow
   labels:
     app.kubernetes.io/name: abevalflow
     app.kubernetes.io/component: phase
@@ -1704,6 +1703,15 @@ spec:
           value: "$(params.llm-api-base)"
         - name: ANTHROPIC_API_KEY
           value: "$(params.llm-api-key)"
+        # Submissions declare the model provider as https://inference.local/v1,
+        # the gateway's cluster-inference relay. That relay accepts only builtin
+        # provider types and, for type "openai", dials api.openai.com whatever
+        # base_url says, so a namespace-local LiteLLM is unreachable through it
+        # ("cluster inference is not configured", then HTTP 401). Point the
+        # sandbox provider at this deployment's endpoint instead; the harness
+        # also adds it to the sandbox network policy.
+        - name: AGENT_EVAL_MODEL_BASE_URL
+          value: "$(params.llm-api-base)"
         # Orchestrator env. AEH OpenShell forwards these into sandbox exec via
         # _FORWARD_ENV and eval.yaml execution.env $M365_* resolution. seed:
         # external — mailbox is pre-seeded; do not populate crabline/smolclaw.
@@ -1758,6 +1766,17 @@ spec:
           export PATH="/tmp/bin:$PATH"
         fi
 
+        # The Forge AI gateway CA is only present when that gateway is deployed
+        # in the namespace. A standalone eval gateway has none, and the harness
+        # refuses to start when the variable names a file it cannot read
+        # ("AGENT_EVAL_FORGE_AI_GATEWAY_CA_FILE does not name a readable CA
+        # file"). Drop the variable rather than requiring an unrelated Secret.
+        if [ -n "${AGENT_EVAL_FORGE_AI_GATEWAY_CA_FILE:-}" ] \
+          && [ ! -r "${AGENT_EVAL_FORGE_AI_GATEWAY_CA_FILE}" ]; then
+          echo "No Forge AI gateway CA mounted; continuing without it."
+          unset AGENT_EVAL_FORGE_AI_GATEWAY_CA_FILE
+        fi
+
         # Materialize the CI client certificate before registering the gateway.
         # gateway add inspects this directory when selecting mTLS transport.
         export XDG_CONFIG_HOME="${HOME}/.config"
@@ -1771,7 +1790,21 @@ spec:
           cp -f "$MTLS_SRC/tls.crt" "$MTLS_DST/"
           cp -f "$MTLS_SRC/tls.key" "$MTLS_DST/"
           chmod 600 "$MTLS_DST"/* 2>/dev/null || true
+          # The CLI takes its client identity from the OpenShell state directory,
+          # not from the per-gateway profile alone: the layout forge-saw installs
+          # on the VM in setup-runtime-mtls.sh. Without it the CLI finishes the
+          # TLS handshake presenting no certificate and the gateway aborts with
+          # "received fatal alert: CertificateRequired".
+          MTLS_STATE="${HOME}/.local/state/openshell/tls"
+          mkdir -p "$MTLS_STATE/client"
+          cp -f "$MTLS_SRC/ca.crt"  "$MTLS_STATE/ca.crt" 2>/dev/null || true
+          cp -f "$MTLS_SRC/tls.crt" "$MTLS_STATE/client/tls.crt"
+          cp -f "$MTLS_SRC/tls.key" "$MTLS_STATE/client/tls.key"
+          chmod 700 "$MTLS_STATE" "$MTLS_STATE/client" 2>/dev/null || true
+          chmod 600 "$MTLS_STATE/ca.crt" "$MTLS_STATE/client/"* 2>/dev/null || true
+          export OPENSHELL_LOCAL_TLS_DIR="$MTLS_STATE"
           echo "OpenShell mTLS material staged before gateway registration"
+          echo "OpenShell mTLS client identity staged at $MTLS_STATE"
         else
           echo "ERROR: openshell-mtls client certificate is missing" >&2
           exit 1
@@ -1781,34 +1814,15 @@ spec:
         # The client secret is injected from openshell-oidc-credentials and is
         # never printed. The insecure flag is intentionally test-only and is
         # supplied by the Secret until the SAW route has a trusted certificate.
-        if [[ "${OPENSHELL_GATEWAY_ENDPOINT}" == *".svc.cluster.local:"* ]]; then
+        # mTLS secures the transport; it is not an identity this gateway accepts.
+        # Registering with --local writes auth_mode=mtls, and in that mode the CLI
+        # never attaches a bearer token, so a gateway with OIDC enabled answers
+        # "The request does not have valid authentication credentials". Prefer the
+        # OIDC registration below whenever a client is configured, and keep the
+        # staged mTLS bundle for the transport.
+        if [[ "${OPENSHELL_GATEWAY_ENDPOINT}" == *".svc.cluster.local:"* ]] \
+          && [ -z "${OPENSHELL_OIDC_CLIENT_SECRET:-}" ]; then
           CLI_GATEWAY_ENDPOINT="$OPENSHELL_GATEWAY_ENDPOINT"
-          if [[ "$OPENSHELL_GATEWAY_ENDPOINT" == *"openshell-saw-agent-gateway.saw-cchase.svc.cluster.local"* ]] \
-            || [[ "$OPENSHELL_GATEWAY_ENDPOINT" == *"openshell-saw-agent-gateway.gz-forge-eval.svc.cluster.local"* ]]; then
-            BRIDGE_PORT=17671
-            BRIDGE_HOST="${OPENSHELL_GATEWAY_ENDPOINT#https://}"
-            BRIDGE_HOST="${BRIDGE_HOST%%:*}"
-            BRIDGE_CA="$MTLS_SRC/ca.crt"
-            BRIDGE_CERT="$MTLS_SRC/tls.crt"
-            BRIDGE_KEY="$MTLS_SRC/tls.key"
-            BRIDGE_SERVER_CERT=/tmp/openshell-bridge.crt
-            BRIDGE_SERVER_KEY=/tmp/openshell-bridge.key
-            openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
-              -subj '/CN=localhost' -keyout "$BRIDGE_SERVER_KEY" -out "$BRIDGE_SERVER_CERT" \
-              >/dev/null 2>&1
-            python3 -c 'exec("import socket,ssl,sys,threading\nhost,port,ca,cert,key,scert,skey=sys.argv[1],int(sys.argv[2]),sys.argv[3],sys.argv[4],sys.argv[5],sys.argv[6],sys.argv[7]\nup=ssl.create_default_context(cafile=ca)\nup.check_hostname=False\nup.set_alpn_protocols([\"h2\"])\nup.load_cert_chain(cert,key)\nsv=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)\nsv.set_alpn_protocols([\"h2\"])\nsv.load_cert_chain(scert,skey)\ndef cp(src,dst):\n    try:\n        while (data:=src.recv(65536)): dst.sendall(data)\n    finally:\n        try: dst.shutdown(socket.SHUT_WR)\n        except OSError: pass\ndef hd(raw,_addr):\n    try:\n        client=sv.wrap_socket(raw,server_side=True)\n        upstream=up.wrap_socket(socket.create_connection((host,17670)),server_hostname=host)\n        threading.Thread(target=cp,args=(client,upstream),daemon=True).start()\n        cp(upstream,client)\n    except Exception:\n        raw.close()\nserver=socket.create_server((\"127.0.0.1\",port))\nwhile True:\n    client,addr=server.accept()\n    threading.Thread(target=hd,args=(client,addr),daemon=True).start()\")' "$BRIDGE_HOST" "$BRIDGE_PORT" "$BRIDGE_CA" "$BRIDGE_CERT" "$BRIDGE_KEY" "$BRIDGE_SERVER_CERT" "$BRIDGE_SERVER_KEY" >/tmp/openshell-mtls-bridge.log 2>&1 &
-            BRIDGE_PID=$!
-            sleep 1
-            kill -0 "$BRIDGE_PID" 2>/dev/null || { cat /tmp/openshell-mtls-bridge.log >&2 || true; exit 1; }
-            CLI_GATEWAY_ENDPOINT="https://127.0.0.1:${BRIDGE_PORT}"
-            export OPENSHELL_GATEWAY_INSECURE=true
-            export OPENSHELL_MTLS_BRIDGE=true
-            # The bridge owns the upstream client certificate. Force the CLI
-            # to use the local endpoint directly so it cannot replace it with
-            # the service-DNS profile or attempt a second client handshake.
-            export OPENSHELL_GATEWAY_NAME=""
-            echo "OpenShell TLS mTLS bridge listening at: ${CLI_GATEWAY_ENDPOINT}"
-          fi
           # Use the CLI's supported local/mTLS registration path. This lets
           # the installed CLI create metadata in the exact shape it expects
           # and associate the staged client bundle with the gateway profile.
@@ -1849,16 +1863,53 @@ spec:
             >"$OIDC_TOKEN_JSON"
           python3 - "$OIDC_TOKEN_JSON" "$HOME/.config/openshell/gateways/$GW_NAME/oidc_token.json" \
             "$OPENSHELL_OIDC_ISSUER" "$OPENSHELL_OIDC_CLIENT_ID" <<'PY'
-import json, sys, time
-src, dst, issuer, client_id = sys.argv[1:]
-payload = json.load(open(src, encoding="utf-8"))
-token = payload["access_token"]
-expires_at = int(time.time()) + int(payload.get("expires_in", 300))
-json.dump({"access_token": token, "expires_at": expires_at,
+        import json, sys, time
+        src, dst, issuer, client_id = sys.argv[1:]
+        payload = json.load(open(src, encoding="utf-8"))
+        token = payload["access_token"]
+        expires_at = int(time.time()) + int(payload.get("expires_in", 300))
+        json.dump({"access_token": token, "expires_at": expires_at,
            "issuer": issuer, "client_id": client_id}, open(dst, "w", encoding="utf-8"))
-PY
+        PY
           chmod 600 "$HOME/.config/openshell/gateways/$GW_NAME/oidc_token.json"
           echo "OpenShell OIDC token cache populated via client credentials"
+          # gateway add rewrites the profile directory, so put the client bundle
+          # back: the token is the identity, the certificate is the transport.
+          OIDC_MTLS_DST="${XDG_CONFIG_HOME}/openshell/gateways/${GW_NAME}/mtls"
+          mkdir -p "$OIDC_MTLS_DST"
+          cp -f "$MTLS_SRC/ca.crt"  "$OIDC_MTLS_DST/" 2>/dev/null || true
+          cp -f "$MTLS_SRC/tls.crt" "$OIDC_MTLS_DST/" 2>/dev/null || true
+          cp -f "$MTLS_SRC/tls.key" "$OIDC_MTLS_DST/" 2>/dev/null || true
+          chmod 600 "$OIDC_MTLS_DST"/* 2>/dev/null || true
+          echo "OpenShell mTLS material restaged after OIDC gateway registration"
+          # Keycloak access tokens last ~5 minutes but one eval case can run for
+          # 15, so the token that created the first sandbox is expired before the
+          # next one ("invalid token: ExpiredSignature"). Keep the cache fresh for
+          # as long as this step runs.
+          (
+            while true; do
+              sleep 120
+              curl -ksSf --max-time 20 \
+                -u "${OPENSHELL_OIDC_CLIENT_ID}:${OPENSHELL_OIDC_CLIENT_SECRET}" \
+                -d grant_type=client_credentials \
+                "${OPENSHELL_OIDC_ISSUER%/}/protocol/openid-connect/token" \
+                >"${OIDC_TOKEN_JSON}.refresh" 2>/dev/null || continue
+              python3 - "${OIDC_TOKEN_JSON}.refresh" \
+                "$HOME/.config/openshell/gateways/$GW_NAME/oidc_token.json" \
+                "$OPENSHELL_OIDC_ISSUER" "$OPENSHELL_OIDC_CLIENT_ID" <<'REFRESH' || true
+        import json, sys, time
+        src, dst, issuer, client_id = sys.argv[1:]
+        payload = json.load(open(src, encoding="utf-8"))
+        json.dump({"access_token": payload["access_token"],
+                   "expires_at": int(time.time()) + int(payload.get("expires_in", 300)),
+                   "issuer": issuer, "client_id": client_id},
+                  open(dst, "w", encoding="utf-8"))
+        REFRESH
+              chmod 600 "$HOME/.config/openshell/gateways/$GW_NAME/oidc_token.json" 2>/dev/null || true
+            done
+          ) &
+          trap 'kill %1 2>/dev/null || true' EXIT
+          echo "OpenShell OIDC token refresher started"
           export OPENSHELL_GATEWAY="$GW_NAME"
           echo "OpenShell OIDC gateway configured: ${GW_NAME}"
         else
