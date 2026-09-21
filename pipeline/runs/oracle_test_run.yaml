@@ -2,7 +2,6 @@ apiVersion: tekton.dev/v1
 kind: TaskRun
 metadata:
   generateName: oracle-test-
-  namespace: ab-eval-flow
 spec:
   taskSpec:
     workspaces:

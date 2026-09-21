@@ -1,0 +1,86 @@
+# Standalone OpenShell gateway VM for an ABEvalFlow namespace.
+#
+#   helm upgrade --install <release> <forge-saw>/charts/openshell-saw \
+#     -n <your-namespace> -f values-namespace-gateway.yaml \
+#     --set sandboxName=<release> \
+#     --set sshPublicKey="$(cat ~/.forge-eval-keys/sandbox-ssh.pub)" \
+#     --set oidc.issuerUrl=https://<keycloak>/realms/<realm>
+#
+# Nothing here names a namespace: Helm installs into the namespace you pass with
+# -n, and the chart addresses its own Services by short name.
+sandboxName: ""          # set per install; <=19 chars. Service: <name>-gateway
+role: standalone
+agent: openclaw
+onboardCli: openclaw
+containerRuntime: podman
+namespaceMode: shared
+
+sshPublicKey: ""         # ssh-keygen -t ed25519 -f ~/.forge-eval-keys/sandbox-ssh
+
+# Namespace-scoped install only. The chart's ClusterRole/ClusterRoleBinding are
+# not required for an eval gateway and need cluster-level rights to create.
+createClusterRBAC: false
+
+# Import the golden disk straight from the registry. Cloning the DataSource in
+# the shared image namespace instead would need RBAC created in that namespace.
+#
+# Use the CDI secret format (accessKeyId/secretKey), not a dockerconfigjson:
+#   oc create secret generic forge-images-pull -n <ns> \
+#     --from-literal=accessKeyId=<ghcr-user> --from-literal=secretKey=<ghcr-token>
+#
+# pullMethod: pod is required for a private registry — a node-level pull cannot
+# use registryAuthSecret. Charts that predate the source.pullMethod fix ignore
+# this and need the VM patched once after install:
+#   oc patch vm <release> -n <ns> --type=json -p='[
+#     {"op":"replace","path":"/spec/dataVolumeTemplates/0/spec/source/registry/pullMethod","value":"pod"},
+#     {"op":"replace","path":"/spec/dataVolumeTemplates/0/spec/source/registry/secretRef","value":"forge-images-pull"}]'
+#   oc delete dv <release>-root -n <ns>      # re-imports with the corrected spec
+source:
+  dataSource: ""
+  pullMethod: pod
+  registryURL: "docker://ghcr.io/rh-forge/openshell-gateway:sha-6b22ce92017e6672b4aef2d20c9cc60a9cf7ebc1"
+  registryAuthSecret: forge-images-pull
+
+vm:
+  cores: 2
+  memory: 4Gi
+  diskSize: 40Gi
+  storageClassName: gp3
+
+# Private sandbox images (ghcr.io/rh-forge/openclaw-saw-agent) are pulled by
+# podman inside the VM, so a dockerconfigjson pull secret is copied in.
+registryAuthSecret: ghcr-rh-forge-auth
+
+# The setup Job's own image is private too. Setting it here avoids a race:
+# linking the secret to the ServiceAccount after `helm install` is too late for
+# a Job pod that has already been created, which then sits in ImagePullBackOff.
+imagePullSecrets:
+  - name: ghcr-rh-forge-auth
+
+route:
+  enabled: false
+  dashboard: false
+  webui: false
+dashboard:
+  enabled: false
+
+# Authentication stays ON. Setting an OIDC issuer makes cloud-init set
+# OPENSHELL_ENABLE_MTLS_AUTH=true and allow_unauthenticated_users=false, which
+# is what a shared cluster should run. The evaluate task authenticates with the
+# OIDC client and presents the mTLS client certificate for the transport.
+oidc:
+  issuerUrl: ""          # https://<keycloak-host>/realms/<realm>
+  clientId: openshell-cli
+  passthrough: true
+
+# The governance interceptor lives in the platform namespace; a standalone eval
+# gateway has no cross-namespace policy wiring.
+governance:
+  enabled: false
+
+job:
+  waitForSecrets: false
+
+inference:
+  deployProxy: true
+  secretName: inference

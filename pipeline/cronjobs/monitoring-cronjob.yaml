@@ -2,7 +2,6 @@ apiVersion: batch/v1
 kind: CronJob
 metadata:
   name: abevalflow-monitoring
-  namespace: ab-eval-flow
   labels:
     app.kubernetes.io/name: abevalflow
     app.kubernetes.io/component: monitoring

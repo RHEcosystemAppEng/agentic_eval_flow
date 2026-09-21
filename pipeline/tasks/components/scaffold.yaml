@@ -2,7 +2,6 @@ apiVersion: tekton.dev/v1
 kind: Task
 metadata:
   name: scaffold-submission
-  namespace: ab-eval-flow
 spec:
   description: >-
     Generates treatment and control Harbor task directories from a validated

@@ -2,7 +2,6 @@ apiVersion: tekton.dev/v1
 kind: Task
 metadata:
   name: analyze-report
-  namespace: ab-eval-flow
 spec:
   description: >-
     Analyzes A/B evaluation results and produces JSON + Markdown reports.

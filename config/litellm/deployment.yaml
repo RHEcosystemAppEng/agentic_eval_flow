@@ -2,7 +2,6 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: litellm
-  namespace: gz-forge-eval
   labels:
     app.kubernetes.io/part-of: abevalflow
     app.kubernetes.io/name: litellm

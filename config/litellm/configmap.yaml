@@ -2,7 +2,6 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: litellm-config
-  namespace: gz-forge-eval
   labels:
     app.kubernetes.io/part-of: abevalflow
     app.kubernetes.io/name: litellm
@@ -12,6 +11,19 @@ data:
       - model_name: rits/zai-org/glm-5-3
         litellm_params:
           model: openai/rits/zai-org/glm-5-3
+          api_base: os.environ/INFERENCE_ENDPOINT_URL
+          api_key: os.environ/INFERENCE_API_KEY
+
+      # Judge route. The LLM judges call /v1/messages (Anthropic dialect) —
+      # score.py has no OpenAI dialect. For an "openai/" model LiteLLM converts
+      # that to the upstream's /responses API, which this upstream rejects with
+      # 403 "Authentication parameters missing", so every scoring judge errors
+      # and mean_reward is unavailable. Routing the same upstream as hosted_vllm
+      # keeps the call on /chat/completions. Select it with
+      # aeh-judge-model-override=judge-glm-5-3.
+      - model_name: judge-glm-5-3
+        litellm_params:
+          model: hosted_vllm/rits/zai-org/glm-5-3
           api_base: os.environ/INFERENCE_ENDPOINT_URL
           api_key: os.environ/INFERENCE_API_KEY
 

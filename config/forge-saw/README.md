@@ -1,5 +1,21 @@
 # Shared forge-saw gateway for ABEvalFlow OpenClaw evals
 
+> **Namespace-local gateway (current path).** The files below stand up a gateway
+> and an eval stack in any namespace, with authentication left on:
+>
+> | File | What it is for |
+> |---|---|
+> | `values-namespace-gateway.yaml` | Helm values for a standalone `openshell-saw` gateway VM |
+> | `gateway-postinstall.sh` | Exports the VM's mTLS client identity, adds the CI subject to the gateway workspace, and configures the provider and inference route |
+> | `networkpolicy-eval-stack.yaml` | Lets the eval stack, Tekton and kubelet probes talk, under the forge-workspace default-deny rules |
+> | `networkpolicy-saw-gateway.yaml` | Same, for the gateway VM and its setup Job |
+>
+> End-to-end instructions — deploy, configure, run an evaluation and read the
+> results — are in `Docs/openshell-eval-namespace-setup.md`. Symptom-to-cause
+> notes are in `Docs/openshell-eval-troubleshooting.md`.
+>
+> The sections below describe the earlier single-VM `abeval-saw` flow.
+
 Install **once**. Evaluate PipelineRuns only call
 `python -m agent_eval.openshell.run` against the in-cluster gateway. They
 never Helm-install SAW.
@@ -75,6 +91,27 @@ Override pin / clone URL:
 ```bash
 FORGE_SAW_PIN=<sha> FORGE_SAW_REPO=https://github.com/rh-forge/forge-saw.git \
   ./config/forge-saw/bootstrap.sh
+```
+
+## Workspace membership (once per gateway)
+
+A gateway with OIDC enabled authenticates the CI service account but does not
+authorize it: every call comes back *"The caller does not have permission to
+execute the specified operation"*, and `openshell status` reports
+`Authenticated (OIDC; authorization denied)`. The gateway prints the remedy —
+run it as platform admin, which on the VM is the CLI using the
+`OU=openshell-admin` client certificate:
+
+```bash
+openshell workspace member add --workspace 'default' \
+  --subject '<oidc-subject-of-the-CI-client>' --role user
+```
+
+The subject is the `sub` of the token the pipeline obtains; `openshell whoami`
+from the evaluate step prints it. Verify with:
+
+```bash
+openshell workspace member list --workspace default
 ```
 
 ## mTLS Secret (PipelineRun namespace)

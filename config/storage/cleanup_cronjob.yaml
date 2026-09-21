@@ -2,7 +2,6 @@ apiVersion: batch/v1
 kind: CronJob
 metadata:
   name: abevalflow-cleanup
-  namespace: ab-eval-flow
   labels:
     app.kubernetes.io/part-of: abevalflow
 spec:
@@ -23,7 +22,9 @@ spec:
               command: ["/bin/bash", "/scripts/cleanup.sh"]
               env:
                 - name: NAMESPACE
-                  value: ab-eval-flow
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.namespace
                 - name: POD_AGE_HOURS
                   value: "24"
                 - name: PIPELINERUN_KEEP_COUNT
@@ -55,4 +56,4 @@ spec:
 #
 #   oc create configmap cleanup-script \
 #     --from-file=cleanup.sh=scripts/cleanup.sh \
-#     -n ab-eval-flow --dry-run=client -o yaml | oc apply -f -
+#     -n <namespace> --dry-run=client -o yaml | oc apply -f -

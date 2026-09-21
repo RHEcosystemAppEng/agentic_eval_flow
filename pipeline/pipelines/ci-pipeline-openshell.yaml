@@ -2,7 +2,6 @@ apiVersion: tekton.dev/v1
 kind: Pipeline
 metadata:
   name: abevalflow-pipeline-openshell
-  namespace: ab-eval-flow
   labels:
     app.kubernetes.io/name: abevalflow
     app.kubernetes.io/version: "2.0"
@@ -76,6 +75,9 @@ spec:
       default: ""
     - name: aeh-judge-model-override
       type: string
+      # Judges call /v1/messages; see the judge-glm-5-3 entry in
+      # config/litellm/configmap.yaml for why the default model 403s there.
+      # Leave empty to inherit models.judge from the submission.
       default: ""
     - name: aeh-mode
       type: string
@@ -115,7 +117,12 @@ spec:
       default: "ghcr.io/rh-forge/openclaw-saw-agent@sha256:bcc55e9b7a36d5f65e8ffc75962496f8b3617762a4cdb37fd1cf54611b72d41a"
     - name: openshell-provider
       type: string
-      default: "forge-ai-gateway,m365-read-intervm,slack-read-proxy,drafts-service-agent"
+      # Empty by default: these providers are vended by the saw-bom chart. On a
+      # gateway without them, sandbox create fails with "provider not found",
+      # and substituting the builtin "openai" provider fails differently because
+      # its profile pins api.openai.com:443, which overlaps the eval policy's
+      # own openai rule. Set this only when the gateway really has them.
+      default: ""
     - name: openshell-mtls-secret
       type: string
       default: "openshell-mtls"

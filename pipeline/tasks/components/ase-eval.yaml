@@ -2,7 +2,6 @@ apiVersion: tekton.dev/v1
 kind: Task
 metadata:
   name: ase-eval
-  namespace: ab-eval-flow
 spec:
   description: >-
     Runs lightweight A/B evaluation using agent-skills-eval (ASE). Installs

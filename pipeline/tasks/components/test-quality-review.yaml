@@ -2,7 +2,6 @@ apiVersion: tekton.dev/v1
 kind: Task
 metadata:
   name: test-quality-review
-  namespace: ab-eval-flow
 spec:
   description: >-
     Independent AI quality review of a skill submission.  Assesses coherence,

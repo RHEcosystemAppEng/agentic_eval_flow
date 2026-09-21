@@ -2,7 +2,6 @@ apiVersion: tekton.dev/v1
 kind: Task
 metadata:
   name: cleanup-pvc
-  namespace: ab-eval-flow
 spec:
   description: >-
     Deletes the workspace PVC after a pipeline run completes.

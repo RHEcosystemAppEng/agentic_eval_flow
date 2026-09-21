@@ -2,7 +2,6 @@ apiVersion: tekton.dev/v1
 kind: PipelineRun
 metadata:
   generateName: abevalflow-oracle-
-  namespace: ab-eval-flow
 spec:
   pipelineRef:
     name: abevalflow-pipeline

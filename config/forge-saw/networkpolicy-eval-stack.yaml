@@ -1,0 +1,131 @@
+# NetworkPolicies for running ABEvalFlow in a namespace that also holds a Forge
+# workspace.
+#
+# WHY THIS IS NEEDED
+# The forge-workspace chart ships default-deny-ingress and default-deny-egress
+# that select every pod in the namespace, and its allow-rules only cover Forge's
+# own components. Nothing else is exempt, so without the rules below:
+#   - MLflow cannot reach postgres, never becomes Ready, and its Service has no
+#     endpoints — callers then see "connection refused", not a timeout;
+#   - pipeline pods cannot reach LiteLLM, MLflow, minio or the Kubernetes API,
+#     so the judges error and the cleanup task cannot delete its PVC;
+#   - kubelet probes are blocked, so the stack pods restart in a loop.
+#
+# Everything here is selector-based, so it survives pod and Service IP changes
+# and works in any namespace:
+#     oc apply -n <your-namespace> -f networkpolicy-eval-stack.yaml
+#
+# NODE_CIDR: the two ipBlock rules cover the cluster's node addresses, used by
+# kubelet probes and by the API server endpoints. 10.0.0.0/16 fits a default
+# ROSA/OSD install; confirm with
+#     oc get nodes -o jsonpath='{.items[*].status.addresses[?(@.type=="InternalIP")].address}'
+# and widen or narrow it if your cluster differs.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: abevalflow-allow-stack-ingress
+  labels: {app.kubernetes.io/part-of: abevalflow}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/part-of: abevalflow}
+  policyTypes: [Ingress]
+  ingress:
+    # other eval-stack pods (MLflow -> postgres, MLflow -> minio)
+    - from:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/part-of: abevalflow}
+    # Tekton pods (judges -> LiteLLM, reports -> MLflow/minio).
+    # managed-by, not tekton.dev/pipelineRun: the latter misses standalone
+    # TaskRuns, so debug and probe Tasks stay silently blocked.
+    - from:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/managed-by: tekton-pipelines}
+    # the SAW gateway VM: its sandboxes call the model endpoint directly
+    - from:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/part-of: openshell-cnv-fedora}
+    # kubelet liveness/readiness probes arrive from the node IP
+    - from:
+        - ipBlock: {cidr: 10.0.0.0/16}   # NODE_CIDR
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: abevalflow-allow-stack-egress
+  labels: {app.kubernetes.io/part-of: abevalflow}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/part-of: abevalflow}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/part-of: abevalflow}
+    # Outbound HTTPS. LiteLLM proxies to the upstream model endpoint and also
+    # fetches its model cost map at startup; without this it crash-loops on
+    # "ConnectError fetching https://raw.githubusercontent.com/...". Narrow it
+    # with an EgressFirewall if your cluster restricts egress by destination.
+    - ports:
+        - {protocol: TCP, port: 443}
+      to:
+        - ipBlock: {cidr: 0.0.0.0/0}
+    # DNS. Once a policy selects a pod for Egress, everything not listed is
+    # denied — including name resolution, which fails as
+    # "curl: (28) Resolving timed out". The forge-workspace chart ships its own
+    # allow-dns rule; a namespace without that chart needs this one.
+    - ports:
+        - {protocol: UDP, port: 5353}
+        - {protocol: TCP, port: 5353}
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+      to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: openshift-dns}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: abevalflow-allow-tekton-egress
+  labels: {app.kubernetes.io/part-of: abevalflow}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/managed-by: tekton-pipelines
+  policyTypes: [Egress]
+  egress:
+    # the eval stack Services
+    - to:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/part-of: abevalflow}
+    # DNS. Once a policy selects a pod for Egress, everything not listed is
+    # denied — including name resolution, which fails as
+    # "curl: (28) Resolving timed out". The forge-workspace chart ships its own
+    # allow-dns rule; a namespace without that chart needs this one.
+    - ports:
+        - {protocol: UDP, port: 5353}
+        - {protocol: TCP, port: 5353}
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+      to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: openshift-dns}
+    # the OpenShell gateway VM: this is how evaluate creates sandboxes
+    - ports:
+        - {protocol: TCP, port: 17670}
+        - {protocol: TCP, port: 8443}
+      to:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/part-of: openshell-cnv-fedora}
+    # Outbound HTTPS: prepare clones the submission and the harness from git.
+    - ports:
+        - {protocol: TCP, port: 443}
+      to:
+        - ipBlock: {cidr: 0.0.0.0/0}
+    # the Kubernetes API: the cleanup task deletes its PVC through it
+    - ports:
+        - {protocol: TCP, port: 443}
+        - {protocol: TCP, port: 6443}
+      to:
+        - ipBlock: {cidr: 172.30.0.1/32}   # kubernetes.default.svc ClusterIP
+        - ipBlock: {cidr: 10.0.0.0/16}     # NODE_CIDR — API servers on node IPs
