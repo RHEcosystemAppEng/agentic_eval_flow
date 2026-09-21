@@ -2,7 +2,6 @@ apiVersion: triggers.tekton.dev/v1beta1
 kind: TriggerTemplate
 metadata:
   name: submission-template
-  namespace: ab-eval-flow
 spec:
   params:
     - name: repo-url

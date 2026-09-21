@@ -1,5 +1,11 @@
 # OpenShell OpenClaw profile — prepare → evaluate → analyze → store (no test cube).
-# Apply the Pipeline first: oc apply -f pipeline/pipelines/ci-pipeline-openshell.yaml
+#
+#   oc apply  -n <namespace> -f pipeline/pipelines/ci-pipeline-openshell.yaml
+#   oc create -n <namespace> -f pipeline/runs/openshell-openclaw-pipelinerun.yaml
+#
+# Service endpoints below use short names, which resolve inside the namespace
+# the run is created in, so this file is namespace-agnostic. Change
+# openshell-gateway-endpoint to <your-helm-release>-gateway.
 # Do not put M365 tokens in this file; use Secret openshell-credentials in the namespace.
 apiVersion: tekton.dev/v1
 kind: PipelineRun
@@ -21,27 +27,27 @@ spec:
       value: "feat/aeh-openshell-openclaw"
     - name: openshell-gateway-endpoint
       # Use the namespace-local SAW gateway with OIDC + mTLS.
-      value: "https://openshell-saw-agent-gateway.gz-forge-eval.svc.cluster.local:17670"
+      value: "https://saw-gateway:17670"   # <helm-release>-gateway
     - name: openshell-sandbox-image
       value: "ghcr.io/rh-forge/openclaw-saw-agent@sha256:bcc55e9b7a36d5f65e8ffc75962496f8b3617762a4cdb37fd1cf54611b72d41a"
     - name: openshell-provider
-      value: "forge-ai-gateway,m365-read-intervm,slack-read-proxy,drafts-service-agent"
+      value: ""   # saw-bom providers; empty on a standalone eval gateway
     - name: aeh-openshell-image
       value: "registry.access.redhat.com/ubi9/python-311:9.6"
     - name: llm-model
       value: "rits/zai-org/glm-5-3"
     - name: llm-api-base
-      value: "http://litellm.gz-forge-eval.svc.cluster.local:4000"
+      value: "http://litellm:4000"
     - name: llm-api-key
       value: "mock"
     - name: aeh-model-override
-      value: "inference/glm-5-3"
+      value: ""   # inherit models.skill from the submission
     - name: aeh-judge-model-override
       value: "rits/zai-org/glm-5-3"
     - name: enable-mlflow
       value: "true"
     - name: mlflow-tracking-uri
-      value: "http://abevalflow-mlflow.gz-forge-eval.svc.cluster.local:5000"
+      value: "http://abevalflow-mlflow:5000"
   taskRunTemplate:
     serviceAccountName: pipeline
   timeouts:

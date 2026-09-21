@@ -2,7 +2,6 @@ apiVersion: tekton.dev/v1
 kind: Task
 metadata:
   name: store-results
-  namespace: ab-eval-flow
 spec:
   description: >-
     Persists A/B evaluation results from report.json to PostgreSQL.

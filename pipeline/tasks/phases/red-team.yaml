@@ -5,7 +5,6 @@ metadata:
   labels:
     app.kubernetes.io/name: abevalflow
     app.kubernetes.io/component: phase
-  namespace: ab-eval-flow
 spec:
   description: >-
     Generic red team evaluation using Promptfoo (broad coverage) plus PyRIT

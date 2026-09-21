@@ -2,7 +2,6 @@ apiVersion: tekton.dev/v1
 kind: Task
 metadata:
   name: validate-submission
-  namespace: ab-eval-flow
 spec:
   description: >-
     Validates a submission directory against the submission contract.

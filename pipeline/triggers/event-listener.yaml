@@ -2,7 +2,6 @@ apiVersion: triggers.tekton.dev/v1beta1
 kind: EventListener
 metadata:
   name: submission-listener
-  namespace: ab-eval-flow
 spec:
   serviceAccountName: pipeline
   triggers:

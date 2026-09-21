@@ -2,7 +2,6 @@ apiVersion: tekton.dev/v1
 kind: Task
 metadata:
   name: security-scan
-  namespace: ab-eval-flow
 spec:
   description: >-
     Runs Cisco AI Defense skill-scanner as part of the security scanning phase.

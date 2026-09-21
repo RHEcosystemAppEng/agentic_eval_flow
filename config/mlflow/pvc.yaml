@@ -1,11 +1,10 @@
 # Dedicated MLflow artifact + sqlite store for Agentic Eval Flow.
 # Apply into the target namespace (default matches shared cluster config):
-#   oc apply -n ab-eval-flow -f config/mlflow/
+#   oc apply -n <namespace> -f config/mlflow/
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: abevalflow-mlflow-data
-  namespace: ab-eval-flow
   labels:
     app.kubernetes.io/part-of: abevalflow
     app.kubernetes.io/name: mlflow

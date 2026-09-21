@@ -6,7 +6,7 @@
 #
 # Intended for eval/dev UI access only — not production telemetry. Prefer
 # ClusterIP + in-cluster MLFLOW_TRACKING_URI for PipelineRuns:
-#   http://abevalflow-mlflow.ab-eval-flow.svc.cluster.local:5000
+#   http://abevalflow-mlflow.<namespace>.svc.cluster.local:5000
 #
 # Apply explicitly when needed:
 #   oc apply -f config/mlflow/route.yaml
@@ -14,7 +14,6 @@ apiVersion: route.openshift.io/v1
 kind: Route
 metadata:
   name: abevalflow-mlflow
-  namespace: ab-eval-flow
   labels:
     app.kubernetes.io/part-of: abevalflow
     app.kubernetes.io/name: mlflow

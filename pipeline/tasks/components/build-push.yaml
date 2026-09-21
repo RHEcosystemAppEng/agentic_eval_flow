@@ -2,7 +2,6 @@ apiVersion: tekton.dev/v1
 kind: Task
 metadata:
   name: build-push-images
-  namespace: ab-eval-flow
 spec:
   description: >-
     Builds treatment and control container images from scaffolded directories

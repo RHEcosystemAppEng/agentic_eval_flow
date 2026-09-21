@@ -2,7 +2,6 @@ apiVersion: tekton.dev/v1
 kind: Task
 metadata:
   name: generate-tests
-  namespace: ab-eval-flow
 spec:
   description: >-
     AI-assisted generation of evaluation files from a skill definition.
