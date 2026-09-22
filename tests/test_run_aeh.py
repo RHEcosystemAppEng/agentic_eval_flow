@@ -245,6 +245,95 @@ class TestBaseRunner:
 
         assert skill_name == "missing"
 
+    def test_read_skill_name_uses_name_when_skill_absent(self, tmp_path):
+        """Prompt-mode evals name the reports leaf from eval.yaml name."""
+        config_path = tmp_path / "eval.yaml"
+        config_path.write_text(
+            yaml.dump(
+                {
+                    "name": "forge-eval-rubrics",
+                    "execution": {"prompt": "{{ input.prompt }}"},
+                }
+            )
+        )
+
+        runner = HarborRunner()
+        assert runner._read_skill_name(config_path) == "forge-eval-rubrics"
+
+    def test_read_skill_name_prefers_skill_over_name(self, tmp_path):
+        config_path = tmp_path / "eval.yaml"
+        config_path.write_text(
+            yaml.dump({"skill": "openclaw-forge", "name": "forge-eval-rubrics"})
+        )
+
+        runner = HarborRunner()
+        assert runner._read_skill_name(config_path) == "openclaw-forge"
+
+    def test_read_skill_name_uses_execution_skill(self, tmp_path):
+        config_path = tmp_path / "eval.yaml"
+        config_path.write_text(
+            yaml.dump(
+                {
+                    "name": "forge-eval-rubrics",
+                    "execution": {"skill": "rfe.create", "mode": "case"},
+                }
+            )
+        )
+
+        runner = HarborRunner()
+        assert runner._read_skill_name(config_path) == "rfe.create"
+
+
+class TestEvalDirName:
+    def test_fallback_submission_name(self, tmp_path):
+        from scripts.run_aeh import eval_dir_name
+
+        config_path = tmp_path / "eval.yaml"
+        config_path.write_text(yaml.dump({"execution": {"prompt": "hi"}}))
+        assert eval_dir_name(config_path, fallback="openclaw-forge") == "openclaw-forge"
+
+    def test_sanitizes_name(self, tmp_path):
+        from scripts.run_aeh import eval_dir_name
+
+        config_path = tmp_path / "eval.yaml"
+        config_path.write_text(yaml.dump({"name": "Forge Eval Rubrics"}))
+        assert eval_dir_name(config_path, fallback="sub") == "forge-eval-rubrics"
+
+    def test_resolve_prefers_eval_name_then_submission(self, tmp_path):
+        from scripts.run_aeh import resolve_aeh_run_dir
+
+        reports = tmp_path / "reports"
+        run_id = "aeh-openshell-forge-nsenter-nfz69"
+        actual = reports / "forge-eval-rubrics" / run_id
+        actual.mkdir(parents=True)
+        (actual / "summary.yaml").write_text("mean_reward: 1.0\n")
+        (reports / "openclaw-forge" / run_id).mkdir(parents=True)
+
+        found = resolve_aeh_run_dir(
+            reports,
+            run_id,
+            eval_name="forge-eval-rubrics",
+            submission_name="openclaw-forge",
+        )
+        assert found == actual
+
+    def test_resolve_falls_back_to_submission_dir(self, tmp_path):
+        from scripts.run_aeh import resolve_aeh_run_dir
+
+        reports = tmp_path / "reports"
+        run_id = "run-1"
+        sub = reports / "openclaw-forge" / run_id
+        sub.mkdir(parents=True)
+        (sub / "run_result.json").write_text("{}")
+
+        found = resolve_aeh_run_dir(
+            reports,
+            run_id,
+            eval_name="forge-eval-rubrics",
+            submission_name="openclaw-forge",
+        )
+        assert found == sub
+
 
 class TestPairwiseExecution:
     """Test pairwise A/B comparison execution."""

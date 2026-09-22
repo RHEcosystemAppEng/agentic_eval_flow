@@ -67,8 +67,10 @@ spec:
       type: string
       default: "harbor"
       description: >-
-        Evaluation engine ('harbor', 'ase', 'both', 'mcpchecker', 'a2a').
-        Controls whether DB storage runs and publish artifact layout.
+        Evaluation engine ('harbor', 'ase', 'both', 'mcpchecker', 'a2a',
+        'aeh', 'aeh_openshell_openclaw'). Controls whether DB storage runs
+        and publish artifact layout. MCPChecker skips DB store; AEH family
+        does not.
     - name: minio-bucket
       type: string
       default: "ab-eval-reports"

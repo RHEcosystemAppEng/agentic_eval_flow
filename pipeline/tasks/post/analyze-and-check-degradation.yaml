@@ -20,8 +20,8 @@ spec:
       type: string
       default: "harbor"
       description: >-
-        Evaluation engine used: 'harbor', 'ase', 'a2a', or 'both'. Controls
-        which analysis path runs.
+        Evaluation engine used: 'harbor', 'ase', 'a2a', 'aeh',
+        'aeh_openshell_openclaw', or 'both'. Controls which analysis path runs.
     - name: commit-sha
       type: string
       default: ""
@@ -159,7 +159,7 @@ spec:
           fi
           echo "Found ASE report at $REPORT_DIR"
 
-        elif [ "$EVAL_ENGINE" = "aeh" ]; then
+        elif [ "$EVAL_ENGINE" = "aeh" ] || [ "$EVAL_ENGINE" = "aeh_openshell_openclaw" ]; then
           echo "=== AEH mode: reading pre-generated report ==="
           if [ ! -f "$REPORT_DIR/report.json" ]; then
             echo "ERROR: AEH report.json not found at $REPORT_DIR/report.json"

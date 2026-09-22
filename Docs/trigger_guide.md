@@ -50,6 +50,55 @@ times in two configurations:
 
 If the treatment performs significantly better, the skill **passes**.
 
+## Manually trigger the AEH OpenShell OpenClaw flow
+
+The AEH OpenShell profile is a single-sided OpenClaw evaluation. The checked-in
+PipelineRun example is `pipeline/runs/openshell-openclaw-pipelinerun.yaml`.
+Run these commands from the ABEvalFlow checkout:
+
+```bash
+# Replace [NAMESPACE] with the namespace where your PipelineRun and
+# namespace-local OpenShell/MLflow services are deployed.
+NS="[NAMESPACE]"
+
+# Apply the profile pipeline (safe to repeat).
+oc -n "$NS" apply -f pipeline/pipelines/ci-pipeline-openshell.yaml
+
+# Confirm namespace-local credentials and certificates exist before starting.
+oc -n "$NS" get secret openshell-gateway-mtls \
+  forge-agent-upstream-tls openshell-credentials openshell-oidc-credentials
+
+# Create the PipelineRun using the pinned OpenClaw image, namespace gateway,
+# GLM-5.3, and MLflow settings from the checked-in example.
+oc -n "$NS" create -f pipeline/runs/openshell-openclaw-pipelinerun.yaml
+```
+
+Do not put provider tokens or private keys in the PipelineRun YAML; keep them
+in namespace Secrets. The example uses `aeh_openshell_openclaw`, submission
+`openclaw-forge`, model `rits/zai-org/glm-5-3`, and the namespace MLflow service.
+
+To monitor the run:
+
+```bash
+RUN=$(oc -n "$NS" get pipelinerun \
+  -l tekton.dev/pipeline=abevalflow-pipeline-openshell \
+  --sort-by=.metadata.creationTimestamp \
+  -o jsonpath='{.items[-1:].metadata.name}')
+tkn -n "$NS" pipelinerun logs "$RUN" -f
+oc -n "$NS" get pipelinerun "$RUN" -o wide
+```
+
+The run is complete only after `prepare`, `evaluate`, `analyze`, `store`, and
+`cleanup` finish. Check `evaluate` for gateway, GLM, and skill-loading errors;
+check `store` for database and artifact publication errors. MLflow has no
+public Route by default, so view it through a local port-forward:
+
+```bash
+oc -n "$NS" port-forward svc/abevalflow-mlflow 15000:5000
+```
+
+Then open <http://127.0.0.1:15000>.
+
 ---
 
 ## What you need to prepare
@@ -397,11 +446,119 @@ AEH-specific parameters:
 - `aeh-mode`: `single` (default) or `pairwise`
 - `aeh-control-config` / `aeh-treatment-config`: Pairwise config filenames (defaults: `eval-control.yaml` / `eval-treatment.yaml`)
 - `aeh-image`: Harbor trial image (use `quay.io/ecosystem-appeng/agent-eval-harness:v1.0.3` or newer)
-- `aeh-runner`: Execution backend -- currently `harbor` only
+- `aeh-runner`: Execution backend — `harbor` (default) or `openshell` for `aeh_openshell_openclaw`
 
 **Note on execution backends:**
 - **harbor** (default): Containerized execution in OpenShift trial pods via AEH’s OpenShiftEnvironment.
+- **openshell**: Host orchestrator calls `python -m agent_eval.openshell.run` against the cluster OpenShell gateway (`openshell` namespace). Used only with `eval-engine=aeh_openshell_openclaw`.
 - **vanilla**: Not yet implemented in Agentic Eval Flow.
+
+#### AEH OpenShell OpenClaw (`eval-engine=aeh_openshell_openclaw`)
+
+Forge OpenClaw evals talk to the **cluster NVIDIA OpenShell** already installed in namespace `openshell` (Helm chart, Kubernetes sandboxes — not forge-saw / KubeVirt). Evaluate only sets `OPENSHELL_GATEWAY_ENDPOINT`. See [infrastructure_ops.md](infrastructure_ops.md#openshell-gateway-for-openclaw-evals).
+
+Sample in-repo: `submissions/openclaw-forge/` (`eval_engine: aeh_openshell_openclaw`, `runner.type: openclaw`).
+
+Requires Secret `openshell-credentials` in the **same namespace as the PipelineRun** for Forge Graph scenes (`submissions/openclaw-forge`, `m365.seed: external`). Without `M365_ACCESS_TOKEN` and `M365_USER`, Evaluate now fails closed instead of producing a 1/5 scorecard of auth refusals.
+
+Required keys: `M365_ACCESS_TOKEN`, `M365_USER`. Optional: `M365_TENANT_ID`, `M365_CLIENT_ID`, `M365_CLIENT_SECRET`. `M365_AUTH_HEADER_FILE` and `M365_GRAPH_CURL` are **not** Secret keys — AEH writes them inside the sandbox from the access token.
+
+Do **not** `oc apply` `config/forge-saw/secret-openshell-credentials.yaml` while it still contains `<replace-with-…>` placeholders, and do not commit tokens.
+
+```bash
+# Replace [NAMESPACE] before running these commands.
+NS="[NAMESPACE]"
+
+# from a shell that already has real Graph env (values never printed by the helper)
+./config/forge-saw/create-openshell-credentials.sh
+# or:
+oc create secret generic openshell-credentials -n "$NS" \
+  --from-literal=M365_ACCESS_TOKEN=... \
+  --from-literal=M365_USER=... \
+  --from-literal=M365_TENANT_ID=... \
+  --from-literal=M365_CLIENT_ID=... \
+  --from-literal=M365_CLIENT_SECRET=...
+```
+
+Client mTLS (`openshell-mtls`) is not required while the cluster gateway has TLS disabled.
+
+**Use the OpenShell profile** (`abevalflow-pipeline-openshell`) instead of toggling `enable-ai-generation` / quality-review flags on `abevalflow-pipeline-dev`. That Pipeline is prepare → evaluate → analyze → store and **does not include the test cube** (security scan, quality review, AEH eval-check) or red-team. Harbor AEH keeps `abevalflow-pipeline` / `abevalflow-pipeline-dev`.
+
+```bash
+oc -n "$NS" apply -f pipeline/pipelines/ci-pipeline-openshell.yaml
+oc create -n "$NS" -f pipeline/runs/openshell-openclaw-pipelinerun.yaml
+```
+
+Or inline:
+
+```bash
+oc create -n "$NS" -f - <<'YAML'
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: aeh-openshell-openclaw-
+spec:
+  pipelineRef:
+    name: abevalflow-pipeline-openshell
+  params:
+    - name: submission-dir
+      value: "openclaw-forge"
+    - name: eval-engine
+      value: "aeh_openshell_openclaw"
+    - name: revision
+      value: "feat/aeh-openshell-openclaw"
+    - name: pipeline-repo-revision
+      value: "feat/aeh-openshell-openclaw"
+    - name: openshell-gateway-endpoint
+      value: "http://openshell.openshell.svc.cluster.local:8080"
+    - name: openshell-sandbox-image
+      value: "ghcr.io/rh-forge/openclaw-saw-agent@sha256:bcc55e9b7a36d5f65e8ffc75962496f8b3617762a4cdb37fd1cf54611b72d41a"
+    - name: aeh-openshell-image
+      value: "registry.access.redhat.com/ubi9/python-311:9.6"
+    - name: llm-model
+      value: "rits/zai-org/glm-5-3"
+    - name: llm-api-base
+      value: "http://litellm.[NAMESPACE].svc.cluster.local:4000"
+    - name: llm-api-key
+      value: "mock"
+    - name: aeh-model-override
+      value: "inference/rits/zai-org/glm-5-3"
+    - name: enable-mlflow
+      value: "true"
+    - name: mlflow-tracking-uri
+      value: "http://abevalflow-mlflow.[NAMESPACE].svc.cluster.local:5000"
+  taskRunTemplate:
+    serviceAccountName: pipeline
+  timeouts:
+    pipeline: 2h0m0s
+    tasks: 1h30m0s
+  workspaces:
+    - name: shared-workspace
+      volumeClaimTemplate:
+        spec:
+          accessModes: [ReadWriteOnce]
+          resources:
+            requests:
+              storage: 5Gi
+YAML
+```
+
+Profile defaults (override only what you need): `eval-engine=aeh_openshell_openclaw`, `submission-dir=openclaw-forge`, the pinned GHCR sandbox image, orchestrator `registry.access.redhat.com/ubi9/python-311:9.6`, `enable-ai-generation=false`, **`enable-mlflow=true`** with tracking URI `http://abevalflow-mlflow.[NAMESPACE].svc.cluster.local:5000`. One PipelineRun becomes one MLflow experiment (name = Tekton run id). Port-forward the tracking server (no public Route by default): `oc -n "$NS" port-forward svc/abevalflow-mlflow 15000:5000`. Harness revision defaults to `feat/aeh-openshell-openclaw` (the OpenShell module lives there). After this branch merges, `revision` / `pipeline-repo-revision` can stay at Pipeline default `main`.
+
+**MLflow: AEH vs CI (both used on this profile)**
+
+| | **AEH (`/eval-mlflow`, `log_results.py`)** | **CI (`log_aeh_mlflow.py`)** |
+|---|---|---|
+| When | After a harness run (`eval-run` / OpenShell `score.py` artifacts exist) | After the evaluate Task, if `enable-mlflow=true` |
+| What | Full AEH payload: params, judge metrics, `summary.yaml` / `report.html`, per-case table, traces built from `stdout.log` / events | Calls **the same** AEH `log_results.py` from the cloned harness (`AGENT_EVAL_HARNESS_ROOT`). If that no-ops, logs a **minimal** CI fallback (`mean_reward`, tokens, those files) |
+| Experiment | `eval.yaml` `mlflow.experiment` (here `forge-eval-rubrics`) | Overridden to the **Tekton PipelineRun name** so cluster runs do not collide |
+| Tracking URI | `mlflow.tracking_uri` in yaml, else `MLFLOW_TRACKING_URI`, else `http://127.0.0.1:5000` | Pipeline param `mlflow-tracking-uri` (exported as `MLFLOW_TRACKING_URI` for AEH too) |
+
+OpenClaw does **not** emit live Claude-Code OTel traces inside the sandbox (that path is `execute.py` / Claude Code). AEH still **reconstructs** traces after harvest. CI does not replace AEH MLflow; it **invokes** it and only fills gaps.
+
+**Store / artifacts:** OpenShell reuses the AEH MinIO prefix `{prefix}/debug/aeh/<run-id>/` (same as Harbor AEH run trees). Harbor `_eval_tmp` debug (`debug/harbor/`) is N/A. Cluster Postgres must have **Alembic 005** (`evaluation_runs.eval_engine` varchar(50)) before store-to-db succeeds — `aeh_openshell_openclaw` is 22 characters. The store Task uploads MinIO **before** the DB insert so a varchar(10) failure does not skip artifacts; the PipelineRun still fails until 005 is applied. See [persistence.md](persistence.md) and `alembic/versions/005_widen_eval_engine.py`.
+
+Konflux evaluate has no AEH OpenShell path; cluster `ci-pipeline-openshell` is enough for this engine.
 
 #### AEH Pairwise A/B Testing
 

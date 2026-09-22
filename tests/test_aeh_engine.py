@@ -293,6 +293,36 @@ class TestAEHEngine:
         assert gate_result.passed is False
         assert gate_result.score == 0.0
 
+    def test_single_judge_errors_are_not_quality_zero(self):
+        report = {
+            "eval_engine": "aeh_openshell_openclaw",
+            "mode": "single",
+            "mean_reward": None,
+            "summary": {
+                "treatment": {"mean_reward": None, "n_errors": 1},
+                "control": {"mean_reward": None},
+            },
+            "judges": {"analysis_accuracy": {"mean": None, "errored_cases": 1}},
+            "per_case": {
+                "analysis-panel": {
+                    "analysis_accuracy": {
+                        "value": None,
+                        "error": "No module named 'anthropic'",
+                        "judge_type": "llm",
+                    }
+                }
+            },
+        }
+        policy = GatePolicy()
+        engine = AEHEngine()
+        gate_result = engine.to_gate_result(report, policy)
+
+        assert gate_result.passed is False
+        assert gate_result.details["scoring_unavailable"] is True
+        assert gate_result.details["comparison"] == "single"
+        assert "not a quality score of 0.0" in gate_result.message
+        assert any(f.rule_id == "aeh-judge-error" for f in gate_result.findings)
+
     def test_pairwise_errors_in_denominator(self):
         """Errors count as non-wins so 1/10 with 9 errors fails the gate."""
         report = {

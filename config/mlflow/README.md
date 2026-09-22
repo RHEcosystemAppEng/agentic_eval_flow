@@ -17,7 +17,15 @@ Pipeline tracking URI (ClusterIP):
 http://abevalflow-mlflow.ab-eval-flow.svc.cluster.local:5000
 ```
 
-Set pipeline params `enable-mlflow=true` and `mlflow-tracking-uri` to that URL.
+Set pipeline params `enable-mlflow=true` and `mlflow-tracking-uri` to that URL
+(`abevalflow-pipeline-openshell` already defaults both). That URI is exported
+as `MLFLOW_TRACKING_URI` for the AEH harness during evaluate, then
+`scripts/log_aeh_mlflow.py` calls AEH `log_results.py` (and a CI fallback).
+
+Do **not** put this ClusterIP in `eval.yaml` `mlflow.tracking_uri` — local
+`/eval-mlflow` would then try to reach in-cluster DNS. Leave experiment in
+yaml (`forge-eval-rubrics`); CI overrides the experiment name to the
+PipelineRun id so cluster runs do not collide.
 
 Client packages (`mlflow-skinny`, `pandas`) are baked into
 `containers/agent-eval-harness/Containerfile`. Evaluate still pip-installs to

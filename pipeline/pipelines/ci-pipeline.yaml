@@ -32,8 +32,14 @@ spec:
     - name: eval-engine
       type: string
       default: "harbor"
-      description: Evaluation engine (harbor, ase, mcpchecker, a2a, aeh, both)
-    # Harbor params (stock PyPI Harbor + custom OpenShift env)
+      description: Evaluation engine (harbor, ase, mcpchecker, a2a, aeh, aeh_openshell_openclaw, both)
+    # Harbor params
+    - name: harbor-fork-url
+      type: string
+      default: "https://github.com/RHEcosystemAppEng/skills_eval_corrections.git"
+    - name: harbor-fork-revision
+      type: string
+      default: "feature/local-environment"
     - name: eval-mode
       type: string
       default: "prebuilt"
@@ -173,12 +179,41 @@ spec:
       description: Treatment variant eval.yaml filename for pairwise mode (relative to submission)
     - name: aeh-image
       type: string
-      default: "quay.io/ecosystem-appeng/agent-eval-harness:v1.0.0"
+      default: "quay.io/aipcc/base-images/agentic/openclaw:latest"
       description: Container image for AEH trial pods (required for harbor.run)
     - name: aeh-runner
       type: string
       default: "harbor"
-      description: AEH execution backend (harbor, vanilla)
+      description: AEH execution backend (harbor, vanilla, openshell)
+
+    - name: aeh-openshell-image
+      type: string
+      default: "registry.access.redhat.com/ubi9/python-311:9.6"
+      description: Orchestrator image with harness + openshell CLI
+    - name: agent-eval-harness-repo-url
+      type: string
+      default: "https://github.com/GuyZivRH/agent-eval-harness.git"
+    - name: agent-eval-harness-repo-revision
+      type: string
+      default: "feat/aeh-openshell-openclaw"
+    - name: openshell-gateway-endpoint
+      type: string
+      default: "http://openshell.openshell.svc.cluster.local:8080"
+    - name: openshell-sandbox-image
+      type: string
+      default: "quay.io/aipcc/base-images/agentic/openclaw:0.0.1-1787755593"
+    - name: openshell-cli-version
+      type: string
+      default: "0.0.111"
+    - name: openshell-provider
+      type: string
+      default: ""
+    - name: openshell-mtls-secret
+      type: string
+      default: "openshell-mtls"
+    - name: openshell-credentials-secret
+      type: string
+      default: "openshell-credentials"
 
     # AEH MLflow (optional post-evaluate logging)
     - name: enable-mlflow
@@ -478,6 +513,24 @@ spec:
           value: $(params.aeh-image)
         - name: aeh-runner
           value: $(params.aeh-runner)
+        - name: aeh-openshell-image
+          value: $(params.aeh-openshell-image)
+        - name: agent-eval-harness-repo-url
+          value: "https://github.com/GuyZivRH/agent-eval-harness.git"
+        - name: agent-eval-harness-repo-revision
+          value: $(params.agent-eval-harness-repo-revision)
+        - name: openshell-gateway-endpoint
+          value: $(params.openshell-gateway-endpoint)
+        - name: openshell-sandbox-image
+          value: $(params.openshell-sandbox-image)
+        - name: openshell-cli-version
+          value: $(params.openshell-cli-version)
+        - name: openshell-provider
+          value: $(params.openshell-provider)
+        - name: openshell-mtls-secret
+          value: $(params.openshell-mtls-secret)
+        - name: openshell-credentials-secret
+          value: $(params.openshell-credentials-secret)
         - name: enable-mlflow
           value: $(params.enable-mlflow)
         - name: mlflow-tracking-uri

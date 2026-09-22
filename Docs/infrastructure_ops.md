@@ -125,9 +125,21 @@ Adjust sizes based on expected submission volume and image sizes.
 
 ## MLflow (optional AEH observability)
 
-Opt-in post-evaluate logging for AEH runs. Defaults: `enable-mlflow=false`,
-empty `mlflow-tracking-uri`. See `config/mlflow/README.md` for security notes
-(in-cluster hosts only; Route is optional/dev-only; SQLite is not HA).
+Two layers share the same tracking server:
+
+- **AEH** (`skills/eval-mlflow/scripts/log_results.py`, `/eval-mlflow`): judge
+  metrics, `summary.yaml` / `report.html`, reconstructed traces. Configured by
+  `eval.yaml` `mlflow.experiment` and `MLFLOW_TRACKING_URI` (do not hardcode the
+  in-cluster URI in eval.yaml — local AEH uses localhost or an env override).
+- **CI** (`scripts/log_aeh_mlflow.py` after evaluate): invokes that same AEH
+  script from the harness clone, patches experiment to the Tekton PipelineRun
+  name, and falls back to a minimal metrics log if AEH no-ops.
+
+Harbor / default pipelines: `enable-mlflow=false`, empty `mlflow-tracking-uri`.
+`abevalflow-pipeline-openshell` defaults both **on**
+(`http://abevalflow-mlflow.ab-eval-flow.svc.cluster.local:5000`). See
+`config/mlflow/README.md` for security notes (in-cluster hosts only; Route is
+optional/dev-only; SQLite is not HA).
 
 ```bash
 # Deploy tracking server (PVC uses cluster default StorageClass)
@@ -147,6 +159,48 @@ The AEH runner image (`containers/agent-eval-harness/Containerfile`) bakes
 `mlflow-skinny` + `pandas`. The evaluate step still pip-installs to `/tmp` only
 when those imports are missing (older images). Rebuild/push the AEH image after
 changing that Containerfile.
+
+## OpenShell gateway for OpenClaw evals
+
+`eval-engine=aeh_openshell_openclaw` uses the **NVIDIA OpenShell already
+installed** on this cluster (Helm release `openshell` in namespace `openshell`,
+image `ghcr.io/nvidia/openshell/gateway`). Sandboxes are Kubernetes pods in
+that namespace, not KubeVirt VMs. Evaluate does not install OpenShell; it only
+calls:
+
+```text
+http://openshell.openshell.svc.cluster.local:8080
+```
+
+That Service is reachable from `[NAMESPACE]` (gRPC `:8080`, TLS disabled
+on the current gateway.toml). Secret `openshell-credentials` (`M365_ACCESS_TOKEN`,
+`M365_USER`, optional `M365_TENANT_ID` / `M365_CLIENT_ID` / `M365_CLIENT_SECRET`)
+belongs in the PipelineRun namespace for Forge Graph evals. Evaluate fails
+closed if those required keys are missing. `openshell-mtls` is optional while
+the gateway has `disable_tls = true`.
+
+For a deployment, substitute `[NAMESPACE]` for the PipelineRun namespace and
+use the checked-in OpenShell profile. Before triggering CI, namespace-local network rules must allow the
+pipeline's Kubernetes API access (`172.30.0.1/32` on TCP 443/6443), the
+OpenShell gateway on TCP 17670, LiteLLM on 4000, PostgreSQL on 5432, MinIO on
+9000, and the approved HTTPS destinations used for repository cloning,
+dependency installation, and model access. These are namespace-scoped
+NetworkPolicy/EgressFirewall changes; do not modify cluster-wide policy.
+
+If using an external forge-saw/KubeVirt gateway instead, apply the matching
+TCP 17670 ingress rule in the gateway namespace and the `[NAMESPACE]`
+egress rule. Preserve the mTLS CA/client certificate pair and use a hostname
+covered by the gateway certificate. Do not point the current cluster profile
+at the old VM Route or disable certificate verification. Validate the endpoint
+and a temporary sandbox before running the full CI evaluation.
+
+forge-saw (KubeVirt VM on `:17670`) is a different OpenShell host for clusters
+that run OpenShift Virtualization. Do not Helm-install it on this ROSA cluster.
+See `config/forge-saw/README.md` only if you are targeting a CNV cluster.
+
+Trigger example: [trigger_guide.md](trigger_guide.md) (`abevalflow-pipeline-openshell`, `eval-engine=aeh_openshell_openclaw`).
+
+**Store:** cluster Postgres must have Alembic **005** (`evaluation_runs.eval_engine` varchar(50)) or the DB insert fails (`aeh_openshell_openclaw` is 22 characters). OpenShell artifacts reuse MinIO `debug/aeh/`; Harbor `_eval_tmp` debug is N/A.
 
 ## Cleanup CronJob
 

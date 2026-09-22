@@ -1,0 +1,33 @@
+# IBM Forge M365-only scene (Slack deferred — no bot token yet)
+#
+# seed: external means the Outlook mailbox/calendar is already populated
+# (offline: examples/forge-real/seed_m365_graph.py → ground-truth.json).
+# AEH OpenShell does not run that seeder at eval time — it only forwards
+# M365_* tokens from openshell-credentials into the sandbox exec env.
+#
+# Crabline = Slack mock, smolclaw = Gmail/Calendar mock. Those are generic
+# AEH OpenShell seeders, not what Forge uses. Keep both lists empty.
+#
+# Slack channels documented for a future dual-source run; not used this run.
+
+name: ibm-forge-monday-briefing-m365
+description: |
+  Executive Monday briefing from M365 only (Outlook + calendar).
+  Mailbox: tbx-demo2@dev.mscloud.ibm.com. Slack intentionally omitted.
+
+slack:
+  enabled: false
+  note: Deferred pending ibm-forge-demo bot token / invite
+
+m365:
+  user: tbx-demo2@dev.mscloud.ibm.com
+  seed: external
+  expected_themes:
+    - Watson Orchestrate GA go/no-go
+    - Contoso customer escalation
+    - Quantum CapEx reconciliation
+    - Exec strategy offsite prep
+
+# No Crabline/smolclaw seeds — real Graph mailbox is the source of truth.
+crabline_seeds: []
+smolclaw_seeds: []

@@ -627,7 +627,7 @@ def main() -> int:
         "--eval-engine",
         type=str,
         required=True,
-        choices=["harbor", "ase", "a2a", "mcpchecker", "aeh", "both"],
+        choices=["harbor", "ase", "a2a", "mcpchecker", "aeh", "aeh_openshell_openclaw", "both"],
         help="Primary evaluation engine",
     )
     parser.add_argument(

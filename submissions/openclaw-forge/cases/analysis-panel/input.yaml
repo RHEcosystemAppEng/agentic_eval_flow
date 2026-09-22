@@ -1,0 +1,29 @@
+prompt: |
+  Read these exact workspace files before retrieving data:
+  /sandbox/AGENTS.md,
+  /sandbox/skills/daily-briefing/SKILL.md, and
+  /sandbox/skills/microsoft365/SKILL.md. Do not substitute another workspace or home-directory path.
+
+  Produce a detailed analysis panel for the Watson Orchestrate GA go/no-go
+  item. First verify and follow the installed daily-briefing skill and its
+  source-retrieval skills. Use only governed read operations.
+
+  Read the relevant emails and calendar events about Watson Orchestrate GA
+  readiness / blocker / exec decision, then produce an analysis panel with:
+
+  ANALYSIS — A synthesis paragraph that:
+    - States what is at stake (not just restating what the sender wrote)
+    - Identifies conflicting information across sources (if any)
+    - Surfaces any constraints or caveats from follow-up messages
+    - Provides a clear recommendation
+    - Identifies what the executive should still verify before deciding
+
+  TIMELINE — Chronological view of how the situation evolved, with dates.
+
+  SOURCES — List each source message used, with:
+    - The person who sent it (or calendar organizer)
+    - The medium (email subject or calendar event title)
+    - A brief quote or reference to the specific claim it supports
+
+  Follow the installed skills' evidence, citation, and safety rules. Do not
+  invent deadlines, dollar amounts, or facts not in the sources.

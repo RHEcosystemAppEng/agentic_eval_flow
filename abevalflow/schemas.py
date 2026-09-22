@@ -29,8 +29,13 @@ class EvalEngine(StrEnum):
     ASE = "ase"
     MCPCHECKER = "mcpchecker"
     A2A = "a2a"
-    AEH = "aeh"  # Agent-Eval-Harness
+    AEH = "aeh"  # Agent-Eval-Harness (Harbor / kubernetes)
+    AEH_OPENSHELL_OPENCLAW = "aeh_openshell_openclaw"  # AEH OpenShell + OpenClaw
     BOTH = "both"  # Harbor + ASE
+
+
+AEH_FAMILY = (EvalEngine.AEH, EvalEngine.AEH_OPENSHELL_OPENCLAW)
+EVAL_ENGINE_CLI_CHOICES = tuple(e.value for e in EvalEngine)
 
 
 class SecurityScanMode(StrEnum):

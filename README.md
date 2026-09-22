@@ -31,7 +31,7 @@ The pipeline executes in six main stages, with engine-specific steps within each
 
 ### 3. Evaluate
 
-Five evaluation engines, each suited for different artifact types:
+Six evaluation engines, each suited for different artifact types:
 
 | Engine | Evaluates | Comparison Mode | Container Isolation |
 |--------|-----------|-----------------|---------------------|
@@ -39,7 +39,8 @@ Five evaluation engines, each suited for different artifact types:
 | **ASE** | Skills only | A/B (treatment vs control) | No |
 | **A2A** | A2A-protocol agents | A/B (treatment vs control) | Yes |
 | **MCPChecker** | MCP servers | Single-agent task verification | No |
-| **AEH** | Agents, skills | Judge-based evaluation | Yes (K8s pods) |
+| **AEH** | Agents, skills | Judge-based evaluation | Yes (K8s Harbor pods) |
+| **AEH OpenShell OpenClaw** | OpenClaw agents via forge-saw | Judge-based (AEH scoring) | Yes (SAW VM + inner sandbox) |
 
 Engines are implemented in `abevalflow/engines/` using a registry pattern.
 
@@ -62,7 +63,7 @@ All flow configuration is defined in `metadata.yaml` within each submission:
 
 ```yaml
 name: my-submission
-eval_engine: harbor              # harbor, ase, a2a, mcpchecker, or aeh
+eval_engine: harbor              # harbor, ase, a2a, mcpchecker, aeh, or aeh_openshell_openclaw
 persona: general                 # Agent persona for Harbor/A2A
 
 experiment:

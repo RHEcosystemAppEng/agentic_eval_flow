@@ -1,0 +1,43 @@
+# Eval-minimal forge-saw override for ABEvalFlow.
+# One shared standalone OpenClaw VM. Do not Helm-install from the evaluate Task.
+#
+# sandboxName max 19 chars (OpenShell limit). Helm release should match so the
+# gateway Service is abeval-saw-gateway. For a personal namespace on ROSA,
+# use values-abeval-evalflow.yaml instead.
+
+sandboxName: abeval-saw
+role: standalone
+agent: openclaw
+onboardCli: openclaw
+containerRuntime: podman
+namespaceMode: shared
+
+source:
+  # Chart default is openshell-agents; golden image is built into forge-saw.
+  dataSourceNamespace: forge-saw
+
+vm:
+  cores: 4
+  memory: 8Gi
+  diskSize: 40Gi
+  storageClassName: kubevirt-csi-infra-default
+
+# Evaluate uses in-cluster Service DNS, not the public Route.
+route:
+  enabled: true
+  dashboard: false
+  webui: false
+
+dashboard:
+  enabled: false
+
+# No governance interceptor in this first pass (eval-minimal).
+governance:
+  enabled: false
+
+job:
+  waitForSecrets: false
+
+inference:
+  deployProxy: true
+  secretName: inference

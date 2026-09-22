@@ -1,0 +1,25 @@
+prompt: |
+  Read these exact workspace files before retrieving data:
+  /sandbox/AGENTS.md,
+  /sandbox/skills/daily-briefing/SKILL.md, and
+  /sandbox/skills/microsoft365/SKILL.md. Do not substitute another workspace or home-directory path.
+
+  Prepare the user's executive morning briefing using the connected information
+  sources available in the workspace. First verify and follow the installed
+  daily-briefing skill and its source-retrieval skills.
+
+  Produce a structured morning briefing with three sections:
+
+  TOP OF MIND — Direct decisions and critical actions requiring the executive's
+  voice today. Each card must have:
+    - A title describing the decision/action needed
+    - The person who raised it (from the email/calendar)
+    - A one-line reason why it needs the executive specifically and how urgent it is
+    - Which sources (email subject and/or calendar event) it came from
+  Group related messages about the same workstream into one card.
+
+  FYI — Active signals and updates to track, file, or flag. Not urgent.
+
+  LOOKING AHEAD — Preparation and context for the next few days (use calendar).
+
+  Follow the skill's output, evidence, grouping, prioritization, and safety rules.

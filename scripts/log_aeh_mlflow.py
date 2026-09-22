@@ -4,8 +4,12 @@ Requires an importable ``mlflow`` package in the current Python environment
 (Tekton evaluate installs ``mlflow-skinny`` + ``pandas`` into ``/tmp`` when
 missing). Prefers upstream AEH ``skills/eval-mlflow/scripts/log_results.py``
 when present (under ``/opt/agent-eval-harness`` or ``AGENT_EVAL_HARNESS_ROOT``).
-Falls back to a minimal metrics/params logger from ``run_result.json`` +
+That is the **AEH** logger (metrics, artifacts, traces from stdout.log).
+Falls back to a minimal **CI** metrics logger from ``run_result.json`` +
 ``summary.yaml`` when upstream is absent or no-ops.
+
+Prompt-mode eval.yaml (``execution.prompt``) is patched via ``name`` /
+``mlflow.experiment`` only — never a top-level ``skill:``, which AEH rejects.
 
 Optional actions (same AEH skill tree):
   - ``push-feedback`` — attach judge feedback to traces (``attach_feedback.py``)
@@ -145,24 +149,72 @@ def _reports_skill_name(runs_dir: Path, config_skill: str, run_id: str) -> str:
     return run_dir.parent.name
 
 
+def _config_reports_leaf(raw: dict, fallback: str) -> str:
+    """Match AEH EvalConfig.eval_name(): skill, else sanitized name, else fallback."""
+    skill = str(raw.get("skill") or "").strip()
+    if skill:
+        return skill
+    name = str(raw.get("name") or "").strip()
+    if name:
+        sanitized = name.lower().replace(" ", "-")
+        sanitized = "".join(c for c in sanitized if c.isalnum() or c in "._-")
+        if sanitized:
+            return sanitized
+    return fallback
+
+
+def _is_prompt_mode(raw: dict) -> bool:
+    execution = raw.get("execution") if isinstance(raw.get("execution"), dict) else {}
+    return bool(str(execution.get("prompt") or "").strip())
+
+
+def _apply_mlflow_eval_patch(
+    raw: dict,
+    *,
+    experiment: str,
+    reports_skill: str,
+    tracking_uri: str = "",
+) -> dict:
+    """Stamp experiment/URI for AEH log_results.py without breaking prompt-mode evals.
+
+    Top-level ``skill:`` plus ``execution.prompt`` is rejected by EvalConfig.
+    Prompt-mode submissions (openclaw-forge) keep ``name`` as the reports leaf.
+    """
+    patched = dict(raw)
+    if _is_prompt_mode(patched):
+        patched.pop("skill", None)
+        patched["name"] = reports_skill
+    else:
+        patched["skill"] = reports_skill
+        if "name" in patched:
+            patched["name"] = reports_skill
+    mlflow_cfg = patched.get("mlflow") if isinstance(patched.get("mlflow"), dict) else {}
+    mlflow_cfg = dict(mlflow_cfg)
+    mlflow_cfg["experiment"] = experiment
+    uri = (tracking_uri or "").strip()
+    if uri:
+        mlflow_cfg["tracking_uri"] = uri
+    patched["mlflow"] = mlflow_cfg
+    return patched
+
+
 def _write_patched_config(
     config: Path,
     *,
     experiment: str,
     reports_skill: str,
+    tracking_uri: str = "",
 ) -> Path:
     """Write a temp eval.yaml forcing AEH experiment + reports skill path."""
     raw = yaml.safe_load(config.read_text()) or {}
     if not isinstance(raw, dict):
         raw = {}
-    raw["skill"] = reports_skill
-    # AEH EvalConfig.name / eval_name fall back to skill; keep name aligned.
-    if "name" in raw:
-        raw["name"] = reports_skill
-    mlflow_cfg = raw.get("mlflow") if isinstance(raw.get("mlflow"), dict) else {}
-    mlflow_cfg = dict(mlflow_cfg)
-    mlflow_cfg["experiment"] = experiment
-    raw["mlflow"] = mlflow_cfg
+    raw = _apply_mlflow_eval_patch(
+        raw,
+        experiment=experiment,
+        reports_skill=reports_skill,
+        tracking_uri=tracking_uri,
+    )
 
     tmp = tempfile.NamedTemporaryFile(
         mode="w",
@@ -174,9 +226,10 @@ def _write_patched_config(
     tmp.close()
     path = Path(tmp.name)
     logger.info(
-        "Patched AEH MLflow config: experiment=%s skill=%s -> %s",
+        "Patched AEH MLflow config: experiment=%s reports_leaf=%s prompt_mode=%s -> %s",
         experiment,
         reports_skill,
+        _is_prompt_mode(raw),
         path,
     )
     return path
@@ -427,10 +480,19 @@ def _minimal_mlflow_log(
 
         if run_result.get("cost_usd") is not None:
             mlflow.log_metric("cost_usd", float(run_result["cost_usd"]))
-        if run_result.get("mean_reward") is not None:
-            mlflow.log_metric("mean_reward", float(run_result["mean_reward"]))
-        elif summary.get("mean_reward") is not None:
-            mlflow.log_metric("mean_reward", float(summary["mean_reward"]))
+        mean_reward = run_result.get("mean_reward")
+        if mean_reward is None:
+            mean_reward = summary.get("mean_reward")
+        if mean_reward is None:
+            try:
+                from scripts.aggregate_aeh import _extract_mean_reward
+
+                mean_reward = _extract_mean_reward(run_dir)
+            except Exception:
+                logger.warning("Could not derive mean_reward for MLflow", exc_info=True)
+                mean_reward = None
+        if mean_reward is not None:
+            mlflow.log_metric("mean_reward", float(mean_reward))
 
         for artifact in (summary_path, rr_path, run_dir / "report.html"):
             if not artifact.is_file():
@@ -502,7 +564,11 @@ def main(argv: list[str] | None = None) -> int:
 
     experiment = (args.experiment or "").strip()
     raw_cfg = yaml.safe_load(config.read_text()) or {}
-    config_skill = str(raw_cfg.get("skill") or config.parent.name) if isinstance(raw_cfg, dict) else config.parent.name
+    config_skill = (
+        _config_reports_leaf(raw_cfg, config.parent.name)
+        if isinstance(raw_cfg, dict)
+        else config.parent.name
+    )
     reports_skill = _reports_skill_name(runs_dir, config_skill, args.run_id)
 
     patched_config: Path | None = None
@@ -512,6 +578,7 @@ def main(argv: list[str] | None = None) -> int:
             config,
             experiment=experiment,
             reports_skill=reports_skill,
+            tracking_uri=tracking_uri,
         )
         effective_config = patched_config
         logger.info(
@@ -549,6 +616,7 @@ def main(argv: list[str] | None = None) -> int:
                         config,
                         experiment=experiment,
                         reports_skill=reports_skill,
+                        tracking_uri=tracking_uri,
                     )
                 else:
                     sync_config = config
@@ -587,18 +655,18 @@ def _write_submission_local_patch(
     *,
     experiment: str,
     reports_skill: str,
+    tracking_uri: str = "",
 ) -> Path:
     """Patch next to the submission so dataset.path stays resolvable."""
     raw = yaml.safe_load(config.read_text()) or {}
     if not isinstance(raw, dict):
         raw = {}
-    raw["skill"] = reports_skill
-    if "name" in raw:
-        raw["name"] = reports_skill
-    mlflow_cfg = raw.get("mlflow") if isinstance(raw.get("mlflow"), dict) else {}
-    mlflow_cfg = dict(mlflow_cfg)
-    mlflow_cfg["experiment"] = experiment
-    raw["mlflow"] = mlflow_cfg
+    raw = _apply_mlflow_eval_patch(
+        raw,
+        experiment=experiment,
+        reports_skill=reports_skill,
+        tracking_uri=tracking_uri,
+    )
     path = config.parent / f".abevalflow-mlflow-{os.getpid()}.yaml"
     path.write_text(yaml.safe_dump(raw, sort_keys=False, allow_unicode=True))
     return path
