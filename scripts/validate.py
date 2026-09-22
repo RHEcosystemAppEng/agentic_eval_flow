@@ -31,7 +31,7 @@ from pathlib import Path
 import yaml
 from pydantic import ValidationError
 
-from abevalflow.schemas import EvalEngine, SubmissionMetadata
+from abevalflow.schemas import AEH_FAMILY, EVAL_ENGINE_CLI_CHOICES, EvalEngine, SubmissionMetadata
 
 logger = logging.getLogger(__name__)
 
@@ -372,6 +372,26 @@ def _check_aeh_eval_yaml_file(eval_path: Path) -> list[str]:
     return errors
 
 
+def _check_openclaw_runner(eval_path: Path) -> list[str]:
+    """Require runner.type=openclaw for the OpenShell OpenClaw engine."""
+    if not eval_path.is_file():
+        return []
+    try:
+        data = yaml.safe_load(eval_path.read_text()) or {}
+    except yaml.YAMLError:
+        return []
+    if not isinstance(data, dict):
+        return []
+    runner = data.get("runner") or {}
+    rtype = runner.get("type") if isinstance(runner, dict) else None
+    if rtype != "openclaw":
+        return [
+            f"{eval_path.name}: runner.type must be 'openclaw' for "
+            f"eval_engine=aeh_openshell_openclaw (got {rtype!r})"
+        ]
+    return []
+
+
 def _check_aeh_eval_yaml(submission_dir: Path) -> list[str]:
     """Validate eval.yaml exists and has valid AEH structure (single mode)."""
     return _check_aeh_eval_yaml_file(submission_dir / "eval.yaml")
@@ -698,7 +718,7 @@ def validate_submission(
     run_ase = eval_engine in (EvalEngine.ASE, EvalEngine.BOTH)
     run_mcpchecker = eval_engine == EvalEngine.MCPCHECKER
     run_a2a = eval_engine == EvalEngine.A2A
-    run_aeh = eval_engine == EvalEngine.AEH
+    run_aeh = eval_engine in AEH_FAMILY
 
     # Common: metadata.yaml is always required
     metadata_errors, metadata = _check_metadata_yaml(submission_dir)
@@ -747,6 +767,11 @@ def validate_submission(
                 treatment_config=aeh_treatment_config,
             )
         )
+        if eval_engine == EvalEngine.AEH_OPENSHELL_OPENCLAW:
+            if aeh_mode == "pairwise":
+                errors.extend(_check_openclaw_runner(submission_dir / aeh_treatment_config))
+            else:
+                errors.extend(_check_openclaw_runner(submission_dir / "eval.yaml"))
 
     # Common: supportive/ size check (skip for mcpchecker, a2a, and aeh)
     if not run_mcpchecker and not run_a2a and not run_aeh:
@@ -765,7 +790,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--eval-engine",
         type=str,
-        choices=["harbor", "ase", "mcpchecker", "a2a", "aeh", "both"],
+        choices=list(EVAL_ENGINE_CLI_CHOICES),
         default="harbor",
         help="Evaluation engine (controls which checks run)",
     )

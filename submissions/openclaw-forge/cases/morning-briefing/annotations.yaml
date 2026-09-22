@@ -1,0 +1,23 @@
+# M365-only ground truth for seeded tbx-demo2 mailbox/calendar.
+# Source: .tmp/forge-real/ground-truth.json (Graph seed).
+expected_top_of_mind:
+  - "Watson Orchestrate GA go/no-go — decision by 11:00"
+  - "Contoso escalation — renewals at risk (exec response by EOD)"
+expected_fyi:
+  - "Quantum CapEx / cost conflict (finance vs eng)"
+  - "Exec product views / strategy offsite talking-points prep"
+expected_excluded:
+  - "Weekly IBM product newsletter"
+  - "Quantum community webinar recording"
+  - "Campus ambassador / skip-level interview noise"
+expected_first: "Watson Orchestrate GA go/no-go"
+expected_bundles:
+  watson_ga:
+    - "Email: ACTION: Watson Orchestrate GA blocker — exec decision by 11:00"
+    - "Calendar: Decision: Watson Orchestrate GA go/no-go"
+  contoso:
+    - "Email: URGENT: Strategic customer escalation — Contoso renewals at risk"
+expected_separate:
+  - source_a: "Email: Contoso escalation"
+    source_b: "Email: Prep: Exec product views & strategy offsite talking points"
+    reason: "Same org, different topics — must not merge"

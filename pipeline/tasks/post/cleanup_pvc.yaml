@@ -16,18 +16,31 @@ spec:
       image: registry.redhat.io/openshift4/ose-cli:latest
       script: |
         #!/usr/bin/env bash
-        set -euo pipefail
+        set -u
 
         # Get current namespace from service account
         NAMESPACE=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)
 
         echo "Cleaning up PVCs for PipelineRun $(params.pipelinerun-name) in namespace ${NAMESPACE}..."
-        oc get pvc -n "${NAMESPACE}" \
-          -o jsonpath='{range .items[?(@.metadata.ownerReferences[0].name=="$(params.pipelinerun-name)")]}{.metadata.name}{"\n"}{end}' \
-          | while read -r pvc; do
-              if [ -n "$pvc" ]; then
-                echo "Deleting PVC: $pvc"
-                oc delete pvc "$pvc" -n "${NAMESPACE}" --wait=false
-              fi
-            done
+        PVC_LIST=""
+        for attempt in 1 2 3 4 5; do
+          if PVC_LIST=$(oc get pvc -n "${NAMESPACE}" \
+            -o jsonpath="{range .items[?(@.metadata.ownerReferences[0].name=='$(params.pipelinerun-name)')]}{.metadata.name}{'\\n'}{end}" 2>/tmp/cleanup-pvc.err); then
+            break
+          fi
+          echo "WARNING: Kubernetes API unavailable (attempt ${attempt}/5); retrying..." >&2
+          sleep 10
+        done
+        if [ -z "${PVC_LIST}" ] && [ -s /tmp/cleanup-pvc.err ]; then
+          cat /tmp/cleanup-pvc.err >&2
+          echo "WARNING: PVC cleanup deferred because the Kubernetes API was unreachable" >&2
+          exit 0
+        fi
+        while read -r pvc; do
+          if [ -n "${pvc}" ]; then
+            echo "Deleting PVC: ${pvc}"
+            oc delete pvc "${pvc}" -n "${NAMESPACE}" --wait=false || \
+              echo "WARNING: failed to delete ${pvc}; it may be retried later" >&2
+          fi
+        done <<< "${PVC_LIST}"
         echo "PVC cleanup complete"

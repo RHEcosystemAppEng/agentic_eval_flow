@@ -835,7 +835,7 @@ def main() -> int:
         "--eval-engine",
         type=str,
         default="harbor",
-        choices=["harbor", "ase", "mcpchecker", "a2a", "aeh", "both"],
+        choices=["harbor", "ase", "mcpchecker", "a2a", "aeh", "aeh_openshell_openclaw", "both"],
         help="Evaluation engine used — determines debug artifact layout",
     )
     parser.add_argument(
@@ -884,7 +884,7 @@ def main() -> int:
                 _upload_fn = upload_mcpchecker_debug_artifacts
             elif args.eval_engine in ("ase", "both"):
                 _upload_fn = upload_ase_debug_artifacts
-            elif args.eval_engine == "aeh":
+            elif args.eval_engine in ("aeh", "aeh_openshell_openclaw"):
                 _upload_fn = upload_aeh_debug_artifacts
             else:
                 # harbor, a2a — treatment/control Harbor trial layout
@@ -899,7 +899,7 @@ def main() -> int:
             )
         # AEH harness run dirs (summary.yaml, report.html, cases/, …)
         # live under reports/<skill>/ — upload for both single and pairwise.
-        if prefix and args.eval_engine == "aeh":
+        if prefix and args.eval_engine in ("aeh", "aeh_openshell_openclaw"):
             upload_aeh_run_artifacts(
                 report_dir=args.report_dir,
                 prefix=prefix,

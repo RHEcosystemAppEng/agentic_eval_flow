@@ -1,0 +1,15 @@
+schema_version: "1.0"
+name: openclaw-forge
+description: >-
+  AEH OpenShell OpenClaw Forge eval (morning briefing + analysis panel)
+  against a shared forge-saw gateway. Graph tokens come from the
+  openshell-credentials Secret via $M365_* interpolation — do not commit them.
+eval_engine: aeh_openshell_openclaw
+persona: rh-developer
+version: "0.1.0"
+author: Agentic Eval Flow Team
+tags:
+  - aeh
+  - openclaw
+  - forge
+  - openshell

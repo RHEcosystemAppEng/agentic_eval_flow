@@ -49,6 +49,7 @@ def get_all_engines() -> list[str]:
 
 from abevalflow.engines.a2a import A2AEngine
 from abevalflow.engines.aeh import AEHEngine
+from abevalflow.engines.aeh_openshell_openclaw import AEHOpenShellOpenClawEngine
 from abevalflow.engines.ase import ASEEngine
 from abevalflow.engines.harbor import HarborEngine
 from abevalflow.engines.mcpchecker import MCPCheckerEngine
@@ -61,5 +62,6 @@ __all__ = [
     "ASEEngine",
     "A2AEngine",
     "AEHEngine",
+    "AEHOpenShellOpenClawEngine",
     "MCPCheckerEngine",
 ]

@@ -126,7 +126,9 @@ class AEHEngine(EvalEngine):
         source_dir: Path,
     ) -> dict[str, Any]:
         """Merge summary.yaml and run_result.json into unified format."""
-        mean_reward = run_result.get("mean_reward", summary.get("mean_reward", 0.0))
+        mean_reward = run_result.get("mean_reward")
+        if mean_reward is None:
+            mean_reward = summary.get("mean_reward")
 
         # Detect mode from pairwise presence
         mode = "pairwise" if "pairwise" in summary else "single"
@@ -181,17 +183,28 @@ class AEHEngine(EvalEngine):
             summary = raw_result.get("summary") or {}
             treatment = summary.get("treatment") or {}
             mean_reward = treatment.get("mean_reward")
-        passed = mean_reward is not None and mean_reward >= threshold
-        # GateResult.score is a required float; floor missing rewards at 0.0.
-        score = float(mean_reward) if mean_reward is not None else 0.0
         findings = self._extract_findings_single(raw_result)
+        judge_errors = [f for f in findings if f.rule_id == "aeh-judge-error"]
+        passed = mean_reward is not None and mean_reward >= threshold
+        # GateResult.score is a required float; None (judge errors) is not a
+        # quality score of 0.0 — call that out in the message.
+        score = float(mean_reward) if mean_reward is not None else 0.0
 
-        # Format judge summary preserving all types
-        judges = raw_result.get("judges", {})
+        judges = raw_result.get("judges") or {}
+        if not judges:
+            summary = raw_result.get("summary") or {}
+            judges = summary.get("judges") or {}
         judge_summary = self._format_judge_summary(judges)
+        per_case = raw_result.get("per_case") or {}
 
-        reward_str = f"{mean_reward:.3f}" if mean_reward is not None else "None"
-        message = f"AEH single: mean_reward={reward_str} (threshold={threshold:.2f})"
+        if mean_reward is None and judge_errors:
+            message = (
+                f"AEH single: mean_reward unavailable — {len(judge_errors)} judge "
+                f"error(s), not a quality score of 0.0 (threshold={threshold:.2f})"
+            )
+        else:
+            reward_str = f"{mean_reward:.3f}" if mean_reward is not None else "None"
+            message = f"AEH single: mean_reward={reward_str} (threshold={threshold:.2f})"
         if judge_summary:
             message += f" | {judge_summary}"
 
@@ -207,8 +220,10 @@ class AEHEngine(EvalEngine):
             details={
                 "engine": self.name,
                 "mode": "single",
+                "comparison": "single",
+                "scoring_unavailable": mean_reward is None,
                 "judges": judges,
-                "per_case": raw_result.get("per_case", {}),
+                "per_case": per_case,
                 "run_metrics": raw_result.get("run_metrics"),
                 "execution": raw_result.get("execution"),
                 "aeh_warnings": raw_result.get("aeh_warnings", []),

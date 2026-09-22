@@ -23,6 +23,7 @@ Where <run_dir> is the AEH output directory containing:
 import argparse
 import json
 import logging
+import statistics
 import sys
 from pathlib import Path
 from typing import Any
@@ -31,7 +32,6 @@ import yaml
 
 from abevalflow.aeh_scoring import (
     DEFAULT_AEH_THRESHOLD,
-    numeric_judge_passes,
     pairwise_outcome,
 )
 
@@ -39,16 +39,28 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 
+# Top-level run_result.json keys surfaced in report.json execution metadata.
+# Never copy per_case / response_text (those can be huge).
+_OPENSHELL_EXECUTION_KEYS = ("execution_mode", "agent", "n_cases", "n_failed", "wall_clock_s")
+
+
 def _load_execution_metadata(run_dir: Path) -> dict[str, Any]:
-    """Load execution metadata from run_result.json."""
+    """Load execution metadata from run_result.json.
+
+    Harbor and OpenShell share this block. OpenShell fields (execution_mode,
+    agent, n_cases, n_failed, wall_clock_s) are included when present.
+    """
     run_result_path = run_dir / "run_result.json"
     if not run_result_path.exists():
         return {}
 
     try:
         run_result = json.loads(run_result_path.read_text())
-        return {
-            "duration_s": run_result.get("duration_s"),
+        duration = run_result.get("duration_s")
+        if duration is None:
+            duration = run_result.get("wall_clock_s")
+        meta: dict[str, Any] = {
+            "duration_s": duration,
             "cost_usd": run_result.get("cost_usd"),
             "tokens": run_result.get("token_usage"),
             "harbor_job_dir": run_result.get("harbor_job_dir"),
@@ -56,52 +68,150 @@ def _load_execution_metadata(run_dir: Path) -> dict[str, Any]:
             "n_infra_errors": run_result.get("n_infra_errors"),
             "n_trial_errors": run_result.get("n_trial_errors"),
         }
+        for key in _OPENSHELL_EXECUTION_KEYS:
+            if key in run_result:
+                meta[key] = run_result[key]
+        if "n_cases" not in meta and run_result.get("num_cases") is not None:
+            meta["n_cases"] = run_result["num_cases"]
+        return meta
     except (json.JSONDecodeError, OSError) as e:
         logger.warning("Failed to load run_result.json: %s", e)
         return {}
 
 
-def _extract_mean_reward(run_dir: Path) -> float:
-    """Extract mean_reward from run_result.json or summary.yaml."""
-    run_result_path = run_dir / "run_result.json"
+def _load_summary(run_dir: Path) -> dict[str, Any]:
     summary_path = run_dir / "summary.yaml"
+    if not summary_path.exists():
+        return {}
+    try:
+        data = yaml.safe_load(summary_path.read_text())
+    except yaml.YAMLError:
+        return {}
+    return data if isinstance(data, dict) else {}
 
-    mean_reward = 0.0
 
-    if summary_path.exists():
-        try:
-            summary = yaml.safe_load(summary_path.read_text())
-            mean_reward = summary.get("mean_reward", 0.0)
-        except yaml.YAMLError:
-            pass
+def _compact_judge(result: Any) -> dict[str, Any] | Any:
+    """Keep value/error/judge_type; drop rationale and other bulky fields."""
+    if not isinstance(result, dict):
+        return result
+    compact: dict[str, Any] = {}
+    if "value" in result:
+        compact["value"] = result["value"]
+    if result.get("error"):
+        compact["error"] = str(result["error"])
+    if result.get("judge_type"):
+        compact["judge_type"] = result["judge_type"]
+    return compact
 
-    if run_result_path.exists():
-        try:
-            run_result = json.loads(run_result_path.read_text())
-            if "mean_reward" in run_result:
-                mean_reward = run_result["mean_reward"]
-        except json.JSONDecodeError:
-            pass
 
-    return mean_reward
+def _compact_per_case(per_case: Any) -> dict[str, Any]:
+    if not isinstance(per_case, dict):
+        return {}
+    out: dict[str, Any] = {}
+    for case_id, case_data in per_case.items():
+        if not isinstance(case_data, dict):
+            out[str(case_id)] = case_data
+            continue
+        out[str(case_id)] = {
+            key: _compact_judge(val) if key != "reward" else val for key, val in case_data.items()
+        }
+    return out
+
+
+def _normalize_numeric_value(value: int | float) -> float:
+    """Map a numeric judge onto [0, 1] using the same Likert vs unit scale as aeh_scoring.
+
+    Integer 1–5 is a Likert score (Harbor ``score_range: [1, 5]``): 1 is the
+    floor (reward 0.0), 5 is the ceiling (reward 1.0). A unit-scale perfect
+    score must be the float ``1.0``, not the integer ``1`` — YAML ``value: 1``
+    from ``feedback_type: int`` is the worst rubric bucket, not 100%.
+    """
+    if isinstance(value, bool):
+        return 1.0 if value else 0.0
+    if isinstance(value, int) and 1 <= value <= 5:
+        return (value - 1) / 4.0
+    v = float(value)
+    if 0.0 <= v <= 1.0:
+        return v
+    if 1.0 < v <= 5.0:
+        return (v - 1.0) / 4.0
+    return v
+
+
+def _is_likert_int(value: Any) -> bool:
+    """True for a 1–5 integer rubric score (not bool, not unit-scale 1.0)."""
+    return isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 5
+
+
+def _fmt_likert_cell(value: Any) -> str:
+    if isinstance(value, bool):
+        return "pass" if value else "fail"
+    if _is_likert_int(value):
+        return f"{value}/5"
+    if isinstance(value, (int, float)):
+        return str(value)
+    return "—"
+
+
+def _fmt_judge_mean_for_log(mean: Any, pass_rate: Any) -> str:
+    """Label Likert means as /5 so a floor of 1 is not read as unit-scale 1.000."""
+    if not isinstance(mean, (int, float)):
+        return "—"
+    if pass_rate is None and (_is_likert_int(mean) or (isinstance(mean, float) and 1.0 <= mean <= 5.0)):
+        # Integer 1–5 or a 1.0–5.0 mean with no pass_rate is the Likert table.
+        if mean <= 5.0 and mean >= 1.0 and (pass_rate is None):
+            # Unit-scale means live in [0, 1]; a mean of exactly 1.0 with no
+            # pass_rate is still ambiguous, but AEH LLM rubrics in this pipeline
+            # are Likert. Show /5 when the mean is an integer-valued 1–5.
+            if float(mean) == int(mean) and 1 <= int(mean) <= 5:
+                return f"{mean:.2f}/5"
+    return f"{mean:.3f}"
+
+
+def _judge_errored(result: Any) -> bool:
+    return isinstance(result, dict) and bool(result.get("error")) and result.get("value") is None
+
+
+def _is_llm_or_numeric_judge(result: Any) -> bool:
+    if not isinstance(result, dict):
+        return False
+    jt = result.get("judge_type")
+    if jt == "llm":
+        return True
+    if jt == "check":
+        return False
+    value = result.get("value")
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
 def _case_reward(case_data: Any) -> float | None:
     """Derive a single reward from an AEH per_case entry.
 
-    Prefers the mean of numeric judge values; falls back to 1.0/0.0 from
-    boolean judge passes. Returns None when no parseable judge value exists.
+    Successful numeric judges are normalized to [0, 1] and averaged. Failed
+    boolean judges gate the case to 0.0. Errored judges are skipped — they are
+    not treated as 0.0. If the only remaining signal is booleans but an LLM
+    judge errored, return None so operational checks cannot masquerade as a
+    quality score.
     """
     if not isinstance(case_data, dict):
         return None
 
-    if isinstance(case_data.get("reward"), (int, float)):
+    if isinstance(case_data.get("reward"), (int, float)) and not isinstance(case_data.get("reward"), bool):
         return float(case_data["reward"])
 
     numeric: list[float] = []
     bools: list[bool] = []
+    scoring_judge_errored = False
     for key, result in case_data.items():
         if key == "reward":
+            continue
+        if _judge_errored(result):
+            if _is_llm_or_numeric_judge(result) or (
+                isinstance(result, dict) and result.get("judge_type") == "llm"
+            ):
+                scoring_judge_errored = True
+            elif isinstance(result, dict) and result.get("judge_type") not in ("check", "builtin"):
+                scoring_judge_errored = True
             continue
         if isinstance(result, dict) and "value" in result:
             value = result.get("value")
@@ -110,13 +220,92 @@ def _case_reward(case_data: Any) -> float | None:
         if isinstance(value, bool):
             bools.append(value)
         elif isinstance(value, (int, float)):
-            numeric.append(float(value))
+            numeric.append(_normalize_numeric_value(value))
 
     if numeric:
+        if bools and not all(bools):
+            return 0.0
         return sum(numeric) / len(numeric)
     if bools:
-        return 1.0 if any(bools) else 0.0
+        if scoring_judge_errored:
+            return None
+        return 1.0 if all(bools) else 0.0
     return None
+
+
+def _mean_reward_from_per_case(per_case: Any) -> float | None:
+    if not isinstance(per_case, dict) or not per_case:
+        return None
+    rewards = [_case_reward(case_data) for case_data in per_case.values()]
+    scored = [r for r in rewards if r is not None]
+    if not scored:
+        return None
+    return sum(scored) / len(scored)
+
+
+def _scoring_unavailable_from_errors(per_case: Any) -> bool:
+    """True when LLM/numeric judges errored and no case has a quality reward."""
+    if not isinstance(per_case, dict) or not per_case:
+        return False
+    has_scoring_error = False
+    for case_data in per_case.values():
+        if not isinstance(case_data, dict):
+            continue
+        for rec in case_data.values():
+            if _judge_errored(rec) and (
+                _is_llm_or_numeric_judge(rec)
+                or (isinstance(rec, dict) and rec.get("judge_type") == "llm")
+            ):
+                has_scoring_error = True
+                break
+        if has_scoring_error:
+            break
+    if not has_scoring_error:
+        return False
+    return all(_case_reward(case_data) is None for case_data in per_case.values())
+
+
+def _parse_optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _extract_mean_reward(run_dir: Path) -> float | None:
+    """Extract mean_reward from run_result.json, summary.yaml, or per-case judges.
+
+    Missing or all-errored scoring judges yield None — never a silent 0.0 quality
+    score. Declared mean_reward is used when present unless judge errors made
+    quality scoring unavailable (OpenShell often omits mean_reward entirely).
+    """
+    summary = _load_summary(run_dir)
+    per_case = summary.get("per_case")
+    from_cases = _mean_reward_from_per_case(per_case)
+    unavailable = _scoring_unavailable_from_errors(per_case)
+
+    declared = _parse_optional_float(summary.get("mean_reward"))
+    run_declared: float | None = None
+    run_result_path = run_dir / "run_result.json"
+    if run_result_path.exists():
+        try:
+            run_result = json.loads(run_result_path.read_text())
+            if isinstance(run_result, dict):
+                run_declared = _parse_optional_float(run_result.get("mean_reward"))
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    if unavailable:
+        return None
+    if from_cases is not None and declared is None and run_declared is None:
+        return from_cases
+    if declared is not None:
+        return declared
+    if run_declared is not None:
+        return run_declared
+    return from_cases
 
 
 def _trials_from_per_case(per_case: Any) -> list[dict[str, Any]]:
@@ -125,8 +314,83 @@ def _trials_from_per_case(per_case: Any) -> list[dict[str, Any]]:
         return []
     trials: list[dict[str, Any]] = []
     for case_id, case_data in per_case.items():
-        trials.append({"trial_name": str(case_id), "reward": _case_reward(case_data)})
+        judges = None
+        if isinstance(case_data, dict):
+            judges = {
+                key: _compact_judge(val)
+                for key, val in case_data.items()
+                if key != "reward"
+            } or None
+        trials.append(
+            {
+                "trial_name": str(case_id),
+                "reward": _case_reward(case_data),
+                "judges": judges,
+            }
+        )
     return trials
+
+
+def _empty_control_summary() -> dict[str, Any]:
+    """Placeholder control block for single-sided runs — not a fake A/B control."""
+    return {
+        "n_trials": 0,
+        "n_passed": 0,
+        "n_failed": 0,
+        "n_errors": 0,
+        "pass_rate": 0.0,
+        "mean_reward": None,
+        "median_reward": None,
+        "std_reward": None,
+    }
+
+
+def _log_judge_tables(report: dict[str, Any]) -> None:
+    """Print a concise per-judge and per-case table for analyze/evaluate logs."""
+    judges = report.get("judges") or {}
+    if isinstance(judges, dict) and judges:
+        logger.info("Judge aggregates:")
+        logger.info("  %-32s %10s %10s %8s", "name", "mean", "pass_rate", "errors")
+        for name, data in judges.items():
+            if not isinstance(data, dict):
+                logger.info("  %-32s %s", name, data)
+                continue
+            mean = data.get("mean")
+            rate = data.get("pass_rate")
+            erred = data.get("errored_cases") or 0
+            mean_s = _fmt_judge_mean_for_log(mean, rate) if isinstance(mean, (int, float)) else "—"
+            rate_s = f"{rate:.0%}" if isinstance(rate, (int, float)) else "—"
+            logger.info("  %-32s %10s %10s %8s", name, mean_s, rate_s, erred)
+
+    per_case = report.get("per_case") or {}
+    if not isinstance(per_case, dict) or not per_case:
+        return
+    judge_names: list[str] = []
+    for case_data in per_case.values():
+        if isinstance(case_data, dict):
+            for name in case_data:
+                if name != "reward" and name not in judge_names:
+                    judge_names.append(name)
+    if not judge_names:
+        return
+    header = "  %-22s" + " %s" * len(judge_names)
+    logger.info("Per-case judges:")
+    logger.info(header, "case", *[n[:16] for n in judge_names])
+    for case_id, case_data in per_case.items():
+        cells: list[str] = []
+        for name in judge_names:
+            cell = "—"
+            if isinstance(case_data, dict):
+                rec = case_data.get(name)
+                if isinstance(rec, dict):
+                    if rec.get("error"):
+                        cell = "ERR"
+                    elif "value" in rec:
+                        cell = _fmt_likert_cell(rec.get("value"))
+                elif rec is not None:
+                    cell = str(rec)
+            cells.append(cell)
+        logger.info(header, str(case_id)[:22], *cells)
 
 
 def aggregate_single_run(
@@ -134,6 +398,7 @@ def aggregate_single_run(
     *,
     submission_name: str | None = None,
     threshold: float = DEFAULT_AEH_THRESHOLD,
+    eval_engine: str = "aeh",
 ) -> dict[str, Any]:
     """Read one AEH harness run directory and produce report dict.
 
@@ -155,81 +420,93 @@ def aggregate_single_run(
     if not summary_path.exists():
         raise FileNotFoundError(f"summary.yaml not found in {run_dir}")
 
-    summary = yaml.safe_load(summary_path.read_text())
+    summary = yaml.safe_load(summary_path.read_text()) or {}
     mean_reward = _extract_mean_reward(run_dir)
 
-    # Preserve full judge structure (not just means)
-    judges_full = summary.get("judges", {})
-    per_case_full = summary.get("per_case", {})
+    judges_full = summary.get("judges", {}) or {}
+    per_case_full = summary.get("per_case", {}) or {}
+    per_case_compact = _compact_per_case(per_case_full)
     run_metrics = summary.get("run_metrics")
+    trials = _trials_from_per_case(per_case_full)
 
-    # Calculate pass rate from per_case data
-    total_cases = len(per_case_full)
-    passed_cases = 0
-    for case_id, case_data in per_case_full.items():
-        if isinstance(case_data, dict):
-            # Check if any judge reported a passing value
-            case_passed = False
-            for judge_name, judge_result in case_data.items():
-                if isinstance(judge_result, dict):
-                    value = judge_result.get("value")
-                    if isinstance(value, bool) and value:
-                        case_passed = True
-                        break
-                    if isinstance(value, (int, float)) and not isinstance(value, bool):
-                        if numeric_judge_passes(value):
-                            case_passed = True
-                            break
-            if case_passed:
-                passed_cases += 1
+    total_cases = len(per_case_full) if isinstance(per_case_full, dict) else 0
+    n_passed = 0
+    n_failed = 0
+    n_errors = 0
+    case_rewards: list[float] = []
+    warnings: list[str] = []
+    for trial in trials:
+        reward = trial.get("reward")
+        if reward is None:
+            n_errors += 1
+        else:
+            case_rewards.append(float(reward))
+            if reward > 0.0:
+                n_passed += 1
+            else:
+                n_failed += 1
 
-    pass_rate = passed_cases / total_cases if total_cases > 0 else 0.0
+    judge_error_count = 0
+    if isinstance(per_case_full, dict):
+        for case_data in per_case_full.values():
+            if not isinstance(case_data, dict):
+                continue
+            for rec in case_data.values():
+                if _judge_errored(rec):
+                    judge_error_count += 1
+    if judge_error_count:
+        warnings.append(
+            f"{judge_error_count} judge error(s) excluded from mean_reward "
+            "(not scored as 0.0 quality)"
+        )
+    if mean_reward is None and judge_error_count:
+        warnings.append("mean_reward unavailable because scoring judges errored")
+
+    pass_rate = n_passed / total_cases if total_cases > 0 else 0.0
     recommendation = "pass" if (mean_reward is not None and mean_reward >= threshold) else "fail"
     resolved_name = submission_name or (run_dir.parent.name if run_dir.parent != run_dir else run_dir.name)
-    mean_for_gap = mean_reward if mean_reward is not None else 0.0
+    median_reward = statistics.median(case_rewards) if case_rewards else None
+    std_reward = statistics.stdev(case_rewards) if len(case_rewards) > 1 else None
 
-    # AnalysisResult-compatible shape (analyze task + scorecard) plus AEH extras.
+    # Single-sided: empty control with None rewards, not a fake 0.0 A/B arm.
     return {
         "submission_name": resolved_name,
         "provenance": {
-            "eval_engine": "aeh",
+            "eval_engine": eval_engine,
             "pipeline_run_id": summary.get("run_id", run_dir.name),
         },
         "summary": {
             "treatment": {
                 "n_trials": total_cases,
-                "n_passed": passed_cases,
-                "n_failed": max(total_cases - passed_cases, 0),
+                "n_passed": n_passed,
+                "n_failed": n_failed,
+                "n_errors": n_errors,
                 "pass_rate": pass_rate,
                 "mean_reward": mean_reward,
+                "median_reward": median_reward,
+                "std_reward": std_reward,
             },
-            "control": {
-                "n_trials": 0,
-                "n_passed": 0,
-                "n_failed": 0,
-                "pass_rate": 0.0,
-                "mean_reward": 0.0,
-            },
+            "control": _empty_control_summary(),
             "uplift": pass_rate,
-            "mean_reward_gap": mean_for_gap,
+            "mean_reward_gap": None,
             "recommendation": recommendation,
         },
         "trials": {
-            "treatment": _trials_from_per_case(per_case_full),
+            "treatment": trials,
             "control": [],
         },
-        "eval_engine": "aeh",
+        "eval_engine": eval_engine,
         "mode": "single",
         "run_id": summary.get("run_id", run_dir.name),
         "mean_reward": mean_reward,
         "pass_rate": pass_rate,
         "total_cases": total_cases,
-        "passed_cases": passed_cases,
+        "passed_cases": n_passed,
         "judges": judges_full,
-        "per_case": per_case_full,
+        "per_case": per_case_compact,
         "run_metrics": run_metrics,
         "execution": _load_execution_metadata(run_dir),
-        "aeh_warnings": [],
+        "aeh_warnings": warnings,
         "recommendation": recommendation,
     }
 
@@ -240,6 +517,7 @@ def aggregate_pairwise_run(
     *,
     submission_name: str | None = None,
     threshold: float = DEFAULT_AEH_THRESHOLD,
+    eval_engine: str = "aeh",
 ) -> dict[str, Any]:
     """Read pairwise AEH run directories and produce report dict.
 
@@ -289,11 +567,12 @@ def aggregate_pairwise_run(
     recommendation = outcome["recommendation"]
     cases_compared = pairwise.get("cases_compared", total)
 
-    # Preserve full judge and per_case structures
     treatment_judges = treatment_summary.get("judges", {})
     treatment_per_case = treatment_summary.get("per_case", {})
     control_judges = control_summary.get("judges", {})
     control_per_case = control_summary.get("per_case", {})
+    treatment_per_case_compact = _compact_per_case(treatment_per_case)
+    control_per_case_compact = _compact_per_case(control_per_case)
 
     resolved_name = submission_name or (
         treatment_dir.parent.name if treatment_dir.parent != treatment_dir else treatment_dir.name
@@ -306,7 +585,7 @@ def aggregate_pairwise_run(
     return {
         "submission_name": resolved_name,
         "provenance": {
-            "eval_engine": "aeh",
+            "eval_engine": eval_engine,
             "pipeline_run_id": treatment_summary.get("run_id", treatment_dir.name),
         },
         "summary": {
@@ -332,13 +611,13 @@ def aggregate_pairwise_run(
             "treatment": _trials_from_per_case(treatment_per_case),
             "control": _trials_from_per_case(control_per_case),
         },
-        "eval_engine": "aeh",
+        "eval_engine": eval_engine,
         "mode": "pairwise",
         "treatment": {
             "run_id": treatment_summary.get("run_id", treatment_dir.name),
             "mean_reward": treatment_mean_reward,
             "judges": treatment_judges,
-            "per_case": treatment_per_case,
+            "per_case": treatment_per_case_compact,
             "run_metrics": treatment_summary.get("run_metrics"),
             "execution": _load_execution_metadata(treatment_dir),
         },
@@ -346,7 +625,7 @@ def aggregate_pairwise_run(
             "run_id": control_summary.get("run_id", control_dir.name),
             "mean_reward": control_mean_reward,
             "judges": control_judges,
-            "per_case": control_per_case,
+            "per_case": control_per_case_compact,
             "run_metrics": control_summary.get("run_metrics"),
             "execution": _load_execution_metadata(control_dir),
         },
@@ -363,6 +642,8 @@ def aggregate_pairwise_run(
             "stability": pairwise.get("stability"),
         },
         "mean_reward": treatment_mean_reward,
+        "judges": treatment_judges,
+        "per_case": treatment_per_case_compact,
         "aeh_warnings": (["pairwise section missing from treatment summary.yaml"] if not pairwise else []),
         "recommendation": recommendation,
     }
@@ -375,6 +656,7 @@ def aggregate_aeh_results(
     *,
     submission_name: str | None = None,
     threshold: float = DEFAULT_AEH_THRESHOLD,
+    eval_engine: str = "aeh",
 ) -> dict[str, Any]:
     """Aggregate AEH results into Agentic Eval Flow report format.
 
@@ -396,11 +678,13 @@ def aggregate_aeh_results(
             control_dir,
             submission_name=submission_name,
             threshold=threshold,
+            eval_engine=eval_engine,
         )
     return aggregate_single_run(
         run_dir,
         submission_name=submission_name,
         threshold=threshold,
+        eval_engine=eval_engine,
     )
 
 
@@ -466,6 +750,12 @@ def main(argv: list[str] | None = None) -> int:
         default=DEFAULT_AEH_THRESHOLD,
         help=f"Pass/fail threshold (default: {DEFAULT_AEH_THRESHOLD})",
     )
+    parser.add_argument(
+        "--eval-engine",
+        type=str,
+        default="aeh",
+        help="Stamp eval_engine in report.json (aeh or aeh_openshell_openclaw)",
+    )
     args = parser.parse_args(argv)
 
     run_dir: Path = args.run_dir
@@ -488,6 +778,7 @@ def main(argv: list[str] | None = None) -> int:
             control_dir=args.control_dir,
             submission_name=args.submission_name,
             threshold=args.threshold,
+            eval_engine=args.eval_engine,
         )
     except FileNotFoundError as e:
         logger.error(str(e))
@@ -510,14 +801,18 @@ def main(argv: list[str] | None = None) -> int:
         )
     else:
         mean_reward = report["mean_reward"]
-        mean_reward_str = f"{mean_reward:.3f}" if mean_reward is not None else "None"
+        mean_reward_str = f"{mean_reward:.3f}" if mean_reward is not None else "unavailable"
         logger.info(
-            "Summary: mean_reward=%s, pass_rate=%.2f (%d/%d cases)",
+            "Single-sided AEH: mean_reward=%s, pass_rate=%.2f (%d/%d cases), n_errors=%s",
             mean_reward_str,
             report.get("pass_rate", 0),
             report.get("passed_cases", 0),
             report.get("total_cases", 0),
+            (report.get("summary") or {}).get("treatment", {}).get("n_errors", 0),
         )
+        for warning in report.get("aeh_warnings") or []:
+            logger.warning("%s", warning)
+        _log_judge_tables(report)
 
     return 0
 

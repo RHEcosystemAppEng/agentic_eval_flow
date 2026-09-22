@@ -23,7 +23,7 @@ spec:
   params:
     - name: eval-engine
       type: string
-      description: Evaluation engine (harbor, ase, mcpchecker, a2a, aeh, both)
+      description: Evaluation engine (harbor, ase, mcpchecker, a2a, aeh, aeh_openshell_openclaw, both)
     - name: submission-dir
       type: string
       description: Submission directory name under submissions/
@@ -147,12 +147,12 @@ spec:
       description: Treatment variant eval.yaml filename for pairwise mode
     - name: aeh-image
       type: string
-      default: "quay.io/ecosystem-appeng/agent-eval-harness:v1.0.3"
+      default: "quay.io/aipcc/base-images/agentic/openclaw:latest"
       description: Container image for AEH trial pods (required for harbor.run)
     - name: aeh-runner
       type: string
       default: "harbor"
-      description: AEH execution backend (harbor, vanilla)
+      description: AEH execution backend (harbor, vanilla, openshell)
     - name: enable-mlflow
       type: string
       default: "false"
@@ -173,6 +173,70 @@ spec:
       description: >-
         Optional prior AEH run-id for score.py regression --baseline (relative
         drift). Empty skips the baseline comparison.
+    # OpenShell / forge-saw (eval-engine=aeh_openshell_openclaw)
+    - name: aeh-openshell-image
+      type: string
+      default: "registry.access.redhat.com/ubi9/python-311:9.6"
+      description: >-
+        Orchestrator image with harness + openshell CLI.
+    - name: agent-eval-harness-repo-url
+      type: string
+      default: "https://github.com/GuyZivRH/agent-eval-harness.git"
+    - name: agent-eval-harness-repo-revision
+      type: string
+      default: "feat/aeh-openshell-openclaw"
+      description: >-
+        Branch or tag of GuyZivRH/agent-eval-harness to clone. Must include the
+        OpenShell create keep-alive fix (`--detach` + `sleep infinity`).
+    - name: openshell-gateway-endpoint
+      type: string
+      default: "http://openshell.openshell.svc.cluster.local:8080"
+      description: >-
+        In-cluster NVIDIA OpenShell gateway (namespace openshell, gRPC :8080).
+        Override only if using a different gateway (e.g. forge-saw :17670).
+    - name: openshell-sandbox-image
+      type: string
+      default: "ghcr.io/rh-forge/openclaw-saw-agent@sha256:bcc55e9b7a36d5f65e8ffc75962496f8b3617762a4cdb37fd1cf54611b72d41a"
+      description: >-
+        Immutable SAW Chief-of-Staff image with the daily-briefing skill and
+        governed M365/Slack tools.
+    - name: openshell-cli-version
+      type: string
+      default: "0.0.116"
+      description: >-
+        OpenShell CLI release. 0.0.111+ is required for `sandbox create --detach`.
+    - name: openshell-provider
+      type: string
+      default: "forge-ai-gateway,m365-read-intervm,slack-read-proxy,drafts-service-agent"
+      description: SAW provider explicitly attached to each evaluation sandbox
+    - name: openshell-mtls-secret
+      type: string
+      default: "openshell-mtls"
+      description: Secret in the PipelineRun namespace with OpenShell CLI mTLS files
+    - name: openshell-ai-gateway-ca-secret
+      type: string
+      default: "forge-ai-gateway-ca"
+      description: Public CA for Node TLS validation of SAW's Forge AI bridge
+    - name: openshell-credentials-secret
+      type: string
+      default: "openshell-credentials"
+      description: >-
+        Secret with M365_ACCESS_TOKEN and M365_USER (optional TENANT_ID /
+        CLIENT_ID / CLIENT_SECRET). Required for openclaw-forge Graph scenes.
+        Keys are optional for Crabline-only OpenShell evals.
+    - name: openshell-oidc-secret
+      type: string
+      default: "openshell-oidc-credentials"
+      description: Secret containing the SAW OIDC client settings.
+  volumes:
+    - name: openshell-mtls
+      secret:
+        secretName: $(params.openshell-mtls-secret)
+        optional: true
+    - name: forge-ai-gateway-ca
+      secret:
+        secretName: $(params.openshell-ai-gateway-ca-secret)
+        optional: true
   workspaces:
     - name: source
       description: Workspace containing the cloned submissions repository
@@ -198,15 +262,30 @@ spec:
         
         # Clone/update pipeline repo
         PIPELINE_DIR="$(workspaces.source.path)/_pipeline"
+        echo "=== Cloning pipeline repo: $(params.pipeline-repo-url) @ $(params.pipeline-repo-revision) ==="
         if [ -d "$PIPELINE_DIR/.git" ]; then
           cd "$PIPELINE_DIR"
-          git fetch origin "$(params.pipeline-repo-revision)" --depth 1 2>/dev/null || true
-          git reset --hard FETCH_HEAD 2>/dev/null || true
+          git fetch origin "$(params.pipeline-repo-revision)" --depth 1
+          git reset --hard FETCH_HEAD
         else
           git clone --depth 1 --branch "$(params.pipeline-repo-revision)" \
             "$(params.pipeline-repo-url)" "$PIPELINE_DIR"
         fi
-        
+        echo "Pipeline repo ready at $(git -C "$PIPELINE_DIR" rev-parse --short HEAD)"
+
+        # Clone/update agent-eval-harness repo (required for latest OpenShell logic)
+        HARNESS_DIR="$(workspaces.source.path)/_harness"
+        echo "=== Cloning harness repo: $(params.agent-eval-harness-repo-url) @ $(params.agent-eval-harness-repo-revision) ==="
+        if [ -d "$HARNESS_DIR/.git" ]; then
+          cd "$HARNESS_DIR"
+          git fetch origin "$(params.agent-eval-harness-repo-revision)" --depth 1
+          git reset --hard FETCH_HEAD
+        else
+          git clone --depth 1 --branch "$(params.agent-eval-harness-repo-revision)" \
+            "$(params.agent-eval-harness-repo-url)" "$HARNESS_DIR"
+        fi
+        echo "Harness repo ready at $(git -C "$HARNESS_DIR" rev-parse --short HEAD)"
+
         # Create results directories
         mkdir -p "$(workspaces.source.path)/eval-results/$(params.submission-name)"
         mkdir -p "$(workspaces.source.path)/reports/$(params.submission-name)"
@@ -353,7 +432,11 @@ spec:
 
     # Step 5: Harbor - Run Evaluation (uses pre-built image with Harbor installed)
     - name: harbor-eval
-      image: image-registry.openshift-image-registry.svc:5000/ab-eval-flow/eval-base:local-env
+      when:
+        - input: "$(params.eval-engine)"
+          operator: in
+          values: ["harbor", "both"]
+      image: registry.access.redhat.com/ubi9/python-311:9.6
       computeResources:
         requests:
           memory: 512Mi
@@ -361,7 +444,9 @@ spec:
           memory: 1Gi
       env:
         - name: HOME
-          value: /tmp
+          value: /tmp/openshell-home
+        - name: XDG_CONFIG_HOME
+          value: /tmp/openshell-home/.config
       script: |
         #!/usr/bin/env bash
         set -euo pipefail
@@ -467,6 +552,10 @@ spec:
 
     # Step 5b: Generate edge case evals from SKILL.md via LLM
     - name: generate-edge-case-evals
+      when:
+        - input: "$(params.eval-engine)"
+          operator: in
+          values: ["harbor", "both"]
       image: registry.access.redhat.com/ubi9/python-311:9.6
       env:
         - name: LLM_BASE_URL
@@ -521,6 +610,10 @@ spec:
 
     # Step 5c: ASE - Run Edge Case Evaluations (one ASE run per edge case)
     - name: ase-eval-edge-cases
+      when:
+        - input: "$(params.eval-engine)"
+          operator: in
+          values: ["harbor", "both"]
       image: registry.access.redhat.com/ubi9/nodejs-20:latest
       env:
         - name: OPENAI_API_KEY
@@ -643,6 +736,10 @@ spec:
 
     # Step 5d: Aggregate edge case results
     - name: ase-aggregate-edge-cases
+      when:
+        - input: "$(params.eval-engine)"
+          operator: in
+          values: ["harbor", "both"]
       image: registry.access.redhat.com/ubi9/python-311:9.6
       script: |
         #!/usr/bin/env bash
@@ -673,6 +770,10 @@ spec:
 
     # Step 6: ASE - Run Evaluation
     - name: ase-eval
+      when:
+        - input: "$(params.eval-engine)"
+          operator: in
+          values: ["harbor", "both"]
       image: registry.access.redhat.com/ubi9/nodejs-20:latest
       env:
         - name: OPENAI_API_KEY
@@ -765,6 +866,10 @@ spec:
 
     # Step 7: ASE - Aggregate
     - name: ase-aggregate
+      when:
+        - input: "$(params.eval-engine)"
+          operator: in
+          values: ["harbor", "both"]
       image: registry.access.redhat.com/ubi9/python-311:9.6
       script: |
         #!/usr/bin/env bash
@@ -818,7 +923,11 @@ spec:
 
     # Step 8: MCPChecker - Run Evaluation
     - name: mcpchecker-eval
-      image: image-registry.openshift-image-registry.svc:5000/ab-eval-flow/mcpchecker-runner:latest
+      when:
+        - input: "$(params.eval-engine)"
+          operator: in
+          values: ["harbor", "both"]
+      image: registry.access.redhat.com/ubi9/python-311:9.6
       env:
         - name: MCP_URL
           valueFrom:
@@ -884,6 +993,10 @@ spec:
 
     # Step 9: MCPChecker - Aggregate
     - name: mcpchecker-aggregate
+      when:
+        - input: "$(params.eval-engine)"
+          operator: in
+          values: ["harbor", "both"]
       image: registry.access.redhat.com/ubi9/python-311:9.6
       script: |
         #!/bin/bash
@@ -923,6 +1036,10 @@ spec:
 
     # Step 10: A2A - Deploy Agent as Deployment+Service (if no endpoint provided)
     - name: a2a-deploy-agent
+      when:
+        - input: "$(params.eval-engine)"
+          operator: in
+          values: ["a2a", "both"]
       image: image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
       script: |
         #!/usr/bin/env bash
@@ -1041,6 +1158,10 @@ spec:
 
     # Step 10.5: A2A - Pre-flight health check
     - name: a2a-pre-flight
+      when:
+        - input: "$(params.eval-engine)"
+          operator: in
+          values: ["a2a", "both"]
       image: registry.access.redhat.com/ubi9/ubi-minimal:latest
       script: |
         #!/usr/bin/env bash
@@ -1081,9 +1202,14 @@ spec:
 
     # Step 11: A2A Agent Evaluation
     - name: a2a-eval
-      image: image-registry.openshift-image-registry.svc:5000/ab-eval-flow/eval-base:local-env
+      when:
+        - input: "$(params.eval-engine)"
+          operator: in
+          values: ["a2a", "both"]
+      image: registry.access.redhat.com/ubi9/python-311:9.6
       computeResources:
         requests:
+          cpu: 50m
           memory: 256Mi
         limits:
           cpu: 500m
@@ -1271,11 +1397,11 @@ spec:
       timeout: "2h"
       computeResources:
         requests:
-          cpu: "500m"
-          memory: "512Mi"
+          cpu: "50m"
+          memory: "128Mi"
         limits:
-          cpu: "1000m"
-          memory: "2Gi"
+          cpu: "500m"
+          memory: "1Gi"
       env:
         - name: HOME
           value: /tmp
@@ -1315,11 +1441,25 @@ spec:
         SUBMISSION_NAME="$(params.submission-name)"
         RUN_ID="$(params.pipeline-run-id)"
         
-        # Skill namespaced run dir (AEH layout); report.json uses submission-name for analyze
+        # Reports leaf matches EvalConfig.eval_name(): skill, then name, then submission
         SKILL_NAME=$(python3 -c "
         import yaml
-        config = yaml.safe_load(open('$SUBMISSION_DIR/eval.yaml'))
-        print(config.get('skill', '$SUBMISSION_NAME'))
+        config = yaml.safe_load(open('$SUBMISSION_DIR/eval.yaml')) or {}
+        execb = config.get('execution') or {}
+        skill = ''
+        if isinstance(execb, dict):
+            skill = str(execb.get('skill') or '').strip()
+        if not skill:
+            skill = str(config.get('skill') or '').strip()
+        name = str(config.get('name') or '').strip()
+        if skill:
+            print(skill)
+        elif name:
+            s = name.lower().replace(' ', '-')
+            s = ''.join(c for c in s if c.isalnum() or c in '._-')
+            print(s or '$SUBMISSION_NAME')
+        else:
+            print('$SUBMISSION_NAME')
         ")
         
         OUT_DIR="$(workspaces.source.path)/reports/${SKILL_NAME}/${RUN_ID}"
@@ -1383,7 +1523,7 @@ spec:
         
         # Aggregate results using our script
         PIPELINE_DIR="$(workspaces.source.path)/_pipeline"
-        export PYTHONPATH="$PIPELINE_DIR"
+        export PYTHONPATH="$PIPELINE_DIR:${PYTHONPATH:-}"
         pip install --quiet --no-cache-dir pyyaml 2>&1 | tail -1
 
         AEH_THRESHOLD=$(python3 -c "from pathlib import Path; from abevalflow.aeh_scoring import resolve_evaluation_threshold; print(resolve_evaluation_threshold(Path('$SUBMISSION_DIR') / 'metadata.yaml'))")
@@ -1401,34 +1541,22 @@ spec:
         
         # Parse results for finalize step (even when AEH_EXIT != 0)
         python3 - "$OUT_DIR" "$(workspaces.source.path)/_eval_tmp" "$AEH_THRESHOLD" <<'PARSE_AEH'
-        import json, sys, yaml
+        import sys
         from pathlib import Path
-        
+
+        from scripts.aggregate_aeh import _extract_mean_reward
+
         out_dir = Path(sys.argv[1])
         tmp_dir = Path(sys.argv[2])
         threshold = float(sys.argv[3])
-        
-        mean_reward = 0.0
-        
-        # Try summary.yaml first
-        summary_path = out_dir / "summary.yaml"
-        if summary_path.exists():
-            summary = yaml.safe_load(summary_path.read_text())
-            mean_reward = summary.get("mean_reward", 0.0)
-        
-        # Override from run_result.json if present
-        run_result_path = out_dir / "run_result.json"
-        if run_result_path.exists():
-            run_result = json.loads(run_result_path.read_text())
-            if "mean_reward" in run_result:
-                mean_reward = run_result["mean_reward"]
 
+        mean_reward = _extract_mean_reward(out_dir)
         rec = "pass" if (mean_reward is not None and mean_reward >= threshold) else "fail"
 
         tmp_dir.mkdir(parents=True, exist_ok=True)
-        reward_str = f"{mean_reward:.4f}" if mean_reward is not None else "0.0000"
+        reward_str = f"{mean_reward:.4f}" if mean_reward is not None else "N/A"
         (tmp_dir / "treatment-reward").write_text(reward_str)
-        (tmp_dir / "control-reward").write_text("0.0000")
+        (tmp_dir / "control-reward").write_text("N/A")
         (tmp_dir / "recommendation").write_text(rec)
 
         print(f"AEH mean reward: {reward_str} (threshold={threshold})")
@@ -1500,6 +1628,576 @@ spec:
           exit "$AEH_EXIT"
         fi
 
+    # Step 12b: AEH OpenShell OpenClaw (cluster OpenShell gateway). Not Harbor trial pods.
+    - name: aeh-openshell-eval
+      when:
+        - input: "$(params.eval-engine)"
+          operator: in
+          values: ["aeh_openshell_openclaw"]
+      image: $(params.aeh-openshell-image)
+      timeout: "2h"
+      computeResources:
+        requests:
+          cpu: "50m"
+          memory: "128Mi"
+        limits:
+          cpu: "500m"
+          memory: "1Gi"
+      volumeMounts:
+        - name: openshell-mtls
+          mountPath: /tmp/.config/openshell
+          readOnly: true
+        - name: forge-ai-gateway-ca
+          mountPath: /tmp/forge-ai-gateway-ca
+          readOnly: true
+      envFrom:
+        # Inject every key from openshell-credentials (M365_*). optional so
+        # Crabline OpenShell evals still start when the Secret is absent.
+        # File-auth paths (M365_AUTH_HEADER_FILE, M365_GRAPH_CURL) are not
+        # Secret keys — AEH writes them in the sandbox from M365_ACCESS_TOKEN.
+        - secretRef:
+            name: $(params.openshell-credentials-secret)
+            optional: true
+        - secretRef:
+            name: $(params.openshell-oidc-secret)
+            optional: true
+        - secretRef:
+            name: inference
+            optional: false
+      env:
+        - name: HOME
+          value: /tmp/openshell-home
+        - name: INFERENCE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: inference
+              key: api_key
+        - name: OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: inference
+              key: api_key
+        - name: AGENT_EVAL_RUNS_DIR
+          value: $(workspaces.source.path)/reports
+        - name: OPENSHELL_GATEWAY_ENDPOINT
+          value: "$(params.openshell-gateway-endpoint)"
+        - name: OPENSHELL_GATEWAY_NAME
+          value: "ci-gateway"
+        - name: AGENT_EVAL_OPENSHELL_WORKSPACE
+          value: "forge-image"
+        - name: AGENT_EVAL_OPENSHELL_IMAGE
+          value: "$(params.openshell-sandbox-image)"
+        - name: AGENT_EVAL_OPENSHELL_PROVIDER
+          value: "$(params.openshell-provider)"
+        - name: AGENT_EVAL_FORGE_AI_GATEWAY_CA_FILE
+          value: "/tmp/forge-ai-gateway-ca/ca.crt"
+        - name: FORGE_SAW_PROFILE
+          value: "forge-outlook-slack"
+        - name: ANTHROPIC_BASE_URL
+          value: "$(params.llm-api-base)"
+        - name: ANTHROPIC_API_KEY
+          value: "$(params.llm-api-key)"
+        # Orchestrator env. AEH OpenShell forwards these into sandbox exec via
+        # _FORWARD_ENV and eval.yaml execution.env $M365_* resolution. seed:
+        # external — mailbox is pre-seeded; do not populate crabline/smolclaw.
+        - name: M365_ACCESS_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: $(params.openshell-credentials-secret)
+              key: M365_ACCESS_TOKEN
+              optional: true
+        - name: M365_USER
+          valueFrom:
+            secretKeyRef:
+              name: $(params.openshell-credentials-secret)
+              key: M365_USER
+              optional: true
+        - name: M365_TENANT_ID
+          valueFrom:
+            secretKeyRef:
+              name: $(params.openshell-credentials-secret)
+              key: M365_TENANT_ID
+              optional: true
+        - name: M365_CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: $(params.openshell-credentials-secret)
+              key: M365_CLIENT_ID
+              optional: true
+        - name: M365_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: $(params.openshell-credentials-secret)
+              key: M365_CLIENT_SECRET
+              optional: true
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        EVAL_ENGINE="$(params.eval-engine)"
+        if [ "$EVAL_ENGINE" != "aeh_openshell_openclaw" ]; then
+          echo "Skipping AEH OpenShell eval (eval-engine=$EVAL_ENGINE)"
+          exit 0
+        fi
+
+        unset ANTHROPIC_VERTEX_PROJECT_ID || true
+
+        # Ensure openshell CLI is available before gateway/OIDC setup.
+        if ! command -v openshell >/dev/null 2>&1; then
+          echo "Installing openshell CLI v$(params.openshell-cli-version)..."
+          mkdir -p /tmp/bin
+          OS_ARCH="x86_64-unknown-linux-musl"
+          curl -fsSL "https://github.com/NVIDIA/OpenShell/releases/download/v$(params.openshell-cli-version)/openshell-${OS_ARCH}.tar.gz" | tar -xz -C /tmp/bin openshell
+          export PATH="/tmp/bin:$PATH"
+        fi
+
+        # Materialize the CI client certificate before registering the gateway.
+        # gateway add inspects this directory when selecting mTLS transport.
+        export XDG_CONFIG_HOME="${HOME}/.config"
+        GW_NAME="${OPENSHELL_GATEWAY_NAME:-ci-gateway}"
+        MTLS_SRC="/tmp/.config/openshell"
+        MTLS_DST="${XDG_CONFIG_HOME}/openshell/gateways/${GW_NAME}/mtls"
+        mkdir -p "${XDG_CONFIG_HOME}/openshell"
+        if [ -f "$MTLS_SRC/tls.crt" ] && [ -f "$MTLS_SRC/tls.key" ]; then
+          mkdir -p "$MTLS_DST"
+          cp -f "$MTLS_SRC/ca.crt" "$MTLS_DST/" 2>/dev/null || true
+          cp -f "$MTLS_SRC/tls.crt" "$MTLS_DST/"
+          cp -f "$MTLS_SRC/tls.key" "$MTLS_DST/"
+          chmod 600 "$MTLS_DST"/* 2>/dev/null || true
+          echo "OpenShell mTLS material staged before gateway registration"
+        else
+          echo "ERROR: openshell-mtls client certificate is missing" >&2
+          exit 1
+        fi
+
+        # Native mTLS requires server-name verification AND a client identity.
+        # --gateway-insecure in this CLI drops client authentication.
+        if [[ "${OPENSHELL_GATEWAY_ENDPOINT}" == *".svc.cluster.local:"* ]] \
+          || [[ "${OPENSHELL_GATEWAY_ENDPOINT}" == "https://host.containers.internal:"* ]]; then
+          unset OPENSHELL_GATEWAY_INSECURE
+          CLI_GATEWAY_ENDPOINT="$OPENSHELL_GATEWAY_ENDPOINT"
+          # Use the CLI's supported local/mTLS registration path. This lets
+          # the installed CLI create metadata in the exact shape it expects
+          # and associate the staged client bundle with the gateway profile.
+          openshell gateway add "$CLI_GATEWAY_ENDPOINT" \
+            --local \
+            --name "$GW_NAME" \
+            >/tmp/openshell-gateway-add.log 2>&1 || {
+              grep -vE 'client_secret|token|secret' /tmp/openshell-gateway-add.log || true
+              exit 1
+            }
+          POST_ADD_MTLS_DST="${XDG_CONFIG_HOME}/openshell/gateways/${GW_NAME}/mtls"
+          mkdir -p "$POST_ADD_MTLS_DST"
+          cp -f "$MTLS_SRC/ca.crt" "$POST_ADD_MTLS_DST/"
+          cp -f "$MTLS_SRC/tls.crt" "$POST_ADD_MTLS_DST/"
+          cp -f "$MTLS_SRC/tls.key" "$POST_ADD_MTLS_DST/"
+          chmod 600 "$POST_ADD_MTLS_DST"/*
+          echo "OpenShell mTLS material restaged after gateway registration"
+          export OPENSHELL_GATEWAY="$GW_NAME"
+          export OPENSHELL_GATEWAY_NAME="$GW_NAME"
+          export OPENSHELL_GATEWAY_ENDPOINT="$CLI_GATEWAY_ENDPOINT"
+          echo "OpenShell mTLS gateway configured: ${GW_NAME}"
+        elif [ -n "${OPENSHELL_OIDC_CLIENT_SECRET:-}" ] && [ -n "${OPENSHELL_OIDC_CLIENT_ID:-}" ] \
+          && [ -n "${OPENSHELL_OIDC_ISSUER:-}" ]; then
+          openshell gateway add "$OPENSHELL_GATEWAY_ENDPOINT" \
+            --name "$GW_NAME" \
+            --oidc-issuer "$OPENSHELL_OIDC_ISSUER" \
+            --oidc-client-id "$OPENSHELL_OIDC_CLIENT_ID" \
+            --oidc-audience "${OPENSHELL_OIDC_AUDIENCE:-openshell-cli}" \
+            >/tmp/openshell-gateway-add.log 2>&1 || {
+              grep -vE 'client.secret|secret|token' /tmp/openshell-gateway-add.log || true
+              exit 1
+            }
+          OIDC_TOKEN_JSON=/tmp/openshell-oidc-token.json
+          curl -ksSf --max-time 20 \
+            -u "${OPENSHELL_OIDC_CLIENT_ID}:${OPENSHELL_OIDC_CLIENT_SECRET}" \
+            -d grant_type=client_credentials \
+            "${OPENSHELL_OIDC_ISSUER%/}/protocol/openid-connect/token" \
+            >"$OIDC_TOKEN_JSON"
+          python3 - "$OIDC_TOKEN_JSON" "$HOME/.config/openshell/gateways/$GW_NAME/oidc_token.json" \
+            "$OPENSHELL_OIDC_ISSUER" "$OPENSHELL_OIDC_CLIENT_ID" <<'PY'
+        import json, sys, time
+        src, dst, issuer, client_id = sys.argv[1:]
+        payload = json.load(open(src, encoding="utf-8"))
+        token = payload["access_token"]
+        expires_at = int(time.time()) + int(payload.get("expires_in", 300))
+        json.dump({"access_token": token, "expires_at": expires_at,
+                   "issuer": issuer, "client_id": client_id}, open(dst, "w", encoding="utf-8"))
+        PY
+          chmod 600 "$HOME/.config/openshell/gateways/$GW_NAME/oidc_token.json"
+          echo "OpenShell OIDC token cache populated via client credentials"
+          export OPENSHELL_GATEWAY="$GW_NAME"
+          echo "OpenShell OIDC gateway configured: ${GW_NAME}"
+        else
+          echo "OpenShell OIDC Secret not configured; using existing gateway auth"
+        fi
+
+        # Secret mounts flat at $HOME/.config/openshell. OpenShell CLI expects
+        # gateways/<sandbox>/mtls/{ca.crt,tls.crt,tls.key}.
+        if [ -f "$MTLS_DST/tls.crt" ] && [ -f "$MTLS_DST/tls.key" ]; then
+          echo "OpenShell mTLS profile files:"
+          find "$HOME/.config/openshell/gateways/$GW_NAME" -maxdepth 3 -type f -printf '%p %s bytes\n' 2>/dev/null || true
+          openssl x509 -in "$MTLS_DST/tls.crt" -noout -subject -issuer -fingerprint -sha256 2>/dev/null || true
+          echo "OpenShell profile metadata:"
+          sed -E 's/(client_secret|token|secret)[^,}]*/\1=REDACTED/g' "$HOME/.config/openshell/gateways/$GW_NAME/metadata.json" 2>/dev/null || true
+          if [ -s "$HOME/.config/openshell/gateways/$GW_NAME/oidc_token.json" ]; then
+            echo "OpenShell OIDC token cache: present"
+          else
+            echo "OpenShell OIDC token cache: missing"
+          fi
+        fi
+
+        echo "=== EVALUATE PHASE: AEH OpenShell OpenClaw ==="
+        echo "Orchestrator image: $(params.aeh-openshell-image)"
+        echo "OPENSHELL_GATEWAY_ENDPOINT=${OPENSHELL_GATEWAY_ENDPOINT:-unset}"
+        echo "AGENT_EVAL_OPENSHELL_IMAGE=${AGENT_EVAL_OPENSHELL_IMAGE:-unset}"
+        echo "ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL:-unset}"
+
+        PIPELINE_DIR="$(workspaces.source.path)/_pipeline"
+        HARNESS_DIR="$(workspaces.source.path)/_harness"
+        # Judge scoring (score.py) runs in this UBI orchestrator, not the
+        # OpenClaw sandbox. Local .eval-venv has anthropic/jinja2/yaml;
+        # install the same packages here so LLM judges can import.
+        JUDGE_PKG_DIR="/tmp/aeh-judge-pkgs"
+        mkdir -p "$JUDGE_PKG_DIR"
+        echo "=== Installing orchestrator judge dependencies ==="
+        python3 -m pip install --no-cache-dir --target "$JUDGE_PKG_DIR" \
+          'pyyaml>=6.0' 'jinja2>=3.0' 'pydantic' 'anthropic>=0.40' \
+          2>&1 | tail -20
+        export PYTHONPATH="$JUDGE_PKG_DIR:$PIPELINE_DIR:$HARNESS_DIR:${PYTHONPATH:-}"
+        python3 -c "import anthropic, yaml, jinja2; print('judge deps OK', 'anthropic', anthropic.__version__)"
+
+        if ! python3 -c "import agent_eval.openshell.run" 2>/dev/null; then
+          echo "Harness not importable after PYTHONPATH setup"
+          python3 -c "import sys; print('\\n'.join(sys.path))"
+          exit 1
+        fi
+
+        # Ensure openshell CLI is available
+        if ! command -v openshell >/dev/null 2>&1; then
+          echo "Installing openshell CLI v$(params.openshell-cli-version)..."
+          mkdir -p /tmp/bin
+          OS_ARCH="x86_64-unknown-linux-musl"
+          curl -fsSL "https://github.com/NVIDIA/OpenShell/releases/download/v$(params.openshell-cli-version)/openshell-${OS_ARCH}.tar.gz" | tar -xz -C /tmp/bin openshell
+          export PATH="/tmp/bin:$PATH"
+        fi
+
+        if ! python3 -c "import agent_eval.openshell.run"; then
+          echo "ERROR: image $(params.aeh-openshell-image) cannot import agent_eval.openshell."
+          echo "PYTHONPATH: $PYTHONPATH"
+          exit 1
+        fi
+
+        echo "=== OpenShell gateway preflight ==="
+        python3 - <<'PREFLIGHT'
+        import os, socket, sys, urllib.parse
+        url = os.environ.get("OPENSHELL_GATEWAY_ENDPOINT", "")
+        if not url:
+            print("ERROR: OPENSHELL_GATEWAY_ENDPOINT is empty", file=sys.stderr)
+            sys.exit(1)
+        parsed = urllib.parse.urlparse(url)
+        host = parsed.hostname
+        port = parsed.port or (443 if parsed.scheme == "https" else 8080)
+        if not host:
+            print(f"ERROR: cannot parse host from {url!r}", file=sys.stderr)
+            sys.exit(1)
+        try:
+            sock = socket.create_connection((host, port), timeout=15)
+            sock.close()
+        except OSError as exc:
+            print(
+                f"ERROR: OpenShell gateway unreachable at {host}:{port} ({exc}). "
+                "Expected the cluster Helm gateway at "
+                "http://openshell.openshell.svc.cluster.local:8080.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        print(f"gateway reachable {host}:{port}")
+        PREFLIGHT
+
+        if command -v openshell >/dev/null 2>&1; then
+          openshell -g "${OPENSHELL_GATEWAY_NAME:-ci-gateway}" sandbox list
+        else
+          echo "WARN: openshell CLI not on PATH in orchestrator image"
+        fi
+
+        SUBMISSION_DIR="$(workspaces.source.path)/submissions/$(params.submission-dir)"
+        SUBMISSION_NAME="$(params.submission-name)"
+        RUN_ID="$(params.pipeline-run-id)"
+
+        echo "=== M365 Graph credentials preflight ==="
+        python3 - "$SUBMISSION_DIR" <<'M365PRE'
+        import os, sys
+        from pathlib import Path
+
+        try:
+            import yaml
+        except ImportError:
+            print("WARN: pyyaml missing; skipping M365 eval.yaml inspection")
+            sys.exit(0)
+
+        def usable(value):
+            if not value or not str(value).strip():
+                return False
+            low = str(value).strip().lower()
+            return not any(
+                marker in low
+                for marker in ("<replace-with", "changeme", "placeholder")
+            )
+
+        sub = Path(sys.argv[1])
+        eval_path = sub / "eval.yaml"
+        if not eval_path.is_file():
+            print(f"WARN: {eval_path} missing; skipping M365 preflight")
+            sys.exit(0)
+        cfg = yaml.safe_load(eval_path.read_text()) or {}
+        exec_env = (cfg.get("execution") or {}).get("env") or {}
+        needed = []
+        if any(str(k).startswith("M365_") for k in exec_env):
+            needed.extend(["M365_ACCESS_TOKEN", "M365_USER"])
+        scene_name = cfg.get("scene")
+        if scene_name:
+            scene_path = sub / "scenes" / f"{scene_name}.yaml"
+            if scene_path.is_file():
+                scene = yaml.safe_load(scene_path.read_text()) or {}
+                m365 = scene.get("m365") or {}
+                user = m365.get("user")
+                if user and not usable(os.environ.get("M365_USER")):
+                    os.environ["M365_USER"] = str(user)
+                    print(f"M365_USER defaulted from scene ({user})")
+                if str(m365.get("seed") or "") == "external":
+                    for key in ("M365_ACCESS_TOKEN", "M365_USER"):
+                        if key not in needed:
+                            needed.append(key)
+        if not needed:
+            print("M365 not required for this submission")
+            sys.exit(0)
+        saw_profile = os.environ.get("FORGE_SAW_PROFILE", "").strip()
+        if saw_profile:
+            print(
+                f"M365 access delegated to SAW profile {saw_profile}; "
+                "Graph token Secret is not required"
+            )
+            sys.exit(0)
+        missing = [k for k in needed if not usable(os.environ.get(k))]
+        if missing:
+            secret = os.environ.get(
+                "OPENSHELL_CREDENTIALS_SECRET", "openshell-credentials"
+            )
+            print(
+                "ERROR: OpenClaw Forge needs live Microsoft Graph credentials, "
+                f"but these were unset or placeholders: {', '.join(missing)}.",
+                file=sys.stderr,
+            )
+            print(
+                "Create Secret openshell-credentials in the PipelineRun namespace "
+                "(do not apply the placeholder template, do not commit tokens):",
+                file=sys.stderr,
+            )
+            print(
+                "  oc create secret generic openshell-credentials "
+                "-n guy-ziv-evalflow \\\n"
+                "    --from-literal=M365_ACCESS_TOKEN=... \\\n"
+                "    --from-literal=M365_USER=... \\\n"
+                "    --from-literal=M365_TENANT_ID=... \\\n"
+                "    --from-literal=M365_CLIENT_ID=... \\\n"
+                "    --from-literal=M365_CLIENT_SECRET=...",
+                file=sys.stderr,
+            )
+            print(
+                "Required keys: M365_ACCESS_TOKEN, M365_USER. "
+                "Optional: M365_TENANT_ID, M365_CLIENT_ID, M365_CLIENT_SECRET. "
+                "M365_AUTH_HEADER_FILE and M365_GRAPH_CURL are created in the "
+                "sandbox from M365_ACCESS_TOKEN — they are not Secret keys. "
+                f"Expected Secret name: {secret}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        print("M365 Graph credentials present:", ", ".join(needed))
+        M365PRE
+        echo "M365_ACCESS_TOKEN: ${M365_ACCESS_TOKEN:+present}"
+        echo "M365_USER: ${M365_USER:+present}"
+        echo "M365_TENANT_ID: ${M365_TENANT_ID:+present}"
+        echo "M365_CLIENT_ID: ${M365_CLIENT_ID:+present}"
+        echo "M365_CLIENT_SECRET: ${M365_CLIENT_SECRET:+present}"
+
+        # Reports leaf matches EvalConfig.eval_name(): skill, then name, then submission
+        SKILL_NAME=$(python3 -c "
+        import yaml
+        config = yaml.safe_load(open('$SUBMISSION_DIR/eval.yaml')) or {}
+        execb = config.get('execution') or {}
+        skill = ''
+        if isinstance(execb, dict):
+            skill = str(execb.get('skill') or '').strip()
+        if not skill:
+            skill = str(config.get('skill') or '').strip()
+        name = str(config.get('name') or '').strip()
+        if skill:
+            print(skill)
+        elif name:
+            s = name.lower().replace(' ', '-')
+            s = ''.join(c for c in s if c.isalnum() or c in '._-')
+            print(s or '$SUBMISSION_NAME')
+        else:
+            print('$SUBMISSION_NAME')
+        ")
+
+        OUT_DIR="$(workspaces.source.path)/reports/${SKILL_NAME}/${RUN_ID}"
+        REPORT_JSON="$(workspaces.source.path)/reports/${SUBMISSION_NAME}/report.json"
+
+        mkdir -p "$OUT_DIR" "$(workspaces.source.path)/reports/${SUBMISSION_NAME}"
+
+        MODEL="$(params.aeh-model-override)"
+        if [ -z "$MODEL" ]; then
+          MODEL=$(python3 -c "
+        import yaml
+        config = yaml.safe_load(open('$SUBMISSION_DIR/eval.yaml'))
+        models = config.get('models', {})
+        if isinstance(models, str):
+            print(models)
+        else:
+            print(models.get('skill', 'claude-sonnet'))
+        ")
+        fi
+
+        JUDGE_OVERRIDE="$(params.aeh-judge-model-override)"
+        if [ -z "$JUDGE_OVERRIDE" ] && [ -n "$MODEL" ]; then
+          JUDGE_OVERRIDE="$MODEL"
+        fi
+
+        echo "Submission: $SUBMISSION_DIR"
+        echo "Output: $OUT_DIR"
+        echo "Model: $MODEL"
+
+        export AGENT_EVAL_HARNESS_ROOT="$HARNESS_DIR"
+        if [ "$(params.enable-mlflow)" = "true" ] && [ -n "$(params.mlflow-tracking-uri)" ]; then
+          export MLFLOW_TRACKING_URI="$(params.mlflow-tracking-uri)"
+          echo "MLFLOW_TRACKING_URI set for AEH harness + CI logger"
+        fi
+
+        set +e
+        python "$PIPELINE_DIR/scripts/run_aeh.py" single \
+          --runner openshell \
+          --config "$SUBMISSION_DIR/eval.yaml" \
+          --output "$OUT_DIR" \
+          --run-id "$RUN_ID" \
+          ${MODEL:+--model "$MODEL"} \
+          ${JUDGE_OVERRIDE:+--judge-model "$JUDGE_OVERRIDE"}
+        AEH_EXIT=$?
+        set -e
+
+        # Keep JUDGE_PKG_DIR on PYTHONPATH; UBI site-packages is not writable.
+        export PYTHONPATH="$PIPELINE_DIR:${PYTHONPATH:-}"
+
+        AEH_THRESHOLD=$(python3 -c "from pathlib import Path; from abevalflow.aeh_scoring import resolve_evaluation_threshold; print(resolve_evaluation_threshold(Path('$SUBMISSION_DIR') / 'metadata.yaml'))")
+        echo "AEH evaluation threshold: $AEH_THRESHOLD"
+
+        REPORTS_ROOT="$(workspaces.source.path)/reports"
+        if [ ! -f "$OUT_DIR/summary.yaml" ] && [ ! -f "$OUT_DIR/run_result.json" ]; then
+          FOUND=""
+          for cand in "$REPORTS_ROOT/${SKILL_NAME}/${RUN_ID}" "$REPORTS_ROOT/${SUBMISSION_NAME}/${RUN_ID}"; do
+            if [ -f "$cand/summary.yaml" ] || [ -f "$cand/run_result.json" ]; then
+              FOUND="$cand"
+              break
+            fi
+          done
+          if [ -z "$FOUND" ]; then
+            shopt -s nullglob
+            for cand in "$REPORTS_ROOT"/*/"$RUN_ID"; do
+              if [ -f "$cand/summary.yaml" ] || [ -f "$cand/run_result.json" ]; then
+                FOUND="$cand"
+                break
+              fi
+            done
+            shopt -u nullglob
+          fi
+          if [ -n "$FOUND" ]; then
+            echo "WARN: OpenShell AEH results at $FOUND (expected $OUT_DIR); using found path"
+            OUT_DIR="$FOUND"
+          fi
+        fi
+
+        if [ -f "$OUT_DIR/summary.yaml" ] || [ -f "$OUT_DIR/run_result.json" ]; then
+          python "$PIPELINE_DIR/scripts/aggregate_aeh.py" "$OUT_DIR" \
+            --submission-name "$SUBMISSION_NAME" \
+            --threshold "$AEH_THRESHOLD" \
+            --eval-engine aeh_openshell_openclaw \
+            --output "$REPORT_JSON"
+        else
+          echo "ERROR: OpenShell AEH produced no summary.yaml or run_result.json in $OUT_DIR"
+          echo "Looked under $REPORTS_ROOT/<eval-name|submission>/$RUN_ID"
+          ls -la "$REPORTS_ROOT" 2>/dev/null || true
+          ls -la "$REPORTS_ROOT"/*/"$RUN_ID" 2>/dev/null || true
+          exit 1
+        fi
+
+        python3 - "$OUT_DIR" "$(workspaces.source.path)/_eval_tmp" "$AEH_THRESHOLD" <<'PARSE_AEH'
+        import sys
+        from pathlib import Path
+
+        from scripts.aggregate_aeh import _extract_mean_reward
+
+        out_dir = Path(sys.argv[1])
+        tmp_dir = Path(sys.argv[2])
+        threshold = float(sys.argv[3])
+
+        mean_reward = _extract_mean_reward(out_dir)
+        rec = "pass" if (mean_reward is not None and mean_reward >= threshold) else "fail"
+
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        reward_str = f"{mean_reward:.4f}" if mean_reward is not None else "N/A"
+        (tmp_dir / "treatment-reward").write_text(reward_str)
+        (tmp_dir / "control-reward").write_text("N/A")
+        (tmp_dir / "recommendation").write_text(rec)
+
+        print(f"AEH OpenShell mean reward: {reward_str} (threshold={threshold})")
+        print(f"Recommendation: {rec}")
+        PARSE_AEH
+
+        # Same opt-in MLflow path as Harbor AEH single-run (aeh-eval).
+        # OpenShell reports live under reports/<eval-name>/<pipeline-run-id>/.
+        # Calls AEH skills/eval-mlflow/log_results.py (harness clone), then
+        # CI fallback metrics if that no-ops.
+        if [ "$(params.enable-mlflow)" = "true" ] && [ -n "$(params.mlflow-tracking-uri)" ]; then
+          echo "=== AEH OpenShell MLflow logging ==="
+          MLFLOW_PKG_DIR="/tmp/mlflow-pkgs"
+          mkdir -p "$MLFLOW_PKG_DIR"
+          export PYTHONPATH="${MLFLOW_PKG_DIR}${PYTHONPATH:+:$PYTHONPATH}"
+          if python -c "import mlflow, pandas" 2>/dev/null; then
+            echo "mlflow/pandas already available (image or prior install); skipping pip"
+          else
+            echo "Installing mlflow-skinny + pandas into ${MLFLOW_PKG_DIR} (fallback) ..."
+            set +e
+            python -m pip install --no-cache-dir --target "$MLFLOW_PKG_DIR" 'mlflow-skinny' 'pandas' 'boto3' 2>&1 | tee /tmp/mlflow-pip.log | tail -30
+            PIP_RC=${PIPESTATUS[0]}
+            set -e
+            if [ "$PIP_RC" -ne 0 ]; then
+              echo "WARN: mlflow-skinny/pandas install failed (rc=$PIP_RC)"
+              tail -40 /tmp/mlflow-pip.log || true
+            fi
+          fi
+          if python -c "import mlflow, pandas; print('mlflow OK', mlflow.__version__, 'pandas', pandas.__version__)"; then
+            export MLFLOW_TRACKING_URI="$(params.mlflow-tracking-uri)"
+            python "$PIPELINE_DIR/scripts/log_aeh_mlflow.py" \
+              --enabled true \
+              --tracking-uri "$(params.mlflow-tracking-uri)" \
+              --experiment "$RUN_ID" \
+              --run-id "$RUN_ID" \
+              --config "$SUBMISSION_DIR/eval.yaml" \
+              --runs-dir "$(workspaces.source.path)/reports" \
+              2>&1 || echo "Warning: MLflow logging failed (non-blocking)"
+          else
+            echo "Warning: mlflow/pandas not importable; skipping MLflow logging"
+          fi
+        else
+          echo "Skipping AEH OpenShell MLflow (enable-mlflow=$(params.enable-mlflow), uri set=$([ -n "$(params.mlflow-tracking-uri)" ] && echo yes || echo no))"
+        fi
+
+        if [ "$AEH_EXIT" -ne 0 ]; then
+          echo "ERROR: AEH OpenShell evaluation exited $AEH_EXIT (report written if outputs existed)"
+          exit "$AEH_EXIT"
+        fi
+
     # Step 13: AEH - Pairwise A/B Evaluation (consolidated)
     # Depends on: prepare, validate. Skipped unless eval-engine=aeh and aeh-mode=pairwise.
     # Run dirs stay under reports/<skill>/ for score.py; report.json uses submission-name.
@@ -1512,11 +2210,11 @@ spec:
       timeout: "4h"
       computeResources:
         requests:
-          cpu: "500m"
-          memory: "512Mi"
+          cpu: "50m"
+          memory: "128Mi"
         limits:
-          cpu: "1000m"
-          memory: "2Gi"
+          cpu: "500m"
+          memory: "1Gi"
       env:
         - name: HOME
           value: /tmp
@@ -1612,8 +2310,22 @@ spec:
         # Skill namespaced run dirs (score.py); report.json uses submission-name
         SKILL_NAME=$(python3 -c "
         import yaml
-        config = yaml.safe_load(open('$SUBMISSION_DIR/$TREATMENT_CONFIG'))
-        print(config.get('skill', '$SUBMISSION_NAME'))
+        config = yaml.safe_load(open('$SUBMISSION_DIR/$TREATMENT_CONFIG')) or {}
+        execb = config.get('execution') or {}
+        skill = ''
+        if isinstance(execb, dict):
+            skill = str(execb.get('skill') or '').strip()
+        if not skill:
+            skill = str(config.get('skill') or '').strip()
+        name = str(config.get('name') or '').strip()
+        if skill:
+            print(skill)
+        elif name:
+            s = name.lower().replace(' ', '-')
+            s = ''.join(c for c in s if c.isalnum() or c in '._-')
+            print(s or '$SUBMISSION_NAME')
+        else:
+            print('$SUBMISSION_NAME')
         ")
         
         CONTROL_DIR="$REPORTS_DIR/$SKILL_NAME/control-$RUN_ID"
@@ -1631,7 +2343,7 @@ spec:
         fi
 
         # Aggregate even when PAIRWISE_EXIT != 0 so analyze gets report.json
-        export PYTHONPATH="$PIPELINE_DIR"
+        export PYTHONPATH="$PIPELINE_DIR:${PYTHONPATH:-}"
         pip install --quiet --no-cache-dir pyyaml 2>&1 | tail -1
 
         AEH_THRESHOLD=$(python3 -c "from pathlib import Path; from abevalflow.aeh_scoring import resolve_evaluation_threshold; print(resolve_evaluation_threshold(Path('$SUBMISSION_DIR') / 'metadata.yaml'))")
@@ -1738,7 +2450,7 @@ spec:
           else
             echo "Installing mlflow-skinny + pandas into ${MLFLOW_PKG_DIR} (fallback) ..."
             set +e
-            python -m pip install --no-cache-dir --target "$MLFLOW_PKG_DIR" 'mlflow-skinny' 'pandas' 2>&1 | tee /tmp/mlflow-pip.log | tail -30
+            python -m pip install --no-cache-dir --target "$MLFLOW_PKG_DIR" 'mlflow-skinny' 'pandas' 'boto3' 2>&1 | tee /tmp/mlflow-pip.log | tail -30
             PIP_RC=${PIPESTATUS[0]}
             set -e
             if [ "$PIP_RC" -ne 0 ]; then
@@ -1837,10 +2549,15 @@ spec:
         #   single:    aeh-jobs/YYYY-MM-DD__…
         #   pairwise:  aeh-control-jobs-<run>/… and aeh-treatment-jobs-<run>/…
         # Point store at _eval_tmp so publish.py can discover both layouts.
+        # OpenShell writes under reports/<skill>/<run-id>/ — keep reports, not _eval_tmp.
         if [ "$(params.eval-engine)" = "aeh" ]; then
           echo -n "$EVAL_TMP" > "$(results.results-dir.path)"
           echo "AEH results-dir: $EVAL_TMP"
           ls -la "$EVAL_TMP" 2>/dev/null | head -40 || true
+        elif [ "$(params.eval-engine)" = "aeh_openshell_openclaw" ]; then
+          REPORTS="$(workspaces.source.path)/reports/$(params.submission-name)"
+          echo -n "$REPORTS" > "$(results.results-dir.path)"
+          echo "OpenShell AEH results-dir: $REPORTS"
         fi
         
         echo "Treatment reward: $T_REWARD"

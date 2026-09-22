@@ -1,0 +1,26 @@
+# Allow evaluate Task pods to reach the OpenShell gateway on :17670.
+# bootstrap.sh rewrites namespace / from-namespace (SAW_NS, EVAL_NS).
+# Apply in the SAW namespace, not from the evaluate PipelineRun.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: gateway-from-abeval
+  namespace: guy-ziv-evalflow
+  labels:
+    app.kubernetes.io/part-of: abevalflow
+    app.kubernetes.io/component: forge-saw
+spec:
+  podSelector:
+    matchLabels:
+      vm.kubevirt.io/name: abeval-saw
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: guy-ziv-evalflow
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 17670

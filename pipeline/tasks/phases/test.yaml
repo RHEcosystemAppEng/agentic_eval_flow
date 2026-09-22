@@ -10,7 +10,8 @@ spec:
   description: >-
     Testing phase: runs security scanning (Cisco skill-scanner) and quality
     review checks. Results are persisted immediately to MinIO/DB after each
-    check completes. Identical for harbor, ASE, and AEH; skipped for MCPChecker.
+    check completes. Identical for harbor, ASE, and AEH family
+    (aeh, aeh_openshell_openclaw); skipped for MCPChecker.
   params:
     - name: submission-dir
       type: string
@@ -20,7 +21,7 @@ spec:
       description: Validated submission name from metadata.yaml
     - name: eval-engine
       type: string
-      description: Evaluation engine (harbor, ase, mcpchecker, a2a, aeh, both)
+      description: Evaluation engine (harbor, ase, mcpchecker, a2a, aeh, aeh_openshell_openclaw, both)
     - name: report-prefix
       type: string
       description: MinIO report prefix (timestamp_name_runid)
@@ -55,12 +56,13 @@ spec:
       type: string
       default: "false"
       description: >-
-        When true and eval-engine=aeh, run AEH harness inventory (advisory —
-        does not fail the test phase). Defaults off to avoid an extra AEH
-        image pull in the test phase; set true to opt in.
+        When true and eval-engine is aeh or aeh_openshell_openclaw, run AEH
+        harness inventory (advisory — does not fail the test phase). Defaults
+        off to avoid an extra AEH image pull in the test phase; set true to
+        opt in.
     - name: aeh-image
       type: string
-      default: "quay.io/ecosystem-appeng/agent-eval-harness:v1.0.3"
+      default: "quay.io/aipcc/base-images/agentic/openclaw:latest"
       description: AEH image providing skills/eval-check/scripts/harness_inventory.py
     - name: llm-base-url
       type: string
@@ -443,8 +445,8 @@ spec:
         cp /tmp/review-output.json "$(workspaces.source.path)/_ai_review.json" 2>/dev/null || true
         
         REC=$(python3 -c "import json; print(json.load(open('/tmp/review-output.json')).get('recommendation', 'warn'))" 2>/dev/null || echo "warn")
-        # AEH quality review is advisory: never fail the test phase on recommendation.
-        if [ "$EVAL_ENGINE" = "aeh" ]; then
+        # AEH family quality review is advisory: never fail the test phase on recommendation.
+        if [ "$EVAL_ENGINE" = "aeh" ] || [ "$EVAL_ENGINE" = "aeh_openshell_openclaw" ]; then
           echo -n "true" > "$(results.quality-passed.path)"
           echo "Quality review (AEH advisory): recommendation=$REC, quality-passed=true"
         else
@@ -458,7 +460,7 @@ spec:
       when:
         - input: "$(params.eval-engine)"
           operator: in
-          values: ["aeh"]
+          values: ["aeh", "aeh_openshell_openclaw"]
       image: $(params.aeh-image)
       script: |
         #!/usr/bin/env bash

@@ -22,6 +22,8 @@ class TestEngineRegistry:
         assert "ase" in engines
         assert "a2a" in engines
         assert "mcpchecker" in engines
+        assert "aeh" in engines
+        assert "aeh_openshell_openclaw" in engines
 
     def test_get_engine_harbor(self):
         engine = get_engine("harbor")
@@ -42,6 +44,34 @@ class TestEngineRegistry:
         engine = get_engine("mcpchecker")
         assert isinstance(engine, MCPCheckerEngine)
         assert engine.name == "mcpchecker"
+
+    def test_get_engine_aeh(self):
+        from abevalflow.engines.aeh import AEHEngine
+
+        engine = get_engine("aeh")
+        assert isinstance(engine, AEHEngine)
+        assert engine.name == "aeh"
+
+    def test_get_engine_aeh_openshell_openclaw(self):
+        from abevalflow.engines.aeh_openshell_openclaw import AEHOpenShellOpenClawEngine
+
+        engine = get_engine("aeh_openshell_openclaw")
+        assert isinstance(engine, AEHOpenShellOpenClawEngine)
+        assert engine.name == "aeh_openshell_openclaw"
+
+    def test_aeh_openshell_openclaw_stamps_eval_engine(self, tmp_path):
+        report = {
+            "eval_engine": "aeh",
+            "mode": "single",
+            "mean_reward": 0.8,
+            "judges": {},
+            "per_case": {},
+        }
+        (tmp_path / "report.json").write_text(json.dumps(report))
+        engine = get_engine("aeh_openshell_openclaw")
+        result = engine.read_result(tmp_path)
+        assert result is not None
+        assert result["eval_engine"] == "aeh_openshell_openclaw"
 
     def test_get_engine_unknown(self):
         with pytest.raises(KeyError):

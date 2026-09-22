@@ -1,0 +1,382 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: abevalflow-pipeline-openshell
+  namespace: ab-eval-flow
+  labels:
+    app.kubernetes.io/name: abevalflow
+    app.kubernetes.io/version: "2.0"
+    app.kubernetes.io/profile: aeh-openshell-openclaw
+spec:
+  description: >-
+    OpenShell OpenClaw evaluation profile (eval-engine=aeh_openshell_openclaw).
+    Phases: prepare → evaluate → analyze → store. Omits the test cube
+    (security scan, quality review, AEH eval-check) and red-team. Harbor AEH
+    and other engines keep ci-pipeline / ci-pipeline-dev.
+  params:
+    - name: repo-url
+      type: string
+      default: "https://github.com/RHEcosystemAppEng/agentic_eval_flow.git"
+      description: Git URL of the submissions repository (in-tree openclaw-forge)
+    - name: revision
+      type: string
+      default: "main"
+      description: Git commit SHA or branch to evaluate
+    - name: submission-dir
+      type: string
+      default: "openclaw-forge"
+      description: Submission directory name under submissions/
+    - name: pipeline-repo-url
+      type: string
+      default: "https://github.com/RHEcosystemAppEng/agentic_eval_flow.git"
+    - name: pipeline-repo-revision
+      type: string
+      default: "main"
+    - name: eval-engine
+      type: string
+      default: "aeh_openshell_openclaw"
+      description: Must stay aeh_openshell_openclaw for this profile
+    - name: llm-model
+      type: string
+      default: "rits/zai-org/glm-5-3"
+    - name: llm-api-base
+      type: string
+      default: "http://litellm.gz-forge-eval.svc:4000"
+    - name: llm-api-key
+      type: string
+      default: "mock"
+    - name: llm-base-url
+      type: string
+      default: "http://litellm.ab-eval-flow.svc:4000/v1"
+    - name: llm-generation-model
+      type: string
+      default: "rits/zai-org/glm-5-3"
+    - name: enable-ai-generation
+      type: string
+      default: "false"
+      description: AI test generation is off for this profile (no test cube)
+    - name: enable-scorecard
+      type: string
+      default: "true"
+      description: AEH judge scorecard in analyze (not the test-phase gates)
+    - name: agent-type
+      type: string
+      default: "api"
+    - name: max-generation-retries
+      type: string
+      default: "3"
+    - name: uplift-threshold
+      type: string
+      default: "0.0"
+    - name: quay-uplift-threshold
+      type: string
+      default: "-1.0"
+    - name: aeh-model-override
+      type: string
+      default: ""
+    - name: aeh-judge-model-override
+      type: string
+      default: ""
+    - name: aeh-mode
+      type: string
+      default: "single"
+    - name: aeh-control-config
+      type: string
+      default: "eval-control.yaml"
+    - name: aeh-treatment-config
+      type: string
+      default: "eval-treatment.yaml"
+    - name: aeh-image
+      type: string
+      default: "quay.io/ecosystem-appeng/agent-eval-harness:v1.0.3"
+      description: Unused by OpenShell evaluate; kept for Task param compatibility
+    - name: aeh-runner
+      type: string
+      default: "openshell"
+    - name: aeh-openshell-image
+      type: string
+      default: "registry.access.redhat.com/ubi9/python-311:9.6"
+      description: Orchestrator image (UBI Python 3.11) that clones the harness
+    - name: agent-eval-harness-repo-url
+      type: string
+      default: "https://github.com/GuyZivRH/agent-eval-harness.git"
+    - name: agent-eval-harness-repo-revision
+      type: string
+      default: "feat/aeh-openshell-openclaw"
+      description: Harness revision with agent_eval.openshell (feature-branch pin)
+    - name: openshell-cli-version
+      type: string
+      default: "0.0.116"
+    - name: openshell-gateway-endpoint
+      type: string
+      default: "https://openshell.openshell.svc.cluster.local:17670"
+    - name: openshell-sandbox-image
+      type: string
+      default: "ghcr.io/rh-forge/openclaw-saw-agent@sha256:bcc55e9b7a36d5f65e8ffc75962496f8b3617762a4cdb37fd1cf54611b72d41a"
+    - name: openshell-provider
+      type: string
+      default: "forge-ai-gateway,m365-read-intervm,slack-read-proxy,drafts-service-agent"
+    - name: openshell-mtls-secret
+      type: string
+      default: "openshell-mtls"
+    - name: openshell-ai-gateway-ca-secret
+      type: string
+      default: "forge-ai-gateway-ca"
+    - name: openshell-credentials-secret
+      type: string
+      default: "openshell-credentials"
+    - name: openshell-oidc-secret
+      type: string
+      default: "openshell-oidc-credentials"
+    - name: enable-mlflow
+      type: string
+      default: "true"
+      description: Export MLFLOW_TRACKING_URI for AEH and run log_aeh_mlflow.py after evaluate
+    - name: mlflow-tracking-uri
+      type: string
+      default: "http://abevalflow-mlflow.gz-forge-eval.svc.cluster.local:5000"
+      description: In-cluster MLflow tracking URI
+    - name: enable-aeh-regression-check
+      type: string
+      default: "true"
+    - name: aeh-baseline-run-id
+      type: string
+      default: ""
+    - name: harbor-fork-revision
+      type: string
+      default: ""
+      description: Unused by OpenShell; analyze Task still accepts it
+    - name: quay-repo
+      type: string
+      default: ""
+    - name: quay-ttl-days
+      type: string
+      default: "7"
+    - name: repo-name
+      type: string
+      default: ""
+    - name: pr-number
+      type: string
+      default: ""
+
+  results:
+    - name: recommendation
+      description: "pass or fail based on uplift threshold"
+      value: $(tasks.analyze.results.recommendation)
+    - name: treatment-mean-reward
+      description: "Treatment variant mean reward (e.g. 0.8500)"
+      value: $(tasks.analyze.results.treatment-mean-reward)
+    - name: control-mean-reward
+      description: "Control variant mean reward (e.g. 0.6000)"
+      value: $(tasks.analyze.results.control-mean-reward)
+    - name: mean-reward-gap
+      description: "Mean reward gap, treatment - control (e.g. +0.1500)"
+      value: $(tasks.analyze.results.mean-reward-gap)
+    - name: ttest-p-value
+      description: "Welch's t-test p-value (e.g. 0.0342)"
+      value: $(tasks.analyze.results.ttest-p-value)
+    - name: fisher-p-value
+      description: "Fisher's exact test p-value (e.g. 0.0271)"
+      value: $(tasks.analyze.results.fisher-p-value)
+    - name: scorecard-recommendation
+      description: "Unified scorecard recommendation (pass/warn/fail)"
+      value: $(tasks.analyze.results.scorecard-recommendation)
+
+  workspaces:
+    - name: shared-workspace
+      description: Shared PVC for all pipeline artifacts
+
+  tasks:
+    - name: prepare
+      taskRef:
+        name: prepare
+      params:
+        - name: repo-url
+          value: $(params.repo-url)
+        - name: revision
+          value: $(params.revision)
+        - name: submission-dir
+          value: $(params.submission-dir)
+        - name: eval-engine
+          value: $(params.eval-engine)
+        - name: pipeline-repo-url
+          value: $(params.pipeline-repo-url)
+        - name: pipeline-repo-revision
+          value: $(params.pipeline-repo-revision)
+        - name: pipeline-run-name
+          value: $(context.pipelineRun.name)
+        - name: enable-generation
+          value: $(params.enable-ai-generation)
+        - name: llm-base-url
+          value: $(params.llm-base-url)
+        - name: llm-model
+          value: $(params.llm-generation-model)
+        - name: agent-type
+          value: $(params.agent-type)
+        - name: max-generation-retries
+          value: $(params.max-generation-retries)
+        - name: aeh-mode
+          value: $(params.aeh-mode)
+        - name: aeh-control-config
+          value: $(params.aeh-control-config)
+        - name: aeh-treatment-config
+          value: $(params.aeh-treatment-config)
+      workspaces:
+        - name: source
+          workspace: shared-workspace
+
+    - name: evaluate
+      runAfter: ["prepare"]
+      timeout: "3h"
+      taskRef:
+        name: evaluate
+      params:
+        - name: eval-engine
+          value: $(params.eval-engine)
+        - name: submission-dir
+          value: $(params.submission-dir)
+        - name: submission-name
+          value: $(tasks.prepare.results.submission-name)
+        - name: commit-sha
+          value: $(params.revision)
+        - name: pipeline-run-id
+          value: $(context.pipelineRun.name)
+        - name: pipeline-repo-url
+          value: $(params.pipeline-repo-url)
+        - name: pipeline-repo-revision
+          value: $(params.pipeline-repo-revision)
+        - name: llm-model
+          value: $(params.llm-model)
+        - name: llm-api-base
+          value: $(params.llm-api-base)
+        - name: llm-api-key
+          value: $(params.llm-api-key)
+        - name: aeh-model-override
+          value: $(params.aeh-model-override)
+        - name: aeh-judge-model-override
+          value: $(params.aeh-judge-model-override)
+        - name: aeh-mode
+          value: $(params.aeh-mode)
+        - name: aeh-control-config
+          value: $(params.aeh-control-config)
+        - name: aeh-treatment-config
+          value: $(params.aeh-treatment-config)
+        - name: aeh-image
+          value: $(params.aeh-image)
+        - name: aeh-runner
+          value: $(params.aeh-runner)
+        - name: aeh-openshell-image
+          value: $(params.aeh-openshell-image)
+        - name: agent-eval-harness-repo-url
+          value: $(params.agent-eval-harness-repo-url)
+        - name: agent-eval-harness-repo-revision
+          value: $(params.agent-eval-harness-repo-revision)
+        - name: openshell-cli-version
+          value: $(params.openshell-cli-version)
+        - name: openshell-gateway-endpoint
+          value: $(params.openshell-gateway-endpoint)
+        - name: openshell-sandbox-image
+          value: $(params.openshell-sandbox-image)
+        - name: openshell-provider
+          value: $(params.openshell-provider)
+        - name: openshell-mtls-secret
+          value: $(params.openshell-mtls-secret)
+        - name: openshell-ai-gateway-ca-secret
+          value: $(params.openshell-ai-gateway-ca-secret)
+        - name: openshell-credentials-secret
+          value: $(params.openshell-credentials-secret)
+        - name: openshell-oidc-secret
+          value: $(params.openshell-oidc-secret)
+        - name: enable-mlflow
+          value: $(params.enable-mlflow)
+        - name: mlflow-tracking-uri
+          value: $(params.mlflow-tracking-uri)
+        - name: enable-aeh-regression-check
+          value: $(params.enable-aeh-regression-check)
+        - name: aeh-baseline-run-id
+          value: $(params.aeh-baseline-run-id)
+      workspaces:
+        - name: source
+          workspace: shared-workspace
+
+    - name: analyze
+      runAfter: ["evaluate"]
+      taskRef:
+        name: analyze-and-check-degradation
+      params:
+        - name: submission-name
+          value: $(tasks.prepare.results.submission-name)
+        - name: eval-engine
+          value: $(params.eval-engine)
+        - name: commit-sha
+          value: $(params.revision)
+        - name: pipeline-run-id
+          value: $(context.pipelineRun.name)
+        - name: harbor-fork-revision
+          value: $(params.harbor-fork-revision)
+        - name: uplift-threshold
+          value: $(params.uplift-threshold)
+        - name: security-scan-mode
+          value: "disabled"
+        - name: pipeline-repo-url
+          value: $(params.pipeline-repo-url)
+        - name: pipeline-repo-revision
+          value: $(params.pipeline-repo-revision)
+        - name: llm-model
+          value: $(params.llm-model)
+        - name: repo-name
+          value: $(params.repo-name)
+        - name: pr-number
+          value: $(params.pr-number)
+        - name: enable-degradation-check
+          value: "false"
+        - name: enable-scorecard
+          value: $(params.enable-scorecard)
+      workspaces:
+        - name: source
+          workspace: shared-workspace
+
+    - name: store
+      runAfter: ["analyze", "evaluate"]
+      taskRef:
+        name: store
+      params:
+        - name: submission-name
+          value: $(tasks.prepare.results.submission-name)
+        - name: pipeline-run-id
+          value: $(context.pipelineRun.name)
+        - name: report-prefix
+          value: $(tasks.prepare.results.report-prefix)
+        - name: recommendation
+          value: $(tasks.evaluate.results.recommendation)
+        - name: results-dir
+          value: $(tasks.evaluate.results.results-dir)
+        - name: eval-engine
+          value: $(params.eval-engine)
+        - name: commit-sha
+          value: $(params.revision)
+        - name: uplift-threshold
+          value: $(params.quay-uplift-threshold)
+        - name: quay-repo
+          value: $(params.quay-repo)
+        - name: quay-ttl-days
+          value: $(params.quay-ttl-days)
+        - name: repo-name
+          value: $(params.repo-name)
+        - name: pr-number
+          value: $(params.pr-number)
+        - name: pipeline-repo-url
+          value: $(params.pipeline-repo-url)
+        - name: pipeline-repo-revision
+          value: $(params.pipeline-repo-revision)
+      workspaces:
+        - name: source
+          workspace: shared-workspace
+
+  finally:
+    - name: cleanup
+      taskRef:
+        name: cleanup-pvc
+      params:
+        - name: pipelinerun-name
+          value: $(context.pipelineRun.name)

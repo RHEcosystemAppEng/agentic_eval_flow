@@ -86,6 +86,13 @@ class TrialResult(BaseModel):
         default=None,
         description="Continuous reward score (0.0-1.0). None if the trial produced no parseable result.",
     )
+    judges: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Per-judge value/error for this case (AEH). Compact: value, error, "
+            "judge_type only — no rationale or response_text."
+        ),
+    )
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -215,4 +222,27 @@ class AnalysisResult(BaseModel):
     pairwise: PairwiseComparisonResult | None = Field(
         default=None,
         description="AEH pairwise comparison results. Present for aeh-mode=pairwise.",
+    )
+    execution: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "AEH/OpenShell run_result metadata (duration, tokens, execution_mode). "
+            "Does not include per-case response_text."
+        ),
+    )
+    mode: str | None = Field(
+        default=None,
+        description="AEH aggregation mode: 'single' or 'pairwise'. None for Harbor/ASE A/B.",
+    )
+    judges: dict[str, Any] | None = Field(
+        default=None,
+        description="AEH summary.yaml judge aggregates (mean, pass_rate, errored_cases).",
+    )
+    per_case: dict[str, Any] | None = Field(
+        default=None,
+        description="AEH per-case judge breakdown (compact; no rationale/response_text).",
+    )
+    aeh_warnings: list[str] = Field(
+        default_factory=list,
+        description="Aggregation warnings (e.g. missing pairwise section, judge errors).",
     )

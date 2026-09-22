@@ -1,0 +1,43 @@
+# Install SAW into an existing personal namespace (guy-ziv-evalflow).
+# Use as VALUES_FILE when SAW_NS is not forge-saw.
+#
+# This ROSA/OSD cluster has AWS gp3 (not kubevirt-csi-infra-default) and a
+# 4 CPU / 8Gi request quota that already holds MLflow (~300m / 1280Mi).
+# A 4-core / 8Gi VM does not fit; 2 / 4Gi leaves headroom for evaluate pods.
+#
+# Still requires OpenShift Virtualization (VirtualMachine API). Helm cannot
+# substitute a Deployment.
+
+sandboxName: abeval-saw
+role: standalone
+agent: openclaw
+onboardCli: openclaw
+containerRuntime: podman
+namespaceMode: shared
+
+source:
+  dataSourceNamespace: guy-ziv-evalflow
+
+vm:
+  cores: 2
+  memory: 4Gi
+  diskSize: 40Gi
+  storageClassName: gp3
+
+route:
+  enabled: true
+  dashboard: false
+  webui: false
+
+dashboard:
+  enabled: false
+
+governance:
+  enabled: false
+
+job:
+  waitForSecrets: false
+
+inference:
+  deployProxy: true
+  secretName: inference

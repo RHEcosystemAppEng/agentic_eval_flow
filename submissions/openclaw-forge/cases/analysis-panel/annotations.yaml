@@ -1,0 +1,16 @@
+expected_facts:
+  - "Watson Orchestrate GA has an open blocker needing an exec decision by 11:00"
+  - "Calendar includes Decision: Watson Orchestrate GA go/no-go"
+  - "Related signals appear in Outlook mail for the GA decision"
+must_not_fabricate:
+  - "Do not invent deadlines not present in sources"
+  - "Do not invent dollar amounts not present in sources"
+  - "Do not attribute recommendations to people who did not make them"
+expected_sources:
+  - "Email: ACTION: Watson Orchestrate GA blocker — exec decision by 11:00"
+  - "Calendar: Decision: Watson Orchestrate GA go/no-go"
+expected_synthesis:
+  - "Stakes analysis: connects GA blocker email to the calendar decision slot"
+  - "Flags what is still unknown / must verify before go"
+  - "Provides recommendation with appropriate caveats"
+  - "Lists what to verify before committing"

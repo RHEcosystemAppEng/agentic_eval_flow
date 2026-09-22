@@ -61,7 +61,7 @@ class EvaluationRun(Base):
     treatment_image_ref: Mapped[str | None] = mapped_column(Text)
     control_image_ref: Mapped[str | None] = mapped_column(Text)
     harbor_fork_revision: Mapped[str | None] = mapped_column(String(64))
-    eval_engine: Mapped[str] = mapped_column(String(10), nullable=False, default="harbor")
+    eval_engine: Mapped[str] = mapped_column(String(50), nullable=False, default="harbor")
 
     # Summary
     recommendation: Mapped[str] = mapped_column(String(20), nullable=False)

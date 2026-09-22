@@ -6,6 +6,11 @@ submit them, and what happens next.
 
 ---
 
+For AEH OpenShell on an existing Forge SAW deployment, start with the
+[namespace setup checklist](manual_trigger_guide.md#aeh-openshell-ci-in-an-existing-forge-saw-namespace).
+Its single-sided judge evaluation does not require the treatment/control pair
+described in the generic A/B introduction below.
+
 ## What is this pipeline?
 
 Agentic Eval Flow automatically tests whether an AI agent performs better **with**
@@ -49,6 +54,55 @@ times in two configurations:
 **Control** = the agent runs without it (baseline).
 
 If the treatment performs significantly better, the skill **passes**.
+
+## Manually trigger the AEH OpenShell OpenClaw flow
+
+The AEH OpenShell profile is a single-sided OpenClaw evaluation. The checked-in
+PipelineRun example is `pipeline/runs/openshell-openclaw-pipelinerun.yaml`.
+Run these commands from the ABEvalFlow checkout:
+
+```bash
+# Replace [NAMESPACE] with the namespace where your PipelineRun and
+# namespace-local OpenShell/MLflow services are deployed.
+NS="[NAMESPACE]"
+
+# Apply the profile pipeline (safe to repeat).
+oc -n "$NS" apply -f pipeline/pipelines/ci-pipeline-openshell.yaml
+
+# Confirm namespace-local credentials and certificates exist before starting.
+oc -n "$NS" get secret openshell-gateway-mtls \
+  forge-agent-upstream-tls openshell-credentials openshell-oidc-credentials
+
+# Create the PipelineRun using the pinned OpenClaw image, namespace gateway,
+# GLM-5.3, and MLflow settings from the checked-in example.
+oc -n "$NS" create -f pipeline/runs/openshell-openclaw-pipelinerun.yaml
+```
+
+Do not put provider tokens or private keys in the PipelineRun YAML; keep them
+in namespace Secrets. The example uses `aeh_openshell_openclaw`, submission
+`openclaw-forge`, model `rits/zai-org/glm-5-3`, and the namespace MLflow service.
+
+To monitor the run:
+
+```bash
+RUN=$(oc -n "$NS" get pipelinerun \
+  -l tekton.dev/pipeline=abevalflow-pipeline-openshell \
+  --sort-by=.metadata.creationTimestamp \
+  -o jsonpath='{.items[-1:].metadata.name}')
+tkn -n "$NS" pipelinerun logs "$RUN" -f
+oc -n "$NS" get pipelinerun "$RUN" -o wide
+```
+
+The run is complete only after `prepare`, `evaluate`, `analyze`, `store`, and
+`cleanup` finish. Check `evaluate` for gateway, GLM, and skill-loading errors;
+check `store` for database and artifact publication errors. MLflow has no
+public Route by default, so view it through a local port-forward:
+
+```bash
+oc -n "$NS" port-forward svc/abevalflow-mlflow 15000:5000
+```
+
+Then open <http://127.0.0.1:15000>.
 
 ---
 
@@ -265,8 +319,9 @@ A2A evaluation tests both agent functionality and protocol compliance. See
 
 For evaluating agents using the Agent-Eval-Harness framework, use the AEH format.
 This mode provides flexible judge-based evaluation with support for LLM judges,
-custom scoring, and detailed per-case analysis. Trials run as Harbor jobs on
-OpenShift (OpenShiftEnvironment).
+custom scoring, and detailed per-case analysis. Standard AEH trials run as Harbor
+jobs on OpenShift (OpenShiftEnvironment). The OpenShell variant below uses the
+namespace’s existing Forge SAW gateway instead.
 
 **Verified smoke samples** (in [skill-submissions](https://github.com/RHEcosystemAppEng/skill-submissions)):
 
@@ -397,11 +452,66 @@ AEH-specific parameters:
 - `aeh-mode`: `single` (default) or `pairwise`
 - `aeh-control-config` / `aeh-treatment-config`: Pairwise config filenames (defaults: `eval-control.yaml` / `eval-treatment.yaml`)
 - `aeh-image`: Harbor trial image (use `quay.io/ecosystem-appeng/agent-eval-harness:v1.0.3` or newer)
-- `aeh-runner`: Execution backend -- currently `harbor` only
+- `aeh-runner`: Execution backend — `harbor` (default) or `openshell` for `aeh_openshell_openclaw`
 
 **Note on execution backends:**
 - **harbor** (default): Containerized execution in OpenShift trial pods via AEH’s OpenShiftEnvironment.
+- **openshell**: Host orchestrator calls `python -m agent_eval.openshell.run` against the cluster OpenShell gateway (`openshell` namespace). Used only with `eval-engine=aeh_openshell_openclaw`.
 - **vanilla**: Not yet implemented in Agentic Eval Flow.
+
+#### AEH OpenShell OpenClaw (`eval-engine=aeh_openshell_openclaw`)
+
+This profile reuses the Forge SAW gateway VM and inner OpenClaw sandboxes
+already deployed by the user in `[NAMESPACE]`. It is not the shared,
+TLS-disabled gateway in a separate `openshell` namespace. Use
+`abevalflow-pipeline-openshell`: prepare → evaluate → analyze → store,
+with cleanup as a finally Task; there is no test cube in this profile.
+
+Before triggering in a new namespace, follow the complete
+[namespace setup and manual trigger procedure](manual_trigger_guide.md#aeh-openshell-ci-in-an-existing-forge-saw-namespace).
+It includes rendering commands, required Secret keys and these prerequisites:
+
+1. Install matching Pipeline/Task YAML and RBAC in `[NAMESPACE]`; set submission,
+   pipeline and harness Git revisions explicitly. Git-cloned scripts and installed
+   Tekton Tasks are separate versions. Use the OpenShell-capable AEH fork revision.
+2. Reuse Forge's matching mTLS client/CA bundle and upstream CA. Use a verified
+   server-certificate SAN (the reference deployment uses `host.containers.internal`)
+   mapped by `hostAliases` to the discovered gateway Service IP, TCP 17670.
+   Keep TLS verification enabled. A public Route or Keycloak login is not a
+   replacement for this in-cluster mTLS connection.
+3. Allow same-namespace CI ingress/egress to the gateway and judge/results services,
+   DNS, and Kubernetes API access for cleanup. Preserve Forge policy; add required
+   EgressFirewall allows before Deny rules, including GitHub release assets and
+   PyPI downloads. Discover current CDN and Service addresses, not old cluster IPs.
+4. Provision namespace-local LiteLLM, MLflow, PostgreSQL and MinIO if absent;
+   supply credentials and apply results DB migrations including Alembic 005.
+   Permit S3 uploads on 9000, not just console access on 9001. Persist network and
+   certificate fixes in the owning deployment configuration.
+5. Smoke-test an authenticated gateway operation, a temporary sandbox with readable
+   skills, and actual GLM responses from both the agent and judge paths before CI.
+
+Use the tested GHCR digest from the selected PipelineRun template (or the exact
+image validated for your deployment), not an assumed `latest` tag or the failed
+custom `sandbox-paths` image. Preserve the Forge profile, providers and staged
+runtime under `/sandbox/persist/.forge-image-runtime/`; the `forge-image` mode
+uses image-owned persona and skills. The old local TLS bridge is not this setup.
+
+The submission is `submissions/openclaw-forge/` in the selected Flow revision.
+`metadata.yaml` selects the engine; `eval.yaml` defines execution, judges and
+`dataset.path: cases`. Case inputs and annotations live under
+`cases/analysis-panel/` and `cases/morning-briefing/`. Prepare clones/validates
+the submission; evaluate's `step-aeh-openshell-eval` runs it. CI does not execute
+the harness's demo bootstrap script to generate cases. For a one-case smoke run,
+select a submission revision with only analysis-panel in its configured dataset.
+
+MLflow publication runs inside evaluate and invokes the harness logging scripts;
+the experiment is named after the PipelineRun. Traces are reconstructed from
+collected events, not live Claude-Code OTel. The store Task separately uploads
+reports and `debug/aeh/<run-id>/` artifacts to MinIO and inserts the CI results
+row in `evaluation_runs`. Missing control/A-B statistics are expected for a
+single-sided run; judge errors and absent expected artifacts are not success.
+Check evaluate, store and cleanup separately. See the manual guide for local
+MLflow/MinIO port-forwards and recovery without redoing evaluation.
 
 #### AEH Pairwise A/B Testing
 
@@ -759,7 +869,7 @@ Typical runtime: **5-30 minutes** depending on evaluation engine and task comple
     and `debug/aeh/<run-id>/` (`summary.yaml`, `report.html`, `run_result.json`, `cases/`)
 
 **PostgreSQL database:**
-- `analysis_results` table -- evaluation summaries (pass rates, uplift, p-values)
+- `evaluation_runs` table -- evaluation summaries (pass rates, uplift, p-values)
 - `security_scans` table -- security scan results per pipeline run
 - Historical results queryable via `scripts/query_results.py`
 

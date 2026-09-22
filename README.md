@@ -31,7 +31,7 @@ The pipeline executes in six main stages, with engine-specific steps within each
 
 ### 3. Evaluate
 
-Five evaluation engines, each suited for different artifact types:
+Six evaluation engines, each suited for different artifact types:
 
 | Engine | Evaluates | Comparison Mode | Container Isolation |
 |--------|-----------|-----------------|---------------------|
@@ -39,7 +39,8 @@ Five evaluation engines, each suited for different artifact types:
 | **ASE** | Skills only | A/B (treatment vs control) | No |
 | **A2A** | A2A-protocol agents | A/B (treatment vs control) | Yes |
 | **MCPChecker** | MCP servers | Single-agent task verification | No |
-| **AEH** | Agents, skills | Judge-based evaluation | Yes (K8s pods) |
+| **AEH** | Agents, skills | Judge-based evaluation | Yes (K8s Harbor pods) |
+| **AEH OpenShell OpenClaw** | OpenClaw agents via forge-saw | Judge-based (AEH scoring) | Yes (SAW VM + inner sandbox) |
 
 Engines are implemented in `abevalflow/engines/` using a registry pattern.
 
@@ -58,11 +59,13 @@ Engines are implemented in `abevalflow/engines/` using a registry pattern.
 
 ## Configuration
 
-All flow configuration is defined in `metadata.yaml` within each submission:
+Submission routing and gate configuration are defined in `metadata.yaml`. For
+AEH, `eval.yaml` defines execution, the dataset and judges; PipelineRun parameters
+and installed Tekton resources define infrastructure and source revisions:
 
 ```yaml
 name: my-submission
-eval_engine: harbor              # harbor, ase, a2a, mcpchecker, or aeh
+eval_engine: harbor              # harbor, ase, a2a, mcpchecker, aeh, or aeh_openshell_openclaw
 persona: general                 # Agent persona for Harbor/A2A
 
 experiment:
@@ -119,13 +122,42 @@ The pipeline is LLM-agnostic. Three modes are supported:
 ## Prerequisites
 
 - OpenShift cluster with Pipelines operator (Tekton)
-- Container registry (Quay.io) with push credentials
-- Stock Harbor (`harbor==0.20.0`) with the OpenShift custom environment plugin
+- For Harbor/build-based flows: a container registry with push credentials and the Harbor fork with OpenShift backend
+- For AEH OpenShell: an existing Forge SAW deployment and the namespace setup below
 - LLM access (one of the three modes above)
 - Python 3.11+
 
+## AEH OpenShell: set up a new namespace
+
+Assume Forge SAW is already deployed by the user in `[NAMESPACE]`. Do not redeploy
+the platform or use another namespace's credentials. Follow the complete
+[namespace setup and trigger guide](Docs/manual_trigger_guide.md#aeh-openshell-ci-in-an-existing-forge-saw-namespace)
+before creating a PipelineRun:
+
+1. Install the matching OpenShell Pipeline, Tasks and pipeline ServiceAccount/RBAC
+   in `[NAMESPACE]`; choose explicit Flow and OpenShell-capable harness revisions.
+2. Reuse Forge's native mTLS gateway on TCP 17670, matching client certificates
+   and upstream CA. Map a certificate-valid hostname to the discovered Service IP
+   in CI pods. Keep verification enabled; no external Route or TLS bridge is needed.
+3. Configure namespace-local ingress/egress and EgressFirewall allows for the
+   gateway, DNS, GitHub/releases, Python packages, model endpoints, results services
+   and Kubernetes API cleanup. Preserve existing Forge rules and persist additions.
+4. Provision/configure LiteLLM, MLflow, PostgreSQL and MinIO plus their Secrets.
+   Apply results DB migrations; verify MinIO S3 access on 9000 and MLflow artifacts.
+5. Validate a temporary sandbox's skills and a real GLM response, then trigger
+   `abevalflow-pipeline-openshell` and confirm evaluate and store succeed.
+
+The validated template uses an explicit GHCR image digest, not `latest`. Use the
+image/profile/providers validated for your Forge deployment. Cases and judges
+come from `submissions/openclaw-forge/eval.yaml` and its `cases/` directory in
+the chosen Flow revision, not an automatically executed harness bootstrap script.
+This profile skips the test cube; MLflow publication occurs within evaluate,
+while store writes `evaluation_runs` and MinIO artifacts. A green TCP probe alone
+does not validate the agent, judging or storage.
+
 ## Documentation
 
+- [Manual Trigger Guide](Docs/manual_trigger_guide.md) -- New-namespace AEH OpenShell setup, credentials, networking, validation and manual runs
 - [Trigger Guide](Docs/trigger_guide.md) -- How to submit skills, configure gate policies, and interpret scorecard results
 - [Gates Architecture](Docs/gates-architecture.md) -- Gate types, modes, GateResult schema, scorecard, and gate policy configuration
 - [Submission Formats](Docs/submission-formats.md) -- Directory layouts for skill, agent, MCP, and AEH submissions
