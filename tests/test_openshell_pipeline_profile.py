@@ -10,6 +10,7 @@ REPO = Path(__file__).resolve().parents[1]
 PIPELINE = REPO / "pipeline" / "pipelines" / "ci-pipeline-openshell.yaml"
 CI = REPO / "pipeline" / "pipelines" / "ci-pipeline.yaml"
 CI_DEV = REPO / "pipeline" / "pipelines" / "ci-pipeline-dev.yaml"
+SUBMISSION = REPO / "submissions" / "openclaw-forge"
 
 
 def _load(path: Path) -> dict:
@@ -25,6 +26,15 @@ def _task_names(spec: dict) -> list[str]:
 
 
 class TestOpenshellPipelineProfile:
+    def test_submission_uses_only_image_owned_chief_of_staff_assets(self):
+        config = _load(SUBMISSION / "eval.yaml")
+        assert config["dataset"]["workspace"]["files"] == []
+        prompt = config["runner"]["system_prompt"]
+        assert "immutable Forge SAW image owns" in prompt
+        assert not (SUBMISSION / "CLAW.md").exists()
+        assert not any(p.is_file() for p in (SUBMISSION / "workspace").rglob("*"))
+        assert not any(p.is_file() for p in (SUBMISSION / "adapters").rglob("*"))
+
     def test_named_pipeline_omits_test_and_red_team(self):
         spec = _load(PIPELINE)["spec"]
         names = _task_names(spec)

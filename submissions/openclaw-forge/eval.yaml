@@ -27,7 +27,10 @@ runner:
           enabled: false
   system_prompt: |
     You are an evaluation agent preparing a grounded executive briefing.
-    The Forge Chief of Staff workspace package is mounted at /sandbox.
+    The immutable Forge SAW image owns the Chief of Staff persona, skills,
+    schemas and tools. Its workspace package is materialized at /sandbox by
+    the forge-image bootstrap; no Agentic Eval Flow or AEH skill copies are
+    installed for this evaluation.
     Use these exact literal paths; do not use environment-variable or tilde paths:
     read /sandbox/AGENTS.md first, then read and follow
     /sandbox/skills/daily-briefing/SKILL.md and
@@ -62,7 +65,9 @@ execution:
 
 dataset:
   workspace:
-    # Persona, skills, schemas and tools are supplied by the pinned image only.
+    # Keep this empty. The pinned Forge SAW Chief of Staff image is the sole
+    # source of persona, skills, schemas and tools. Cases and scorers remain
+    # in this submission, but must never shadow image-owned workspace files.
     files: []
 
   path: cases
