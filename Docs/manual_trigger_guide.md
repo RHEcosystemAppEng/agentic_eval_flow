@@ -1,8 +1,347 @@
-# Manual Trigger Guide -- Harbor, ASE & A2A
+# Manual Trigger Guide -- AEH OpenShell, Harbor, ASE & A2A
 
 Quick reference for manually triggering evaluations against the CI and monitoring pipelines.
 
 ---
+
+## AEH OpenShell CI in an existing Forge SAW namespace
+
+This procedure assumes the user has already deployed Forge SAW successfully in
+`[NAMESPACE]`. Reuse its agent gateway, image, providers and certificate authority.
+The evaluation profile is `abevalflow-pipeline-openshell`: prepare → evaluate →
+analyze → store, followed by the cleanup finally Task. It omits the test cube.
+The commands below are operator instructions; reading this guide does not deploy anything.
+
+### 1. Choose the namespace and matching source revisions
+
+Run from an Agentic Eval Flow checkout containing the native-mTLS fixes. The
+older TLS bridge implementation is not the validated configuration. Use an
+isolated checkout if your current checkout has local changes. Requirements:
+authenticated `oc`, OpenShift Pipelines, Python 3 with PyYAML, a writable storage
+class, sufficient quota, and permission to manage resources in your namespace.
+
+```bash
+export NS="[NAMESPACE]" # replace this literal before running
+export FLOW_REV="[FLOW_REVISION]" # branch/tag containing the fixes, or commit SHA
+export HARNESS_REV="[HARNESS_REVISION]" # OpenShell-capable AEH fork revision
+oc get namespace "$NS"
+oc -n "$NS" get vm,svc,pvc
+oc -n "$NS" get endpointslices -l kubernetes.io/service-name=openshell-saw-agent-gateway
+export GATEWAY_IP=$(oc -n "$NS" get svc openshell-saw-agent-gateway -o jsonpath='{.spec.clusterIP}')
+```
+
+At the time of the fixes, both repositories used `feat/aeh-openshell-openclaw`
+(AEH repository: `GuyZivRH/agent-eval-harness`). Use `main` only after the relevant
+changes are merged. Pin a tested commit for reproducibility. A branch reference
+clones its current tip when a new run starts; an existing run is not updated.
+
+There are two independently versioned layers: installed Tekton Pipeline/Task
+YAML and Git-cloned Python scripts/submission files. Reapplying the matching
+Task YAML is required after Task changes; changing a run's Git revision alone
+does not update the installed Tasks.
+
+### 2. Provision CI dependencies and namespace-local credentials
+
+Forge SAW does not by itself provision the CI results stack. Before running,
+provision PostgreSQL (`config/storage/postgres.yaml`), MinIO
+(`config/storage/minio.yaml`), MLflow (`config/mlflow/`), and the judge's LiteLLM
+service (`config/litellm/`) if they are absent. Render their namespace, internal
+URLs, storage class, credentials and model upstream for your installation first.
+Do not apply sample Secret values or overwrite an existing Forge deployment.
+
+The expected service ports are PostgreSQL 5432, MinIO S3 9000 (console 9001),
+MLflow 5000 and LiteLLM 4000. The source manifests contain deployment-specific
+namespaces and endpoints: `oc -n` does not override `metadata.namespace`,
+RoleBinding subject namespaces, or embedded DNS names.
+
+Required Secret contracts, all in `[NAMESPACE]`:
+
+- `openshell-gateway-mtls`: `ca.crt`, `tls.crt`, `tls.key`. The client leaf must
+  be trusted by the running gateway and authorized for sandbox/provider operations.
+  Preserve Forge's existing CA and server/client bundle; never generate an
+  unrelated CI CA. The Forge bootstrap may also keep `server.crt`/`server.key` here.
+- `forge-agent-upstream-tls`: `ca.crt` trusted by the agent's Forge upstreams.
+- `inference`: `api_key`, required by the evaluate Task. Configure the actual
+  model credentials in namespace Secrets and Forge providers.
+- `openshell-credentials`: `M365_ACCESS_TOKEN`, `M365_USER`; optional refresh
+  configuration `M365_TENANT_ID`, `M365_CLIENT_ID`, `M365_CLIENT_SECRET`.
+  With real values already exported, run
+  `EVAL_NS="$NS" ./config/forge-saw/create-openshell-credentials.sh`.
+- `minio-credentials`: `endpoint-url` (for example
+  `http://minio.[NAMESPACE].svc.cluster.local:9000`), `root-user`, `root-password`.
+- `ab-eval-db-credentials`: `database-url` for the CI results database and
+  `postgres-password` if using the checked-in PostgreSQL deployment. Its default
+  user/database are `abevalflow`; keep the URL and database password consistent.
+  Apply Alembic migrations, including `005_widen_eval_engine`, to this database
+  before storage. `evaluation_runs` belongs to this database, not MLflow's schema.
+- Private Git repositories additionally require Git credentials on the pipeline
+  ServiceAccount. `github-token` key `token` is optional for publication features.
+
+`openshell-oidc-credentials` is optional for this native-mTLS path. A successful
+Keycloak login alone does not supply the TLS client certificate required by the
+gateway. Kubernetes admin privileges also do not grant OpenShell application roles.
+
+For MLflow, enable artifact serving (`mlflow-artifacts:/`) so remote clients do
+not try to write the server's filesystem path locally. Configure its backend and
+artifact destination deliberately: the basic checked-in deployment uses a PVC;
+an S3-backed deployment needs MinIO credentials and network access. Allow the
+namespace Service hostname in MLflow's host allowlist. Give MLflow sufficient
+memory and compatible client/server versions; validate trace export, not only HTTP.
+
+### 3. Apply the namespace networking fixes
+
+Inspect both layers before editing:
+
+```bash
+oc -n "$NS" get networkpolicy
+oc -n "$NS" get egressfirewall -o yaml
+oc -n "$NS" get svc -o wide
+oc -n "$NS" get pods --show-labels
+oc -n "$NS" get endpointslices -o wide
+oc -n default get svc kubernetes -o wide
+```
+
+Add namespace-scoped NetworkPolicies using the actual Service backend selectors.
+CI source pods must match `tekton.dev/pipelineRun` with `operator: Exists`.
+A source `podSelector` without a `namespaceSelector` means the same namespace.
+The validated connections are:
+
+- CI → agent gateway TCP 17670, with matching ingress on the SAW agent VM launcher
+  pods. Typical gateway labels are `app.kubernetes.io/name: openshell-saw-agent`
+  and `vm.kubevirt.io/name: openshell-saw-agent`; verify them in your deployment.
+- CI → LiteLLM TCP 4000, MLflow TCP 5000, PostgreSQL TCP 5432 and MinIO TCP 9000,
+  each with matching destination ingress. A MinIO console login on 9001 does not
+  prove that the store Task can upload on 9000.
+- MLflow → PostgreSQL TCP 5432 and, for S3 artifacts, MinIO TCP 9000; allow the
+  corresponding destination ingress as well.
+- CI (including cleanup), MLflow and other clients need DNS UDP/TCP 53 to the
+  cluster DNS service. Preserve Forge's DNS policy.
+- Cleanup → Kubernetes API Service TCP 443 and actual API endpoint TCP 6443
+  where the cluster uses it. The existing Forge bootstrap-only API policy does
+  not necessarily select Tekton pods. Allow the pipeline ServiceAccount to
+  get/list/delete its namespace PVCs; a timeout is not an RBAC denial.
+
+For example, this adds only gateway ingress from same-namespace CI pods (edit
+the destination labels if the service uses different ones):
+
+```bash
+oc -n "$NS" apply -f - <<'YAML'
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: aeh-gateway-from-ci
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: openshell-saw-agent
+      vm.kubevirt.io/name: openshell-saw-agent
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: tekton.dev/pipelineRun
+                operator: Exists
+      ports:
+        - protocol: TCP
+          port: 17670
+YAML
+```
+
+NetworkPolicies are additive: this rule does not revoke access granted by other
+policies. Review existing policies if you require CI-only gateway access.
+
+Add the matching CI egress policy; ingress alone is insufficient under default
+deny. For VM networking, inspect the Service EndpointSlice and allow the required
+Service `/32`, endpoint `/32` and, when applicable, VM node `/32` on 17670 in
+addition to the pod selector. Discover these addresses per namespace rather
+than copying a previous cluster's addresses.
+
+An OVN EgressFirewall is an additional filter. Preserve its existing Forge rules
+and insert the required allows **before** its terminal Deny rules. For this CI,
+HTTPS TCP 443 must reach `github.com`, `release-assets.githubusercontent.com`,
+`pypi.org`, `files.pythonhosted.org`, and the configured model upstream. The
+gateway's image-pull path also needs `ghcr.io` and its registry blob destinations
+(including `pkg-containers.githubusercontent.com` and
+`github-registry-files.githubusercontent.com` when used). Preserve the deployment's
+Graph, identity-provider and other approved Forge destinations.
+
+DNS-name rules alone did not consistently resolve the CDN timeouts in the
+reference installation. Inspect resolution from a CI pod and the actual redirect
+destination; add approved current IPv4 `/32` rules on TCP 443 when necessary.
+Record and maintain those CIDRs in deployment configuration because CDN IPs change.
+Allow the discovered gateway Service/endpoints and API addresses at this layer
+too when blocked. Do not copy old cluster IPs or replace the namespace firewall
+with allow-all. Persist additions in the owning Forge deployment configuration
+so a Helm redeploy does not remove them.
+
+### 4. Verify the existing gateway's native mTLS and runtime
+
+The validated CLI setup stages the client bundle in
+`$XDG_CONFIG_HOME/openshell/gateways/ci-gateway/mtls/`, registers via
+`openshell gateway add ENDPOINT --local --name ci-gateway`, and restages the
+bundle afterward. The corrected evaluate Task already does this. It unsets
+`OPENSHELL_GATEWAY_INSECURE`; keep certificate verification enabled.
+
+The working Forge server certificate includes `host.containers.internal`.
+Use `https://host.containers.internal:17670` and a PipelineRun `hostAliases`
+mapping to **your** `$GATEWAY_IP`. Verify your server SAN before using that name.
+This alias is for CI pods; the inner sandbox's host bridge is a separate network.
+An external OpenShift Route is not required for this in-cluster connection.
+
+If certificates change on service restart, inspect the gateway's systemd unit
+and cloud-init configuration on the SAW VM. Remove unconditional
+`ExecStartPre=... generate-certs` regeneration through the deployment source,
+preserve the existing matching certificates, and configure the service to load
+them. Do not reset the state database or rotate the CA as a routine CI setup step.
+Compare the served certificate and trust chain to the mounted client bundle
+after any service restart. Use the deployment's actual unit name and TLS paths.
+
+Before a full run, validate from a pod with the same CI label, Secret mounts and
+host alias: an authenticated OpenShell operation, temporary sandbox creation,
+readable image-owned `AGENTS.md` and skill `SKILL.md` files, and an actual GLM
+response. A TCP connection or working Forge web chat does not prove this CI path.
+Use the normal Forge startup/profile and providers; a bare `sleep infinity`
+container does not validate the agent runtime.
+
+The validated image is the GHCR digest in the PipelineRun template, not a custom
+`sandbox-paths` image or mutable `latest`. Forge stages `/opt/forge` and
+`/opt/openclaw` beneath `/sandbox/persist/.forge-image-runtime/`; inspect the
+resulting workspace skill paths too. The `forge-image` mode uses image-owned
+persona/skills. Preserve the Forge filesystem policy and existing providers
+`forge-ai-gateway,m365-read-intervm,slack-read-proxy,drafts-service-agent`.
+Agent GLM access uses these providers; the judge separately calls LiteLLM from
+the Tekton pod. Validate both paths and the upstream CA.
+
+### 5. Render and install the matching Pipeline and Tasks
+
+The example below renders only the required Tekton resources and RBAC into a
+private temporary directory. It also renders the PipelineRun's namespace DNS
+and gateway alias. Run this from the checkout of `$FLOW_REV`, not an older checkout.
+It requires PyYAML. Review the files before applying.
+
+```bash
+export CI_RENDER_DIR=$(mktemp -d)
+python3 - <<'PY'
+import json, os, pathlib, yaml
+ns = os.environ['NS']
+assert ns and '[' not in ns, 'Replace [NAMESPACE] first'
+out = pathlib.Path(os.environ['CI_RENDER_DIR'])
+files = ['config/rbac.yaml',
+         'pipeline/tasks/phases/prepare.yaml',
+         'pipeline/tasks/phases/evaluate.yaml',
+         'pipeline/tasks/post/analyze-and-check-degradation.yaml',
+         'pipeline/tasks/post/store.yaml', 'pipeline/tasks/post/cleanup_pvc.yaml',
+         'pipeline/pipelines/ci-pipeline-openshell.yaml']
+items = []
+for path in files:
+    text = pathlib.Path(path).read_text()
+    for old in ('ab-eval-flow', 'gz-forge-eval'):
+        text = text.replace(old, ns)
+    for obj in yaml.safe_load_all(text):
+        if obj:
+            assert obj['kind'] in ('Task', 'Pipeline', 'ServiceAccount', 'Role', 'RoleBinding')
+            obj.setdefault('metadata', {})['namespace'] = ns
+            items.append(obj)
+(out / 'resources.json').write_text(json.dumps({'apiVersion': 'v1', 'kind': 'List', 'items': items}))
+run = yaml.safe_load(pathlib.Path('pipeline/runs/openshell-openclaw-pipelinerun.yaml').read_text())
+run['metadata']['namespace'] = ns
+overrides = {
+    'revision': os.environ['FLOW_REV'], 'pipeline-repo-revision': os.environ['FLOW_REV'],
+    'agent-eval-harness-repo-revision': os.environ['HARNESS_REV'],
+    'openshell-gateway-endpoint': 'https://host.containers.internal:17670',
+    'openshell-mtls-secret': 'openshell-gateway-mtls',
+    'openshell-ai-gateway-ca-secret': 'forge-agent-upstream-tls',
+    'llm-api-base': f'http://litellm.{ns}.svc.cluster.local:4000',
+    'llm-base-url': f'http://litellm.{ns}.svc.cluster.local:4000/v1',
+    'mlflow-tracking-uri': f'http://abevalflow-mlflow.{ns}.svc.cluster.local:5000',
+}
+params = {p['name']: p['value'] for p in run['spec']['params']}
+params.update(overrides)
+run['spec']['params'] = [{'name': k, 'value': v} for k, v in params.items()]
+run['spec']['taskRunTemplate']['podTemplate']['hostAliases'] = [
+    {'ip': os.environ['GATEWAY_IP'], 'hostnames': ['host.containers.internal']}]
+(out / 'run.json').write_text(json.dumps(run, indent=2))
+print(out)
+PY
+oc -n "$NS" apply --dry-run=server -f "$CI_RENDER_DIR/resources.json"
+# Review resources.json and run.json, then install the namespaced resources.
+oc -n "$NS" apply -f "$CI_RENDER_DIR/resources.json"
+oc -n "$NS" auth can-i list persistentvolumeclaims --as="system:serviceaccount:$NS:pipeline"
+oc -n "$NS" auth can-i delete persistentvolumeclaims --as="system:serviceaccount:$NS:pipeline"
+oc -n "$NS" create --dry-run=server -f "$CI_RENDER_DIR/run.json"
+```
+
+The renderer does not provision Forge, Secrets, storage services, network policies
+or database migrations; finish steps 2–4 first. If model names, providers or
+Secret names differ, adjust the rendered params. `llm-api-key=mock` is valid only
+when your LiteLLM explicitly accepts that value; configure real credentials
+through Secrets otherwise. Keep the template's GHCR image digest and GLM model
+overrides only if they match the deployment you validated.
+
+### 6. Trigger, inspect and confirm completion
+
+```bash
+RUN=$(oc -n "$NS" create -f "$CI_RENDER_DIR/run.json" -o jsonpath='{.metadata.name}')
+tkn -n "$NS" pipelinerun logs "$RUN" -f
+oc -n "$NS" get pipelinerun "$RUN" -o wide
+```
+
+Prepare clones the submission and validates it. Evaluate's
+`step-aeh-openshell-eval` runs the agent and judges. CI cases and scorers come from
+`submissions/openclaw-forge/eval.yaml` (`dataset.path: cases`, `judges:`) and
+`cases/{analysis-panel,morning-briefing}/{input,annotations}.yaml` in the chosen
+submission revision. The harness demo bootstrap script is not run by CI.
+For a fast first run, commit a submission variant whose `dataset.path` contains
+only `analysis-panel` and select that revision. There is no case-filter parameter
+in this Pipeline profile. If 900 seconds is insufficient, set
+`execution.timeout: 1800` in the selected submission's eval.yaml; Task and
+Pipeline timeouts must also leave room for scoring and publication.
+
+Success requires evaluate green, authenticated gateway access, a real GLM
+response, readable skills, judge scores without scoring errors, then successful
+analyze/store and verified artifacts. Skipped unrelated engine steps are normal.
+`response_received` alone is insufficient. Missing `/sandbox/output` needs the
+agent logs/exit status checked; an empty directory is not a fix.
+
+MLflow logging occurs inside evaluate. The store Task separately writes
+`evaluation_runs` and uploads reports plus `debug/aeh/` artifacts to MinIO.
+Confirm the DB row for this run and uploaded objects: a missing DB Secret can
+cause store to skip database insertion. Trace counts/feedback must be nonzero
+when events exist; fix incompatible MLflow packages or missing event collection
+if trace export fails. Do not interpret a missing mean reward as a score of zero.
+
+Keep each port-forward running in a separate terminal:
+
+```bash
+oc -n "$NS" port-forward svc/abevalflow-mlflow 15000:5000
+# Another terminal, with NS set there too:
+oc -n "$NS" port-forward svc/minio 9001:9001
+```
+
+Open MLflow at <http://127.0.0.1:15000> and select the experiment named after the
+PipelineRun. Open MinIO at <http://127.0.0.1:9001>; use that namespace's MinIO
+credentials. Connection refused usually means the local forward stopped. MinIO
+9001 is the web console; application uploads use 9000.
+
+Cleanup requires API connectivity even after evaluation succeeds. The corrected
+Task retries and may defer cleanup with a warning; verify PVC deletion rather
+than assuming green means it was deleted. If store fails, preserve its workspace
+before cleanup and run a store-only TaskRun with that existing PVC and the
+original run ID/results paths. A normal PipelineRun rerun executes evaluation
+again; it does not resume at store.
+
+Before any rerun, verify both Git revisions, installed Task versions, namespace
+URLs and the current gateway Service IP. Service recreation can invalidate a
+saved host alias. Helm redeployment can revert manual firewall or TLS changes;
+retain the validated settings in the namespace's deployment source.
+
+
+---
+
+The remaining Harbor, ASE and A2A examples use their original `ab-eval-flow`
+namespace. For a new Forge SAW installation, use `[NAMESPACE]` and the OpenShell
+procedure above; those other engine examples are not OpenShell setup commands.
 
 ## A2A Monitoring Trigger Sources
 
@@ -645,7 +984,7 @@ The Run ID in the message is a clickable link to the OpenShift console.
 
 ---
 
-## Active Image
+## Active Image (Harbor/A2A examples only)
 
 All eval steps (`harbor-eval`, `a2a-eval`) use `eval-base:local-env` -- built from
 Harbor `feature/local-environment` branch with `claude-code` pre-installed.
