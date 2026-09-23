@@ -16,6 +16,7 @@ STORE_TASKS = (
     REPO / "pipeline" / "tasks" / "post" / "store.yaml",
     REPO / "pipeline" / "tasks" / "konflux" / "store.yaml",
 )
+POSTGRES_STATEFULSET = REPO / "config" / "postgres" / "statefulset.yaml"
 
 
 def _load(path: Path) -> dict:
@@ -53,6 +54,15 @@ class TestOpenshellPipelineProfile:
             script = _load(task)["spec"]["steps"][0]["script"]
             assert '"psycopg[binary]"' in script
             assert "psycopg2-binary" in script
+
+    def test_postgres_uses_cluster_pullable_image(self):
+        container = _load(POSTGRES_STATEFULSET)["spec"]["template"]["spec"][
+            "containers"
+        ][0]
+        assert container["image"] == (
+            "image-registry.openshift-image-registry.svc:5000/openshift/"
+            "postgresql:15-el9"
+        )
 
     def test_named_pipeline_omits_test_and_red_team(self):
         spec = _load(PIPELINE)["spec"]
