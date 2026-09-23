@@ -12,6 +12,10 @@ CI = REPO / "pipeline" / "pipelines" / "ci-pipeline.yaml"
 CI_DEV = REPO / "pipeline" / "pipelines" / "ci-pipeline-dev.yaml"
 OPENCLAW_EVAL = REPO / "submissions" / "openclaw-forge" / "eval.yaml"
 LITELLM_CONFIG = REPO / "config" / "litellm" / "configmap.yaml"
+STORE_TASKS = (
+    REPO / "pipeline" / "tasks" / "post" / "store.yaml",
+    REPO / "pipeline" / "tasks" / "konflux" / "store.yaml",
+)
 
 
 def _load(path: Path) -> dict:
@@ -43,6 +47,12 @@ class TestOpenshellPipelineProfile:
         assert flash["reasoning"] is True
         assert flash["contextWindow"] == 200000
         assert flash["maxTokens"] == 32768
+
+    def test_store_tasks_support_psycopg_v2_and_v3_urls(self):
+        for task in STORE_TASKS:
+            script = _load(task)["spec"]["steps"][0]["script"]
+            assert '"psycopg[binary]"' in script
+            assert "psycopg2-binary" in script
 
     def test_named_pipeline_omits_test_and_red_team(self):
         spec = _load(PIPELINE)["spec"]
