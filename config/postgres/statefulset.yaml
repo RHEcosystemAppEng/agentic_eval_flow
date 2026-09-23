@@ -18,7 +18,9 @@ spec:
     spec:
       containers:
         - name: postgresql
-          image: registry.redhat.io/rhel9/postgresql-16:1-82
+          # Use the cluster-provided OpenShift image so namespace installs do
+          # not require a registry.redhat.io pull secret.
+          image: image-registry.openshift-image-registry.svc:5000/openshift/postgresql:15-el9
           ports:
             - containerPort: 5432
               name: postgresql

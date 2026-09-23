@@ -112,9 +112,7 @@ def _compact_per_case(per_case: Any) -> dict[str, Any]:
         if not isinstance(case_data, dict):
             out[str(case_id)] = case_data
             continue
-        out[str(case_id)] = {
-            key: _compact_judge(val) if key != "reward" else val for key, val in case_data.items()
-        }
+        out[str(case_id)] = {key: _compact_judge(val) if key != "reward" else val for key, val in case_data.items()}
     return out
 
 
@@ -206,9 +204,7 @@ def _case_reward(case_data: Any) -> float | None:
         if key == "reward":
             continue
         if _judge_errored(result):
-            if _is_llm_or_numeric_judge(result) or (
-                isinstance(result, dict) and result.get("judge_type") == "llm"
-            ):
+            if _is_llm_or_numeric_judge(result) or (isinstance(result, dict) and result.get("judge_type") == "llm"):
                 scoring_judge_errored = True
             elif isinstance(result, dict) and result.get("judge_type") not in ("check", "builtin"):
                 scoring_judge_errored = True
@@ -253,8 +249,7 @@ def _scoring_unavailable_from_errors(per_case: Any) -> bool:
             continue
         for rec in case_data.values():
             if _judge_errored(rec) and (
-                _is_llm_or_numeric_judge(rec)
-                or (isinstance(rec, dict) and rec.get("judge_type") == "llm")
+                _is_llm_or_numeric_judge(rec) or (isinstance(rec, dict) and rec.get("judge_type") == "llm")
             ):
                 has_scoring_error = True
                 break
@@ -316,11 +311,7 @@ def _trials_from_per_case(per_case: Any) -> list[dict[str, Any]]:
     for case_id, case_data in per_case.items():
         judges = None
         if isinstance(case_data, dict):
-            judges = {
-                key: _compact_judge(val)
-                for key, val in case_data.items()
-                if key != "reward"
-            } or None
+            judges = {key: _compact_judge(val) for key, val in case_data.items() if key != "reward"} or None
         trials.append(
             {
                 "trial_name": str(case_id),
@@ -455,10 +446,7 @@ def aggregate_single_run(
                 if _judge_errored(rec):
                     judge_error_count += 1
     if judge_error_count:
-        warnings.append(
-            f"{judge_error_count} judge error(s) excluded from mean_reward "
-            "(not scored as 0.0 quality)"
-        )
+        warnings.append(f"{judge_error_count} judge error(s) excluded from mean_reward (not scored as 0.0 quality)")
     if mean_reward is None and judge_error_count:
         warnings.append("mean_reward unavailable because scoring judges errored")
 

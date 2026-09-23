@@ -48,6 +48,14 @@ runner:
         - id: rits/zai-org/glm-5-3
           name: GLM 5.3
           api: openai-completions
+        - id: rits/zai-org/GLM-5-3-Flash
+          name: GLM 5.3 Flash
+          api: openai-completions
+          reasoning: true
+          contextWindow: 200000
+          # Flash can spend a substantial portion of a completion on reasoning.
+          # Keep enough output budget for the final briefing after tool use.
+          maxTokens: 32768
 execution:
   mode: case
   prompt: "{{ input.prompt }}"

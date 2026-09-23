@@ -10,6 +10,13 @@ REPO = Path(__file__).resolve().parents[1]
 PIPELINE = REPO / "pipeline" / "pipelines" / "ci-pipeline-openshell.yaml"
 CI = REPO / "pipeline" / "pipelines" / "ci-pipeline.yaml"
 CI_DEV = REPO / "pipeline" / "pipelines" / "ci-pipeline-dev.yaml"
+OPENCLAW_EVAL = REPO / "submissions" / "openclaw-forge" / "eval.yaml"
+LITELLM_CONFIG = REPO / "config" / "litellm" / "configmap.yaml"
+STORE_TASKS = (
+    REPO / "pipeline" / "tasks" / "post" / "store.yaml",
+    REPO / "pipeline" / "tasks" / "konflux" / "store.yaml",
+)
+POSTGRES_STATEFULSET = REPO / "config" / "postgres" / "statefulset.yaml"
 
 
 def _load(path: Path) -> dict:
@@ -25,6 +32,33 @@ def _task_names(spec: dict) -> list[str]:
 
 
 class TestOpenshellPipelineProfile:
+    def test_litellm_exposes_regular_and_flash_models(self):
+        embedded = _load(LITELLM_CONFIG)["data"]["config.yaml"]
+        models = yaml.safe_load(embedded)["model_list"]
+        names = {model["model_name"] for model in models}
+        assert names >= {
+            "rits/zai-org/glm-5-3",
+            "rits/zai-org/GLM-5-3-Flash",
+        }
+
+    def test_flash_model_has_reasoning_output_budget(self):
+        providers = _load(OPENCLAW_EVAL)["runner"]["providers"]
+        models = providers["inference"]["models"]
+        flash = next(model for model in models if model["id"] == "rits/zai-org/GLM-5-3-Flash")
+        assert flash["reasoning"] is True
+        assert flash["contextWindow"] == 200000
+        assert flash["maxTokens"] == 32768
+
+    def test_store_tasks_support_psycopg_v2_and_v3_urls(self):
+        for task in STORE_TASKS:
+            script = _load(task)["spec"]["steps"][0]["script"]
+            assert '"psycopg[binary]"' in script
+            assert "psycopg2-binary" in script
+
+    def test_postgres_uses_cluster_pullable_image(self):
+        container = _load(POSTGRES_STATEFULSET)["spec"]["template"]["spec"]["containers"][0]
+        assert container["image"] == ("image-registry.openshift-image-registry.svc:5000/openshift/postgresql:15-el9")
+
     def test_named_pipeline_omits_test_and_red_team(self):
         spec = _load(PIPELINE)["spec"]
         names = _task_names(spec)
@@ -45,9 +79,7 @@ class TestOpenshellPipelineProfile:
             "ghcr.io/rh-forge/openclaw-saw-agent@sha256:bcc55e9b7a36d5f65e8ffc75962496f8b3617762a4cdb37fd1cf54611b72d41a"
         )
         assert defaults["enable-mlflow"] == "true"
-        assert defaults["mlflow-tracking-uri"] == (
-            "http://abevalflow-mlflow.gz-forge-eval.svc.cluster.local:5000"
-        )
+        assert defaults["mlflow-tracking-uri"] == ("http://abevalflow-mlflow.gz-forge-eval.svc.cluster.local:5000")
         analyze = next(t for t in _load(PIPELINE)["spec"]["tasks"] if t["name"] == "analyze")
         scan = next(p for p in analyze["params"] if p["name"] == "security-scan-mode")
         assert scan["value"] == "disabled"
