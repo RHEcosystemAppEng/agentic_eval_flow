@@ -262,9 +262,7 @@ class TestBaseRunner:
 
     def test_read_skill_name_prefers_skill_over_name(self, tmp_path):
         config_path = tmp_path / "eval.yaml"
-        config_path.write_text(
-            yaml.dump({"skill": "openclaw-forge", "name": "forge-eval-rubrics"})
-        )
+        config_path.write_text(yaml.dump({"skill": "openclaw-forge", "name": "forge-eval-rubrics"}))
 
         runner = HarborRunner()
         assert runner._read_skill_name(config_path) == "openclaw-forge"

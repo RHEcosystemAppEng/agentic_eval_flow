@@ -541,8 +541,7 @@ def render_markdown(result: AnalysisResult) -> str:
         lines.append(f"- **Pass rate:** {_fmt(t.pass_rate)}")
         if t.n_errors:
             lines.append(
-                f"- **Errors:** {t.n_errors} trial(s) with no quality score "
-                "(judge errors are not counted as 0.0)"
+                f"- **Errors:** {t.n_errors} trial(s) with no quality score (judge errors are not counted as 0.0)"
             )
     else:
         lines.append("## Comparison\n")

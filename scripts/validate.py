@@ -386,8 +386,7 @@ def _check_openclaw_runner(eval_path: Path) -> list[str]:
     rtype = runner.get("type") if isinstance(runner, dict) else None
     if rtype != "openclaw":
         return [
-            f"{eval_path.name}: runner.type must be 'openclaw' for "
-            f"eval_engine=aeh_openshell_openclaw (got {rtype!r})"
+            f"{eval_path.name}: runner.type must be 'openclaw' for eval_engine=aeh_openshell_openclaw (got {rtype!r})"
         ]
     return []
 
