@@ -10,6 +10,8 @@ REPO = Path(__file__).resolve().parents[1]
 PIPELINE = REPO / "pipeline" / "pipelines" / "ci-pipeline-openshell.yaml"
 CI = REPO / "pipeline" / "pipelines" / "ci-pipeline.yaml"
 CI_DEV = REPO / "pipeline" / "pipelines" / "ci-pipeline-dev.yaml"
+OPENCLAW_EVAL = REPO / "submissions" / "openclaw-forge" / "eval.yaml"
+LITELLM_CONFIG = REPO / "config" / "litellm" / "configmap.yaml"
 
 
 def _load(path: Path) -> dict:
@@ -25,6 +27,26 @@ def _task_names(spec: dict) -> list[str]:
 
 
 class TestOpenshellPipelineProfile:
+    def test_litellm_exposes_regular_and_flash_models(self):
+        embedded = _load(LITELLM_CONFIG)["data"]["config.yaml"]
+        models = yaml.safe_load(embedded)["model_list"]
+        names = {model["model_name"] for model in models}
+        assert names >= {
+            "rits/zai-org/glm-5-3",
+            "rits/zai-org/GLM-5-3-Flash",
+        }
+
+    def test_flash_model_has_reasoning_output_budget(self):
+        providers = _load(OPENCLAW_EVAL)["runner"]["providers"]
+        models = providers["inference"]["models"]
+        flash = next(
+            model for model in models
+            if model["id"] == "rits/zai-org/GLM-5-3-Flash"
+        )
+        assert flash["reasoning"] is True
+        assert flash["contextWindow"] == 200000
+        assert flash["maxTokens"] == 32768
+
     def test_named_pipeline_omits_test_and_red_team(self):
         spec = _load(PIPELINE)["spec"]
         names = _task_names(spec)
