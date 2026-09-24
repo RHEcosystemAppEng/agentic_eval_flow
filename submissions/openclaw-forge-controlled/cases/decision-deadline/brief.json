@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "evidenceId": "prior-fixture",
+  "generatedAt": "2026-09-23T12:00:00Z",
+  "generatedFor": "Alex Rivera",
+  "scope": "full",
+  "greeting": {
+    "name": "Alex",
+    "role": "Engineering executive",
+    "initials": "AR",
+    "date": "Wednesday, September 23",
+    "summary": {
+      "lead": "No pending items.",
+      "tail": ""
+    }
+  },
+  "notifications": [],
+  "coverage": [
+    {
+      "id": "email",
+      "label": "Email",
+      "value": "0"
+    },
+    {
+      "id": "slack",
+      "label": "Slack Messages",
+      "value": "0"
+    },
+    {
+      "id": "meetings",
+      "label": "Meetings",
+      "value": "0"
+    },
+    {
+      "id": "library",
+      "label": "Library Artifacts",
+      "value": "0"
+    }
+  ],
+  "topOfMind": [],
+  "fyi": [],
+  "lookingAhead": []
+}

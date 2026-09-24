@@ -375,13 +375,11 @@ def upload_aeh_run_artifacts(
     """
     from minio import Minio
 
+    from abevalflow.forge_storage import upload_verified
+
     run_dirs = _discover_aeh_run_dirs(report_dir, workspace_root=workspace_root)
     if not run_dirs:
-        logger.warning(
-            "No AEH run directories under %s (summary.yaml/run_result.json) — skipping debug/aeh/",
-            report_dir,
-        )
-        return 0
+        raise RuntimeError(f"No AEH run artifacts under {report_dir}; refusing successful storage")
 
     parsed = urlparse(endpoint)
     host = parsed.netloc or parsed.path
@@ -395,16 +393,21 @@ def upload_aeh_run_artifacts(
 
     uploaded = 0
     for run_dir in run_dirs:
+        verified = []
         for fpath in sorted(run_dir.rglob("*")):
-            if not fpath.is_file():
+            if not fpath.is_file() or fpath.name == "storage-attestation.json":
                 continue
             rel = fpath.relative_to(run_dir)
             object_name = f"{prefix}/debug/aeh/{run_dir.name}/{rel.as_posix()}"
-            try:
-                client.fput_object(bucket, object_name, str(fpath))
-                uploaded += 1
-            except Exception as exc:
-                logger.warning("Failed to upload %s: %s", fpath, exc)
+            verified.append(upload_verified(client, bucket, object_name, fpath))
+            uploaded += 1
+        if not verified:
+            raise RuntimeError("empty AEH artifact manifest")
+        attestation = run_dir / "storage-attestation.json"
+        attestation.write_text(
+            json.dumps({"run": run_dir.name, "bucket": bucket, "status": "verified", "objects": verified}, indent=2)
+        )
+        upload_verified(client, bucket, f"{prefix}/debug/aeh/{run_dir.name}/storage-attestation.json", attestation)
 
     logger.info(
         "Uploaded %d AEH run artifact files to s3://%s/%s/debug/aeh/ (%d run dir(s))",
@@ -855,6 +858,11 @@ def main() -> int:
     minio_endpoint = args.minio_endpoint or os.environ.get("MINIO_ENDPOINT", "")
     minio_access_key = os.environ.get("MINIO_ACCESS_KEY", "")
     minio_secret_key = os.environ.get("MINIO_SECRET_KEY", "")
+
+    if args.eval_engine in ("aeh", "aeh_openshell_openclaw") and not all(
+        (minio_endpoint, minio_access_key, minio_secret_key)
+    ):
+        raise ValueError("AEH artifacts require configured MinIO endpoint and credentials")
 
     upload_ok = True
     success = True

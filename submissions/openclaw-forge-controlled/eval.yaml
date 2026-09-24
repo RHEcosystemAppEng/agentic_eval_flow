@@ -1,0 +1,86 @@
+name: forge-controlled
+mlflow:
+  experiment: forge-controlled
+models:
+  skill: inference/rits/zai-org/glm-5-3
+  judge: rits/zai-org/glm-5-3
+runner:
+  type: openclaw
+  settings:
+    forge_gateway: true
+    forge_contract: true
+    forge_required_outputs:
+    - brief.json
+    - .openclaw/tmp/brief.candidate.provenance.json
+    - .openclaw/tmp/brief.evidence.json
+    forge_providers:
+    - forge-ai-gateway
+  system_prompt: Read and follow skills/daily-briefing/SKILL.md. This is a controlled
+    fixture run with no provider reads or external writes.
+  providers:
+    inference:
+      baseUrl: https://host.containers.internal:18084/v1
+      api: openai-completions
+      apiKey: $FORGE_AI_GATEWAY_BEARER
+      request:
+        allowPrivateNetwork: true
+      models:
+      - id: rits/zai-org/glm-5-3
+        name: GLM 5.3
+        api: openai-completions
+        reasoning: true
+        contextWindow: 262144
+        maxTokens: 65536
+        compat:
+          maxTokensField: max_completion_tokens
+          supportsReasoningEffort: true
+          supportedReasoningEfforts:
+          - high
+          - max
+          reasoningEffortMap:
+            'off': high
+            minimal: high
+            low: high
+            medium: high
+            high: high
+            xhigh: max
+            max: max
+        params:
+          reasoning_effort: high
+  effort: high
+execution:
+  mode: case
+  prompt: '{{ input.prompt }}'
+  timeout: 600
+  env:
+    NODE_USE_ENV_PROXY: '1'
+dataset:
+  path: cases
+  workspace:
+    files:
+    - .openclaw
+    - eval
+    - brief.json
+    - eval-fixture.json
+outputs:
+- path: output
+  schema: Final chat response
+- path: brief.json
+  schema: Canonical published brief
+- path: .openclaw/tmp
+  schema: Sealed evidence, batches and composer provenance
+- path: eval-results
+  schema: Host validated artifact verdict and complete usage
+judges:
+- name: artifact_contract
+  check: 'import json
+
+    values = [json.loads(v) if isinstance(v,str) else v for k,v in outputs.get(''files'',{}).items()
+    if k.endswith(''forge-verdict.json'')]
+
+    return len(values) == 1 and values[0].get(''status'') == ''passed'''
+  feedback_type: bool
+thresholds:
+  artifact_contract:
+    min_pass_rate: 1
+    max_error_rate: 0
