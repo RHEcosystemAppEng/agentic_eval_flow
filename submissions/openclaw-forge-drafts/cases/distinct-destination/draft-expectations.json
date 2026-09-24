@@ -1,0 +1,37 @@
+{
+  "count": 2,
+  "created_actions": [
+    {
+      "context_ref": "m365:platform-review",
+      "to": [
+        "taylor@example.test"
+      ]
+    }
+  ],
+  "content": [
+    {
+      "match": {
+        "context_ref": "m365:platform-review",
+        "to": [
+          "morgan@example.test"
+        ]
+      },
+      "body_patterns": [
+        "API rate limits",
+        "scaling thresholds",
+        "(?:September|Sept?\\.?) 28|28 (?:September|Sept?\\.?)"
+      ]
+    },
+    {
+      "match": {
+        "to": [
+          "taylor@example.test"
+        ]
+      },
+      "body_patterns": [
+        "scaling",
+        "measurements"
+      ]
+    }
+  ]
+}

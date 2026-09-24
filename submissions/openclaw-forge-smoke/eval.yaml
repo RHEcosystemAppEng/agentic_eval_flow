@@ -1,0 +1,75 @@
+name: forge-runtime-smoke
+mlflow:
+  experiment: forge-controlled
+models:
+  skill: inference/rits/zai-org/glm-5-3
+  judge: rits/zai-org/glm-5-3
+runner:
+  type: openclaw
+  settings:
+    forge_gateway: true
+    forge_child_smoke: true
+    forge_required_outputs:
+    - child-output.txt
+    forge_providers:
+    - forge-ai-gateway
+  system_prompt: Use only the requested fixture files. Never read providers or send
+    messages.
+  providers:
+    inference:
+      baseUrl: https://host.containers.internal:18084/v1
+      api: openai-completions
+      apiKey: $FORGE_AI_GATEWAY_BEARER
+      request:
+        allowPrivateNetwork: true
+      models:
+      - id: rits/zai-org/glm-5-3
+        name: GLM 5.3
+        api: openai-completions
+        reasoning: true
+        contextWindow: 262144
+        maxTokens: 65536
+        compat:
+          maxTokensField: max_completion_tokens
+          supportsReasoningEffort: true
+          supportedReasoningEfforts:
+          - high
+          - max
+          reasoningEffortMap:
+            'off': high
+            minimal: high
+            low: high
+            medium: high
+            high: high
+            xhigh: max
+            max: max
+        params:
+          reasoning_effort: high
+  effort: high
+execution:
+  mode: case
+  prompt: '{{ input.prompt }}'
+  timeout: 180
+  env:
+    NODE_USE_ENV_PROXY: '1'
+dataset:
+  path: cases
+  workspace:
+    files:
+    - child-input.txt
+outputs:
+- path: output
+  schema: Parent final response
+- path: child-output.txt
+  schema: Exact child output
+- path: eval-results
+  schema: Verified usage
+judges:
+- name: child_artifact
+  check: return any(str(v).strip() == 'CHILD_OK_20260924' for k,v in outputs.get('files',
+    {}).items() if 'child-output.txt' in k)
+  feedback_type: bool
+thresholds:
+  child_artifact:
+    min_pass_rate: 1
+    max_error_rate: 0

@@ -1,0 +1,4 @@
+prompt: Run node tools/collect-brief-evidence.mjs --source microsoft365 in the foreground,
+  then node tools/collect-brief-evidence.mjs seal. Do not fan out, create proposals
+  or publish a brief; this case only verifies governed mock M365 collection. Report
+  whether collection and sealing completed.

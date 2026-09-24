@@ -5,9 +5,16 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 import yaml
 
 from scripts.log_aeh_mlflow import main
+
+
+@pytest.fixture(autouse=True)
+def isolate_mlflow_environment(monkeypatch):
+    # main() writes this process-global value; restore it after each test.
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", "")
 
 
 def _write_run(tmp_path: Path, *, skill: str = "demo-skill", run_id: str = "run-1") -> tuple[Path, Path]:

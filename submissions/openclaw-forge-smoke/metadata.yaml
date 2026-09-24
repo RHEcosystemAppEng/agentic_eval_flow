@@ -1,0 +1,12 @@
+schema_version: '1.0'
+name: openclaw-forge-smoke
+description: Brief-reader runtime and artifact smoke test
+eval_engine: aeh_openshell_openclaw
+persona: rh-developer
+version: 0.1.0
+author: Agentic Eval Flow Team
+tags:
+- aeh
+- openclaw
+- forge
+- openshell

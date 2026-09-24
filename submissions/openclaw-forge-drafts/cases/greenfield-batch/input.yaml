@@ -1,0 +1,5 @@
+prompt: 'Prepare three separate email reply proposals: sources m365:review-a, m365:review-b,
+  m365:review-c, each addressed to morgan@example.test with subject RE: Review and
+  body I will review it by September 28. These are explicit user-verified destinations
+  and source references. Follow the forge-drafts skill. Only prepare proposals; never
+  send. Do not modify evaluation files.'
