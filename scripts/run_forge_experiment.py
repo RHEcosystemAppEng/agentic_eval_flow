@@ -133,7 +133,7 @@ def main():
             break
         record["directory"] = str(dirs[0])
         results_file.write_text(json.dumps(results, indent=2))
-    subprocess.run(
+    comparison = subprocess.run(
         [
             sys.executable,
             str(scripts / "compare_forge_experiment.py"),
@@ -146,7 +146,8 @@ def main():
         ],
         check=False,
     )
+    return comparison.returncode
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

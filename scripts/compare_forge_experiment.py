@@ -56,7 +56,7 @@ def main():
                     if row[arm]["skill"] != plan["arms"][arm]["skill_sha256"]:
                         raise ValueError("loaded skill differs from experiment")
                 pairs.append(row)
-        result = compare(pairs)
+        result = compare(pairs, policy=plan.get("policy", "improvement"))
         result["measurements"] = pairs
     except (ValueError, KeyError, OSError) as exc:
         result = {"verdict": "invalid_eval", "issues": [str(exc)]}
@@ -65,7 +65,7 @@ def main():
     result["runs"] = [{k: r[k] for k in ("pair", "arm", "run", "status", "error") if k in r} for r in runs]
     a.output.write_text(json.dumps(result, indent=2, allow_nan=False) + "\n")
     print(result["verdict"])
-    return int(result["verdict"] != "improved")
+    return int(result["verdict"] not in ("improved", "passed"))
 
 
 if __name__ == "__main__":

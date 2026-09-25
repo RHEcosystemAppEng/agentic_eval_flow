@@ -1,7 +1,33 @@
 import os
 import subprocess
 
-from scripts.trigger_forge_controlled import rewrite_clones
+from scripts.trigger_forge_controlled import require_durable_aeh_artifacts, rewrite_clones
+
+
+def test_forge_requires_storage_only_on_publisher_and_refuses_unknown_layout():
+    import pytest
+
+    task = {
+        "spec": {
+            "steps": [
+                {"name": "setup", "script": "git fetch"},
+                {
+                    "name": "upload",
+                    "script": "python scripts/publish.py",
+                    "env": [
+                        {"name": "MINIO_ENDPOINT", "valueFrom": {"secretKeyRef": {"name": "minio", "key": "endpoint"}}},
+                    ],
+                },
+            ]
+        }
+    }
+    require_durable_aeh_artifacts(task)
+    require_durable_aeh_artifacts(task)
+    assert "env" not in task["spec"]["steps"][0]
+    assert task["spec"]["steps"][1]["env"][-1] == {"name": "AEH_REQUIRE_ARTIFACTS", "value": "1"}
+    assert len(task["spec"]["steps"][1]["env"]) == 2
+    with pytest.raises(ValueError, match="publisher"):
+        require_durable_aeh_artifacts({"spec": {"steps": [{"script": "different uploader"}]}})
 
 
 def test_fetch_retries_are_bounded_and_do_not_hide_terminal_failure(tmp_path):

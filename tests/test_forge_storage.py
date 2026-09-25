@@ -4,7 +4,7 @@ import pytest
 
 
 def test_upload_requires_readback_of_all_bytes(tmp_path):
-    from abevalflow.forge_storage import upload_verified
+    from abevalflow.artifact_storage import upload_verified
 
     path = tmp_path / "brief.json"
     path.write_text('{"evidenceId":"test"}')
@@ -21,7 +21,7 @@ def test_upload_requires_readback_of_all_bytes(tmp_path):
 
 
 def test_upload_failure_propagates(tmp_path):
-    from abevalflow.forge_storage import upload_verified
+    from abevalflow.artifact_storage import upload_verified
 
     path = tmp_path / "file"
     path.write_text("data")
