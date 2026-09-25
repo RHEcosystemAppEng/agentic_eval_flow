@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import re
 import subprocess
 import sys
@@ -363,6 +364,7 @@ def upload_aeh_run_artifacts(
     bucket: str = "ab-eval-reports",
     secure: bool | None = None,
     workspace_root: Path | None = None,
+    required: bool = False,
 ) -> int:
     """Upload AEH harness run trees under ``debug/aeh/``.
 
@@ -375,12 +377,13 @@ def upload_aeh_run_artifacts(
     """
     from minio import Minio
 
+    from abevalflow.artifact_storage import upload_verified
+
     run_dirs = _discover_aeh_run_dirs(report_dir, workspace_root=workspace_root)
     if not run_dirs:
-        logger.warning(
-            "No AEH run directories under %s (summary.yaml/run_result.json) — skipping debug/aeh/",
-            report_dir,
-        )
+        if required:
+            raise RuntimeError(f"No AEH run artifacts under {report_dir}; refusing successful storage")
+        logger.warning("No AEH run artifacts under %s; skipping optional upload", report_dir)
         return 0
 
     parsed = urlparse(endpoint)
@@ -395,16 +398,29 @@ def upload_aeh_run_artifacts(
 
     uploaded = 0
     for run_dir in run_dirs:
+        verified = []
         for fpath in sorted(run_dir.rglob("*")):
-            if not fpath.is_file():
+            if not fpath.is_file() or fpath.name == "storage-attestation.json":
                 continue
             rel = fpath.relative_to(run_dir)
             object_name = f"{prefix}/debug/aeh/{run_dir.name}/{rel.as_posix()}"
-            try:
-                client.fput_object(bucket, object_name, str(fpath))
+            if required:
+                verified.append(upload_verified(client, bucket, object_name, fpath))
                 uploaded += 1
-            except Exception as exc:
-                logger.warning("Failed to upload %s: %s", fpath, exc)
+            else:
+                try:
+                    client.fput_object(bucket, object_name, str(fpath))
+                    uploaded += 1
+                except Exception as exc:
+                    logger.warning("Failed to upload optional artifact %s: %s", fpath, exc)
+        if required:
+            if not verified:
+                raise RuntimeError("empty AEH artifact manifest")
+            attestation = run_dir / "storage-attestation.json"
+            attestation.write_text(
+                json.dumps({"run": run_dir.name, "bucket": bucket, "status": "verified", "objects": verified}, indent=2)
+            )
+            upload_verified(client, bucket, f"{prefix}/debug/aeh/{run_dir.name}/storage-attestation.json", attestation)
 
     logger.info(
         "Uploaded %d AEH run artifact files to s3://%s/%s/debug/aeh/ (%d run dir(s))",
@@ -846,15 +862,24 @@ def main() -> int:
     )
     parser.add_argument("--minio-bucket", type=str, default="ab-eval-reports")
     parser.add_argument(
+        "--require-aeh-artifacts",
+        action="store_true",
+        default=os.environ.get("AEH_REQUIRE_ARTIFACTS") == "1",
+        help="Require AEH artifacts and verify storage read-back (or AEH_REQUIRE_ARTIFACTS=1).",
+    )
+    parser.add_argument(
         "--report-prefix", type=str, default="", help="Pre-computed MinIO prefix (skips generating new timestamp)"
     )
     args = parser.parse_args()
 
-    import os
-
     minio_endpoint = args.minio_endpoint or os.environ.get("MINIO_ENDPOINT", "")
     minio_access_key = os.environ.get("MINIO_ACCESS_KEY", "")
     minio_secret_key = os.environ.get("MINIO_SECRET_KEY", "")
+
+    if args.require_aeh_artifacts and args.eval_engine not in ("aeh", "aeh_openshell_openclaw"):
+        parser.error("--require-aeh-artifacts requires an AEH engine")
+    if args.require_aeh_artifacts and not all((minio_endpoint, minio_access_key, minio_secret_key)):
+        raise ValueError("AEH artifacts require configured MinIO endpoint and credentials")
 
     upload_ok = True
     success = True
@@ -908,6 +933,7 @@ def main() -> int:
                 secret_key=minio_secret_key,
                 bucket=args.minio_bucket,
                 workspace_root=args.workspace_root,
+                required=args.require_aeh_artifacts,
             )
         if prefix and args.workspace_root:
             upload_scaffolded_configs(

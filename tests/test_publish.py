@@ -22,6 +22,84 @@ from scripts.publish import (
 )
 
 
+@pytest.mark.parametrize("required", [False, True])
+def test_aeh_storage_configuration_is_required_only_when_opted_in(tmp_path, monkeypatch, required):
+    from scripts.publish import main
+
+    for name in ("MINIO_ENDPOINT", "MINIO_ACCESS_KEY", "MINIO_SECRET_KEY", "AEH_REQUIRE_ARTIFACTS"):
+        monkeypatch.delenv(name, raising=False)
+    if required:
+        monkeypatch.setenv("AEH_REQUIRE_ARTIFACTS", "1")
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "publish",
+            "--report-dir",
+            str(tmp_path),
+            "--submission-name",
+            "test",
+            "--pipeline-run-id",
+            "run",
+            "--recommendation",
+            "pass",
+            "--eval-engine",
+            "aeh_openshell_openclaw",
+        ],
+    )
+    if required:
+        with pytest.raises(ValueError, match="require configured MinIO"):
+            main()
+    else:
+        assert main() == 0
+
+
+def test_optional_aeh_artifacts_allow_no_run_tree(tmp_path):
+    assert upload_aeh_run_artifacts(tmp_path, "prefix", "http://minio", "k", "s") == 0
+
+
+@pytest.mark.parametrize("setting", ["cli", "env"])
+def test_publisher_forwards_strict_artifact_policy(tmp_path, monkeypatch, setting):
+    from scripts import publish
+
+    for key in ("MINIO_ENDPOINT", "MINIO_ACCESS_KEY", "MINIO_SECRET_KEY"):
+        monkeypatch.setenv(key, "test-only")
+    monkeypatch.delenv("AEH_REQUIRE_ARTIFACTS", raising=False)
+    args = [
+        "publish",
+        "--report-dir",
+        str(tmp_path),
+        "--submission-name",
+        "test",
+        "--pipeline-run-id",
+        "run",
+        "--recommendation",
+        "pass",
+        "--eval-engine",
+        "aeh",
+    ]
+    if setting == "cli":
+        args.append("--require-aeh-artifacts")
+    else:
+        monkeypatch.setenv("AEH_REQUIRE_ARTIFACTS", "1")
+    monkeypatch.setattr("sys.argv", args)
+    monkeypatch.setattr(publish, "upload_reports", lambda **kw: "prefix")
+    uploader = MagicMock(return_value=1)
+    monkeypatch.setattr(publish, "upload_aeh_run_artifacts", uploader)
+    assert publish.main() == 0
+    assert uploader.call_args.kwargs["required"] is True
+
+
+@patch("minio.Minio")
+def test_optional_aeh_upload_retains_best_effort_behavior(mock_minio, tmp_path):
+    run = tmp_path / "run"
+    run.mkdir()
+    (run / "run_result.json").write_text("{}")
+    mock_minio.return_value.fput_object.side_effect = RuntimeError("unavailable")
+    assert upload_aeh_run_artifacts(tmp_path, "prefix", "http://minio", "k", "s") == 0
+    mock_minio.return_value.get_object.assert_not_called()
+    assert not (run / "storage-attestation.json").exists()
+
+
 @pytest.fixture
 def report_dir(tmp_path: Path) -> Path:
     """Create a temporary report directory with sample files."""
@@ -583,6 +661,18 @@ class TestUploadAehDebugArtifacts:
 
 
 class TestUploadAehRunArtifacts:
+    def _client(self):
+        from types import SimpleNamespace
+
+        objects = {}
+        client = MagicMock()
+        client.bucket_exists.return_value = True
+        client.fput_object.side_effect = lambda bucket, key, path, **kw: objects.update({key: Path(path).read_bytes()})
+        client.get_object.side_effect = lambda bucket, key: SimpleNamespace(
+            stream=lambda n: iter([objects[key]]), close=lambda: None, release_conn=lambda: None
+        )
+        return client
+
     def _make_run(self, root: Path, name: str, *, pairwise: bool = False) -> Path:
         run = root / name
         (run / "cases" / "case-001" / "artifacts").mkdir(parents=True)
@@ -601,13 +691,14 @@ class TestUploadAehRunArtifacts:
         self._make_run(report_dir, "aeh-single-run1")
         (report_dir / "report.json").write_text("{}")
 
-        mock_client = MagicMock()
+        mock_client = self._client()
         mock_minio_cls.return_value = mock_client
         mock_client.bucket_exists.return_value = True
 
         count = upload_aeh_run_artifacts(
             report_dir=report_dir,
             prefix="prefix-single",
+            required=True,
             endpoint="http://minio:9000",
             access_key="k",
             secret_key="s",
@@ -628,13 +719,14 @@ class TestUploadAehRunArtifacts:
         self._make_run(report_dir, "control-run1")
         self._make_run(report_dir, "treatment-run1", pairwise=True)
 
-        mock_client = MagicMock()
+        mock_client = self._client()
         mock_minio_cls.return_value = mock_client
         mock_client.bucket_exists.return_value = True
 
         count = upload_aeh_run_artifacts(
             report_dir=report_dir,
             prefix="prefix-pw",
+            required=True,
             endpoint="http://minio:9000",
             access_key="k",
             secret_key="s",
@@ -645,20 +737,19 @@ class TestUploadAehRunArtifacts:
         assert any("debug/aeh/treatment-run1/summary.yaml" in n for n in names)
         assert any("debug/aeh/treatment-run1/report.html" in n for n in names)
 
-    def test_missing_runs_returns_zero(self, tmp_path: Path):
+    def test_missing_runs_refuses_successful_storage(self, tmp_path: Path):
         report_dir = tmp_path / "reports" / "empty"
         report_dir.mkdir(parents=True)
         (report_dir / "report.json").write_text("{}")
-        assert (
+        with pytest.raises(RuntimeError, match="No AEH run artifacts"):
             upload_aeh_run_artifacts(
                 report_dir=report_dir,
                 prefix="p",
+                required=True,
                 endpoint="http://minio:9000",
                 access_key="k",
                 secret_key="s",
             )
-            == 0
-        )
 
 
 class TestUpliftThresholdLogic:
