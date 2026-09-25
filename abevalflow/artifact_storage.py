@@ -1,4 +1,4 @@
-"""Durable AEH artifact upload: success requires content read-back."""
+"""Content-verified artifact upload for callers requiring durable evidence."""
 
 import hashlib
 

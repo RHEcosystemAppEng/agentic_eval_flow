@@ -21,6 +21,7 @@ def main():
     p.add_argument("--candidate", required=True)
     p.add_argument("--case", action="append", required=True)
     p.add_argument("--pairs", type=int, default=3)
+    p.add_argument("--policy", choices=["improvement", "regression"], default="improvement")
     p.add_argument("--skill", choices=["forge-drafts", "daily-briefing"], default="forge-drafts")
     a = p.parse_args()
     if not 3 <= a.pairs <= 10:
@@ -41,6 +42,7 @@ def main():
     a.output.mkdir(parents=True)
     plan = {
         "version": 1,
+        "policy": a.policy,
         "pairs": a.pairs,
         "cases": a.case,
         "skill_path": "skills/" + a.skill + "/SKILL.md",

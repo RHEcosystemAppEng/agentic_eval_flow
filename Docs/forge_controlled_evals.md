@@ -1,11 +1,14 @@
 # Controlled Forge evaluations
 
-This extension uses AEH and Tekton in `saw-nommen`, with a new temporary
+This extension uses AEH and Tekton in a configured namespace, with a new temporary
 OpenShell sandbox for every case. It does not restart or update the live Forge
 application. The source changes span this repository and the companion
-`agent-eval-harness` checkout. Until those changes are published, the trigger
-packages local source into an immutable, SHA-256-verified ConfigMap. Source
+`agent-eval-harness` checkout. The development trigger packages local source
+into an immutable, SHA-256-verified ConfigMap. Source
 commits alone do not describe an overlaid run: retain `overlay-manifest.json`.
+It copies installed Tasks and adjusts their scripts; it is development tooling,
+not the final CI interface. Moving Forge-owned content to `forge-eval` and
+replacing overlays with pinned published dependencies are a separate phase.
 
 ## Evaluation tiers
 
@@ -54,9 +57,15 @@ model/rubric revisions, and report judge tokens separately.
   The cleanup Task must use a valid pinned CLI image, not the nonexistent
   `registry.redhat.io/openshift4/ose-cli:latest`.
 
-The example `deploy/forge-eval/saw-nommen.pipelinerun.json` contains namespace
-configuration and Secret references. The inline judge API-key parameter is
-empty; use the installed Secret wiring for a suite that needs a judge key.
+Keep the namespace's working PipelineRun JSON outside this checkout, and set
+`BASE_RUN` to that file and `EVAL_NAMESPACE` to its namespace. Use the installed
+pipeline's template from the [manual trigger guide](manual_trigger_guide.md)
+to configure it; do not copy another namespace's service IPs or certificates.
+The JSON must identify the installed `pipelineRef`, submission/source revisions,
+gateway endpoint, image digest, workspace/storage configuration and Secret
+references. Personal deployment snapshots are deliberately not versioned here.
+The trigger clears the inline judge API-key parameter; use installed Secret
+wiring for a suite that needs a judge key.
 Gateway certificate rotation requires refreshing the eval mTLS Secret from the
 currently selected gateway profile using the Agent VM SSH key. Do not print
 certificate private keys or tokens into CI logs.
@@ -67,8 +76,8 @@ From this repository, with `HARNESS_CHECKOUT` set to the companion worktree:
 
 ```bash
 python scripts/trigger_forge_controlled.py \
-  --namespace saw-nommen \
-  --base-run deploy/forge-eval/saw-nommen.pipelinerun.json \
+  --namespace "$EVAL_NAMESPACE" \
+  --base-run "$BASE_RUN" \
   --harness "$HARNESS_CHECKOUT" \
   --submission submissions/openclaw-forge-smoke \
   --output /tmp/forge-smoke-deployment \
@@ -83,8 +92,8 @@ Git commands have bounded network waits and accept both branch and commit
 references. Neither the image nor the live application is upgraded by this
 command.
 
-The example namespace already has additional evaluated Task wiring for its
-synthetic user and Forge CA. On a new namespace, install/configure AEH first
+The configured pipeline must include Task wiring for its synthetic user and
+Forge CA. On a new namespace, install/configure AEH first
 using the existing deployment and manual trigger guides. This script is not a
 cluster bootstrap installer.
 
@@ -123,7 +132,11 @@ runs after storage and requires a nonempty per-run `storage-attestation.json`,
 case validity/usage, aggregate quality, and the
 FINISHED MLflow run with summary artifacts. A bad skill can therefore produce
 a failed final gate **and still retain its evidence**.
-Missing MinIO configuration fails storage, rather than silently skipping it.
+The Forge trigger explicitly sets `AEH_REQUIRE_ARTIFACTS=1` on its publisher.
+This requires MinIO configuration, artifacts and successful read-back. Direct
+publisher callers can use `--require-aeh-artifacts`. Other AEH users retain the
+existing optional/best-effort upload behavior unless they opt in; that mode
+does not produce a verified storage attestation and cannot pass the Forge gate.
 
 PVC cleanup is allowed only after `store` succeeds. Failure before storage
 keeps the claim for diagnosis. Completed Tekton pods can keep a delete-requested
@@ -142,18 +155,28 @@ the experiment before running either arm:
 python scripts/prepare_forge_experiment.py \
   --submission submissions/openclaw-forge-drafts \
   --baseline "$BASELINE_COMMIT" --candidate "$CANDIDATE_COMMIT" \
-  --case accepted-fresh-chat --pairs 3 --output /tmp/forge-draft-experiment
+  --case accepted-fresh-chat --pairs 3 --policy regression \
+  --output /tmp/forge-draft-experiment
 
 PYTHONPATH=. python scripts/run_forge_experiment.py \
   --experiment /tmp/forge-draft-experiment/experiment.json \
-  --namespace saw-nommen \
-  --base-run deploy/forge-eval/saw-nommen.pipelinerun.json \
+  --namespace "$EVAL_NAMESPACE" \
+  --base-run "$BASE_RUN" \
   --harness "$HARNESS_CHECKOUT"
 ```
 
+Make both skill commits accessible through the `rh-forge/openclaw-saw-image`
+GitHub Contents API first (for example, a branch or PR commit; no merge is
+required). This preparer reads from that repository, not uncommitted local files,
+and has no separate fork selector. Set `BASELINE_COMMIT` and `CANDIDATE_COMMIT`
+to full SHAs.
 The preparer uses authenticated `gh api` to read exact skill bytes. Only the
 selected skill is replaced; the launcher verifies its hash and records every
 loaded skill/tool and workspace Markdown hash (including synthetic USER.md).
+`--skill forge-drafts` (default) reads `tools/forge-draft/SKILL.md` and installs
+it as `skills/forge-drafts/SKILL.md`. `--skill daily-briefing` reads the bundle's
+daily-briefing skill. No image rebuild is needed for this skill-only comparison;
+runtime/tool changes need a separately pinned candidate image integration run.
 Both runtime overlays are frozen before execution.
 Order alternates by pair; cases get fresh conversations and identical stored
 state. The runner does not retry based on an unfavorable outcome. It refuses
@@ -164,13 +187,20 @@ runtime/initial state, incomplete usage, and changes to other loaded files.
 It also requires successful infrastructure/storage Tasks, a durable artifact
 attestation and verified MLflow summaries. A baseline quality failure is valid
 evidence; a failed upload is not.
-Correctness gates precede cost gates. A candidate needs a correctness gain
-without a critical regression, no observed per-case mean output increase, and
+Choose the policy before running either arm; it is frozen in `experiment.json`.
+`regression` permits unchanged passing quality and cost. `improvement` (the default
+for compatibility with earlier experiments) additionally requires a measured
+correctness gain. Every candidate must pass critical checks under either policy,
+even if the baseline failed them. Both require no observed per-case mean output increase and
 non-increasing aggregate mean/p95 output. A one-sided paired bootstrap upper
 bound must also be <= 0. Three pairs are a pilot; uncertainty crossing zero is
 `inconclusive`. Declare a larger experiment (maximum ten pairs) before running
 it; do not add repetitions until a favorable sample appears.
 
+The experiment runner exits with the comparison result: a valid improvement or
+regression-policy pass exits zero; invalid, inconclusive, or failing comparisons
+exit nonzero. Inspect `comparison.json` and its linked run evidence before editing
+the skill and declaring a new experiment. Do not edit an in-progress experiment.
 No skill is promoted, pushed, or merged automatically.
 
 ## Investigating a run
@@ -183,7 +213,7 @@ the published artifact and stored state decide correctness.
 If the PVC remains, fetch reports with a temporary read-only reader pod:
 
 ```bash
-python scripts/fetch_forge_reports.py --namespace saw-nommen \
+python scripts/fetch_forge_reports.py --namespace "$EVAL_NAMESPACE" \
   --run "$PIPELINE_RUN" --output /tmp/forge-eval-results
 ```
 
@@ -195,7 +225,7 @@ For one explicitly selected completed run, archive logs and release its already
 delete-requested PVC after fetching the storage attestation:
 
 ```bash
-python scripts/cleanup_forge_run.py --namespace saw-nommen \
+python scripts/cleanup_forge_run.py --namespace "$EVAL_NAMESPACE" \
   --run "$PIPELINE_RUN" --report "$LOCAL_HARNESS_RUN_DIRECTORY" \
   --archive "$PRIVATE_LOG_ARCHIVE"
 ```

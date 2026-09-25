@@ -83,7 +83,9 @@ def build_pair(baseline_dir, candidate_dir, *, case, pair, skill_path):
     }
 
 
-def compare(rows, *, bootstrap_samples=4000):
+def compare(rows, *, bootstrap_samples=4000, policy="improvement"):
+    if policy not in ("improvement", "regression"):
+        raise ValueError("unknown comparison policy: " + str(policy))
     errors = []
     seen = set()
     groups = defaultdict(list)
@@ -126,6 +128,7 @@ def compare(rows, *, bootstrap_samples=4000):
     candidate = [r["candidate"]["output_tokens"] for r in rows]
     deltas = [c - b for b, c in zip(baseline, candidate)]
     report = {
+        "policy": policy,
         "pairs": len(rows),
         "cases": len(groups),
         "issues": [],
@@ -183,7 +186,7 @@ def compare(rows, *, bootstrap_samples=4000):
         elif mean(r["candidate"]["quality"] - r["baseline"]["quality"] for r in rows) > 0:
             report["verdict"] = "improved"
         else:
-            report["verdict"] = "no_quality_improvement"
+            report["verdict"] = "passed" if policy == "regression" else "no_quality_improvement"
     return report
 
 
@@ -191,11 +194,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("pairs", type=Path)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--policy", choices=["improvement", "regression"], default="improvement")
     args = parser.parse_args()
-    result = compare(json.loads(args.pairs.read_text()))
+    result = compare(json.loads(args.pairs.read_text()), policy=args.policy)
     args.output.write_text(json.dumps(result, indent=2, allow_nan=False) + "\n")
     print(result["verdict"])
-    return 0 if result["verdict"] == "improved" else 1
+    return 0 if result["verdict"] in ("improved", "passed") else 1
 
 
 if __name__ == "__main__":

@@ -19,6 +19,16 @@ from pathlib import Path
 import yaml
 
 
+def require_durable_aeh_artifacts(task):
+    """Opt the Forge publisher into strict storage without changing other users."""
+    publishers = [step for step in task["spec"]["steps"] if "scripts/publish.py" in step.get("script", "")]
+    if len(publishers) != 1:
+        raise ValueError("expected exactly one AEH artifact publisher")
+    env = publishers[0].setdefault("env", [])
+    env[:] = [entry for entry in env if entry["name"] != "AEH_REQUIRE_ARTIFACTS"]
+    env.append({"name": "AEH_REQUIRE_ARTIFACTS", "value": "1"})
+
+
 def rewrite_clones(script):
     # git clone --branch accepts branch/tag but not immutable commit IDs.
     pattern = r'git clone --depth 1 --branch "([^"\n]+)"\s*(?:\\\n\s*)?"([^"\n]+)" "([^"\n]+)"'
@@ -147,7 +157,7 @@ def main():
                 files[prefix + "cases-controlled/" + case.name + "/" + p.relative_to(case).as_posix()] = p.read_bytes()
     if args.case and set(args.case) - {p.name for p in dataset.iterdir()}:
         raise ValueError("unknown selected case")
-    for relative in ["scripts/publish.py", "abevalflow/forge_storage.py", "scripts/forge_gate.py"]:
+    for relative in ["scripts/publish.py", "abevalflow/artifact_storage.py", "scripts/forge_gate.py"]:
         if (flow / relative).exists():
             files["_pipeline/" + relative] = (flow / relative).read_bytes()
     # Include render logic and inherited Task specs in resource identity, so a
@@ -189,6 +199,8 @@ def main():
         task = templates[kind]
         task["metadata"] = {"name": "forge-" + kind + "-" + suffix, "namespace": namespace}
         task.pop("status", None)
+        if kind == "store":
+            require_durable_aeh_artifacts(task)
         for step in task["spec"]["steps"]:
             if "script" in step:
                 step["script"] = rewrite_clones(step["script"])
