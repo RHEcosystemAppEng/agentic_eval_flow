@@ -102,9 +102,7 @@ class TestOpenShellRunnerExecute:
         assert env["AGENT_EVAL_RUNS_DIR"] == str(tmp_path / "custom-reports")
 
     @patch("subprocess.run")
-    def test_copies_results_when_eval_name_differs_from_output(
-        self, mock_run, tmp_path, monkeypatch
-    ):
+    def test_copies_results_when_eval_name_differs_from_output(self, mock_run, tmp_path, monkeypatch):
         """nfz69: harness writes reports/<name>/<run-id>, wrapper passed submission-dir."""
         monkeypatch.setenv("AGENT_EVAL_OPENSHELL_IMAGE", "quay.io/example/openclaw:0.0.1-1787755593")
         monkeypatch.setenv("OPENSHELL_GATEWAY_ENDPOINT", "http://openshell.example:8080")
@@ -191,8 +189,7 @@ class TestEvaluateOpenshellM365:
         assert env_from, "aeh-openshell-eval must envFrom openshell-credentials"
         secret_refs = [item.get("secretRef") or {} for item in env_from]
         assert any(
-            ref.get("name") == "$(params.openshell-credentials-secret)"
-            and ref.get("optional") is True
+            ref.get("name") == "$(params.openshell-credentials-secret)" and ref.get("optional") is True
             for ref in secret_refs
         )
         env = {item["name"]: item for item in step["env"]}
