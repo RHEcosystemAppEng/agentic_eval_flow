@@ -565,9 +565,7 @@ def main(argv: list[str] | None = None) -> int:
     experiment = (args.experiment or "").strip()
     raw_cfg = yaml.safe_load(config.read_text()) or {}
     config_skill = (
-        _config_reports_leaf(raw_cfg, config.parent.name)
-        if isinstance(raw_cfg, dict)
-        else config.parent.name
+        _config_reports_leaf(raw_cfg, config.parent.name) if isinstance(raw_cfg, dict) else config.parent.name
     )
     reports_skill = _reports_skill_name(runs_dir, config_skill, args.run_id)
 

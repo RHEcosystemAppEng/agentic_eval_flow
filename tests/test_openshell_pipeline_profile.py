@@ -45,9 +45,7 @@ class TestOpenshellPipelineProfile:
             "ghcr.io/rh-forge/openclaw-saw-agent@sha256:bcc55e9b7a36d5f65e8ffc75962496f8b3617762a4cdb37fd1cf54611b72d41a"
         )
         assert defaults["enable-mlflow"] == "true"
-        assert defaults["mlflow-tracking-uri"] == (
-            "http://abevalflow-mlflow.gz-forge-eval.svc.cluster.local:5000"
-        )
+        assert defaults["mlflow-tracking-uri"] == ("http://abevalflow-mlflow.gz-forge-eval.svc.cluster.local:5000")
         analyze = next(t for t in _load(PIPELINE)["spec"]["tasks"] if t["name"] == "analyze")
         scan = next(p for p in analyze["params"] if p["name"] == "security-scan-mode")
         assert scan["value"] == "disabled"

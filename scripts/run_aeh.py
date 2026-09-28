@@ -768,13 +768,11 @@ class OpenShellRunner(BaseRunner):
             )
         if not os.environ.get("AGENT_EVAL_OPENSHELL_IMAGE"):
             raise RunnerError(
-                "OpenShell runner requires AGENT_EVAL_OPENSHELL_IMAGE "
-                "(sandbox image the forge-saw gateway can pull)."
+                "OpenShell runner requires AGENT_EVAL_OPENSHELL_IMAGE (sandbox image the forge-saw gateway can pull)."
             )
         if not os.environ.get("OPENSHELL_GATEWAY_ENDPOINT"):
             raise RunnerError(
-                "OpenShell runner requires OPENSHELL_GATEWAY_ENDPOINT "
-                "(in-cluster forge-saw gateway URL)."
+                "OpenShell runner requires OPENSHELL_GATEWAY_ENDPOINT (in-cluster forge-saw gateway URL)."
             )
 
         rid = run_id or output.name
