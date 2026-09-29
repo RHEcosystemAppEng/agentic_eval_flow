@@ -9,7 +9,7 @@ spec:
   pipelineRef:
     name: abevalflow-pipeline-openshell
   params:
-    # Add a submission repository for this run; this replaces the deployed Pipeline default.
+    # [Optional] Add a submission repository for this run; this replaces the deployed Pipeline default.
     # - name: repo-url
     #   value: "<submission-repo-url>"
     - name: submission-dir
@@ -22,7 +22,7 @@ spec:
       value: "feat/aeh-openshell-openclaw"
     - name: pipeline-repo-revision
       value: "feat/aeh-openshell-openclaw"
-    # Add a harness repository or revision for this run; these replace Pipeline defaults.
+    # [Optional] Add a harness repository or revision for this run; these replace Pipeline defaults.
     # - name: agent-eval-harness-repo-url
     #   value: "<harness-repo-url>"
     # - name: agent-eval-harness-repo-revision
