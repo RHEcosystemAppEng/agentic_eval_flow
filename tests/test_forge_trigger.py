@@ -1,7 +1,25 @@
 import os
 import subprocess
 
-from scripts.trigger_forge_controlled import require_durable_aeh_artifacts, rewrite_clones
+from scripts.trigger_forge_controlled import (
+    build_gate_task,
+    require_durable_aeh_artifacts,
+    rewrite_clones,
+)
+
+
+def test_inline_gate_declares_and_receives_pipeline_mlflow_params():
+    gate = build_gate_task("source-pvc")
+    expected = {
+        "enable-mlflow": "$(params.enable-mlflow)",
+        "mlflow-tracking-uri": "$(params.mlflow-tracking-uri)",
+    }
+
+    assert {param["name"]: param["value"] for param in gate["params"]} == expected
+    assert {param["name"]: param["type"] for param in gate["taskSpec"]["params"]} == {
+        name: "string" for name in expected
+    }
+    assert gate["workspaces"] == [{"name": "source", "workspace": "source-pvc"}]
 
 
 def test_forge_requires_storage_only_on_publisher_and_refuses_unknown_layout():

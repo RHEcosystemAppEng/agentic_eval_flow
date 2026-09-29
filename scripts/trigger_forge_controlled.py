@@ -29,6 +29,32 @@ def require_durable_aeh_artifacts(task):
     env.append({"name": "AEH_REQUIRE_ARTIFACTS", "value": "1"})
 
 
+def build_gate_task(source_workspace):
+    """Build the post-storage gate with its Pipeline parameters wired explicitly."""
+    parameter_names = ("enable-mlflow", "mlflow-tracking-uri")
+    return {
+        "name": "gate",
+        "runAfter": ["store"],
+        "params": [{"name": name, "value": f"$(params.{name})"} for name in parameter_names],
+        "workspaces": [{"name": "source", "workspace": source_workspace}],
+        "taskSpec": {
+            "params": [{"name": name, "type": "string"} for name in parameter_names],
+            "workspaces": [{"name": "source"}],
+            "steps": [
+                {
+                    "name": "verify",
+                    "image": "registry.access.redhat.com/ubi9/python-311:9.6",
+                    "script": '#!/usr/bin/env bash\nset -euo pipefail\nmlflow=""\n'
+                    'if [ "$(params.enable-mlflow)" = "true" ]; then mlflow="$(params.mlflow-tracking-uri)"; fi\n'
+                    'python "$(workspaces.source.path)/_pipeline/scripts/forge_gate.py" '
+                    '--reports "$(workspaces.source.path)/reports" '
+                    '--run "$(context.pipelineRun.name)" --mlflow "$mlflow"\n',
+                }
+            ],
+        },
+    }
+
+
 def rewrite_clones(script):
     # git clone --branch accepts branch/tag but not immutable commit IDs.
     pattern = r'git clone --depth 1 --branch "([^"\n]+)"\s*(?:\\\n\s*)?"([^"\n]+)" "([^"\n]+)"'
@@ -240,27 +266,7 @@ def main():
         for w in t.get("workspaces", [])
         if w["name"] == "source"
     )
-    pipeline["spec"]["tasks"].append(
-        {
-            "name": "gate",
-            "runAfter": ["store"],
-            "workspaces": [{"name": "source", "workspace": source_workspace}],
-            "taskSpec": {
-                "workspaces": [{"name": "source"}],
-                "steps": [
-                    {
-                        "name": "verify",
-                        "image": "registry.access.redhat.com/ubi9/python-311:9.6",
-                        "script": '#!/usr/bin/env bash\nset -euo pipefail\nmlflow=""\n'
-                        'if [ "$(params.enable-mlflow)" = "true" ]; then mlflow="$(params.mlflow-tracking-uri)"; fi\n'
-                        'python "$(workspaces.source.path)/_pipeline/scripts/forge_gate.py" '
-                        '--reports "$(workspaces.source.path)/reports" '
-                        '--run "$(context.pipelineRun.name)" --mlflow "$mlflow"\n',
-                    }
-                ],
-            },
-        }
-    )
+    pipeline["spec"]["tasks"].append(build_gate_task(source_workspace))
     resources.append(pipeline)
     run["spec"]["pipelineRef"]["name"] = pipeline["metadata"]["name"]
     (args.output / "resources.json").write_text(
