@@ -9,7 +9,7 @@ spec:
   pipelineRef:
     name: abevalflow-pipeline-openshell
   params:
-    # Optional: override the submission repository for this run.
+    # Add a submission repository for this run; this replaces the deployed Pipeline default.
     # - name: repo-url
     #   value: "<submission-repo-url>"
     - name: submission-dir
@@ -22,7 +22,7 @@ spec:
       value: "feat/aeh-openshell-openclaw"
     - name: pipeline-repo-revision
       value: "feat/aeh-openshell-openclaw"
-    # Optional: choose a different harness repository or revision for this run.
+    # Add a harness repository or revision for this run; these replace Pipeline defaults.
     # - name: agent-eval-harness-repo-url
     #   value: "<harness-repo-url>"
     # - name: agent-eval-harness-repo-revision
@@ -45,7 +45,7 @@ spec:
       value: "rits/zai-org/glm-5-3"
     - name: llm-api-base
       value: "http://litellm.gz-forge-eval.svc.cluster.local:4000"
-    # Optional: override the prepare-stage AI generation endpoint when enabled.
+    # Add a prepare-stage AI endpoint for this run when generation is enabled.
     # - name: llm-base-url
     #   value: "<prepare-llm-base-url>"
     - name: llm-api-key
