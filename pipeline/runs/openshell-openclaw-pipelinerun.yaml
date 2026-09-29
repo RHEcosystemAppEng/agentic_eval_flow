@@ -9,8 +9,9 @@ spec:
   pipelineRef:
     name: abevalflow-pipeline-openshell
   params:
-    - name: repo-url
-      value: "https://github.com/RHEcosystemAppEng/agentic_eval_flow.git"
+    # Optional: override the submission repository for this run.
+    # - name: repo-url
+    #   value: "https://github.com/RHEcosystemAppEng/agentic_eval_flow.git"
     - name: submission-dir
       value: "openclaw-forge"
     - name: eval-engine
@@ -21,10 +22,11 @@ spec:
       value: "feat/aeh-openshell-openclaw"
     - name: pipeline-repo-revision
       value: "feat/aeh-openshell-openclaw"
-    - name: agent-eval-harness-repo-url
-      value: "https://github.com/GuyZivRH/agent-eval-harness.git"
-    - name: agent-eval-harness-repo-revision
-      value: "feat/aeh-openshell-openclaw"
+    # Optional: choose a different harness repository or revision for this run.
+    # - name: agent-eval-harness-repo-url
+    #   value: "https://github.com/GuyZivRH/agent-eval-harness.git"
+    # - name: agent-eval-harness-repo-revision
+    #   value: "main"  # replace with the commit or branch to evaluate
     - name: openshell-gateway-endpoint
       # Certificate-valid hostname, resolved to this namespace's Service below.
       value: "https://host.containers.internal:17670"
@@ -32,6 +34,7 @@ spec:
       value: "openshell-gateway-mtls"
     - name: openshell-ai-gateway-ca-secret
       value: "forge-agent-upstream-tls"
+    # Replace this digest to evaluate a different OpenClaw sandbox image.
     - name: openshell-sandbox-image
       value: "ghcr.io/rh-forge/openclaw-saw-agent@sha256:bcc55e9b7a36d5f65e8ffc75962496f8b3617762a4cdb37fd1cf54611b72d41a"
     - name: openshell-provider
@@ -42,8 +45,9 @@ spec:
       value: "rits/zai-org/glm-5-3"
     - name: llm-api-base
       value: "http://litellm.gz-forge-eval.svc.cluster.local:4000"
-    - name: llm-base-url
-      value: "http://litellm.gz-forge-eval.svc.cluster.local:4000/v1"
+    # Optional: override the prepare-stage AI generation endpoint when enabled.
+    # - name: llm-base-url
+    #   value: "http://litellm.gz-forge-eval.svc.cluster.local:4000/v1"
     - name: llm-api-key
       value: "mock"
     - name: aeh-model-override
