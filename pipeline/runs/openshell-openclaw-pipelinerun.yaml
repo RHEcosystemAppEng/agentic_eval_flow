@@ -9,6 +9,8 @@ spec:
   pipelineRef:
     name: abevalflow-pipeline-openshell
   params:
+    - name: repo-url
+      value: "https://github.com/RHEcosystemAppEng/agentic_eval_flow.git"
     - name: submission-dir
       value: "openclaw-forge"
     - name: eval-engine
@@ -18,6 +20,10 @@ spec:
     - name: revision
       value: "feat/aeh-openshell-openclaw"
     - name: pipeline-repo-revision
+      value: "feat/aeh-openshell-openclaw"
+    - name: agent-eval-harness-repo-url
+      value: "https://github.com/GuyZivRH/agent-eval-harness.git"
+    - name: agent-eval-harness-repo-revision
       value: "feat/aeh-openshell-openclaw"
     - name: openshell-gateway-endpoint
       # Certificate-valid hostname, resolved to this namespace's Service below.
@@ -36,6 +42,8 @@ spec:
       value: "rits/zai-org/glm-5-3"
     - name: llm-api-base
       value: "http://litellm.gz-forge-eval.svc.cluster.local:4000"
+    - name: llm-base-url
+      value: "http://litellm.gz-forge-eval.svc.cluster.local:4000/v1"
     - name: llm-api-key
       value: "mock"
     - name: aeh-model-override
