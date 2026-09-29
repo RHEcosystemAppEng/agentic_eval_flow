@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "as_of": "2026-09-24T12:00:00Z",
+  "evidence": ".openclaw/tmp/brief.evidence.json",
+  "sha256": "27ea84757c3ec539b0fde3fb2d3f6bd9fc72c643c6c75fcc59b3bb6d23bf17b3",
+  "generator_image_source": "dfe09659195ba9932331f5e27ae21cf6710645ce",
+  "generator_tool_hashes": {
+    "compose-brief.mjs": "429d58b452e37e86a82dbda1fc14efac85591aee70746c4469f807b5511d1845",
+    "collect-brief-evidence.mjs": "6a0d15edc95dd67afe94e8af4d743795f12b4faf9ebb417e2eba9ad4fe6546c9",
+    "publish-brief.mjs": "332b9d6d3f77894a601b9ea6550dcc934106224ebae0dc82351a9111fe0b33cd",
+    "source-key.mjs": "dc950344c033d77796d69174b88986f9989a5986a4524a6b61b015781ebc720c",
+    "show-evidence.mjs": "9087daccc3149ee252f35426362b79145a80230c6ad9db4bdc1a4ddbe0bf3ede"
+  },
+  "expected": {},
+  "excluded": [],
+  "max_items": 0
+}
