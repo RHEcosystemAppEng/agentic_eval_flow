@@ -45,9 +45,6 @@ spec:
       value: "rits/zai-org/glm-5-3"
     - name: llm-api-base
       value: "http://litellm.gz-forge-eval.svc.cluster.local:4000"
-    # Add a prepare-stage AI endpoint for this run when generation is enabled.
-    # - name: llm-base-url
-    #   value: "<prepare-llm-base-url>"
     - name: llm-api-key
       value: "mock"
     - name: aeh-model-override
