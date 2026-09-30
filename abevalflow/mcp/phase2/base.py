@@ -99,9 +99,12 @@ class Phase2Gate:
         try:
             data = json.loads(path.read_text())
         except (json.JSONDecodeError, OSError) as exc:
+            # A corrupt result file is a real pipeline defect, so log it loudly and
+            # score 0.0 - but per the three-state model a "couldn't read" must not
+            # block outside block mode (mirrors the fail branch below).
             logger.error("Failed to read %s: %s", path, exc)
             return self._result(
-                passed=False,
+                passed=mode != GateMode.BLOCK,
                 score=0.0,
                 mode=mode,
                 status=STATUS_FAIL,
@@ -134,9 +137,13 @@ class Phase2Gate:
             )
         # fail
         passed = mode != GateMode.BLOCK
+        # A fail with no findings must not report a perfect score: _weighted_score
+        # returns 1.0 for an empty list (correct only on the pass path), so a bare
+        # fail is floored to 0.0 here.
+        score = _weighted_score(findings) if findings else 0.0
         return self._result(
             passed=passed,
-            score=_weighted_score(findings),
+            score=score,
             mode=mode,
             status=STATUS_FAIL,
             reason=reason,

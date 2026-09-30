@@ -85,53 +85,59 @@ def map_facts(facts: dict[str, Any]) -> list[CheckOutcome]:
     )
 
     # OAuth matches catalog = enforced AND auth-server matches AND scopes match.
-    enforced = _get(facts, FACT_SECURITY, "oauth", "enforced")
-    server_match = _get(facts, FACT_SECURITY, "entityAuth", "authServerMatch")
-    scope_match = _get(facts, FACT_SECURITY, "scopeMatch", "allScopesMatch")
-    if enforced is None and server_match is None and scope_match is None:
+    # Distinguish an explicit False (a real violation) from an absent fact (None):
+    # a missing subfield must NOT be read as a violation, or a partially-reported
+    # entity would falsely FAIL and block the phase. Only when every subfield is
+    # present and True can we assert the conjunction; any absent subfield with no
+    # explicit False leaves us unable to evaluate.
+    oauth_fields = [
+        ("oauth-enforced", _get(facts, FACT_SECURITY, "oauth", "enforced"), "OAuth not enforced per Compass"),
+        (
+            "oauth-server-match",
+            _get(facts, FACT_SECURITY, "entityAuth", "authServerMatch"),
+            "OAuth auth server does not match catalog per Compass",
+        ),
+        (
+            "oauth-scope-match",
+            _get(facts, FACT_SECURITY, "scopeMatch", "allScopesMatch"),
+            "OAuth scopes do not match catalog per Compass",
+        ),
+    ]
+    violations = [
+        make_finding(severity="high", message=msg, rule_id=rule) for rule, value, msg in oauth_fields if value is False
+    ]
+    missing = [rule for rule, value, _ in oauth_fields if value is None]
+    if violations:
+        outcomes.append(
+            CheckOutcome(
+                "oauth-catalog-match",
+                STATUS_FAIL,
+                "OAuth configuration does not match the catalog.",
+                source="compass",
+                findings=violations,
+            )
+        )
+    elif not missing:
+        outcomes.append(
+            CheckOutcome(
+                "oauth-catalog-match", STATUS_PASS, "OAuth enforced and matches the catalog.", source="compass"
+            )
+        )
+    elif len(missing) == len(oauth_fields):
         outcomes.append(
             CheckOutcome(
                 "oauth-catalog-match", STATUS_NOT_EVALUATED, "No Compass OAuth facts present.", source="compass"
             )
         )
     else:
-        findings = []
-        if enforced is not True:
-            findings.append(
-                make_finding(severity="high", message="OAuth not enforced per Compass", rule_id="oauth-enforced")
+        outcomes.append(
+            CheckOutcome(
+                "oauth-catalog-match",
+                STATUS_NOT_EVALUATED,
+                f"Incomplete Compass OAuth facts (missing: {', '.join(missing)}); cannot assert OAuth-matches-catalog.",
+                source="compass",
             )
-        if server_match is not True:
-            findings.append(
-                make_finding(
-                    severity="high",
-                    message="OAuth auth server does not match catalog per Compass",
-                    rule_id="oauth-server-match",
-                )
-            )
-        if scope_match is not True:
-            findings.append(
-                make_finding(
-                    severity="high",
-                    message="OAuth scopes do not match catalog per Compass",
-                    rule_id="oauth-scope-match",
-                )
-            )
-        if findings:
-            outcomes.append(
-                CheckOutcome(
-                    "oauth-catalog-match",
-                    STATUS_FAIL,
-                    "OAuth configuration does not match the catalog.",
-                    source="compass",
-                    findings=findings,
-                )
-            )
-        else:
-            outcomes.append(
-                CheckOutcome(
-                    "oauth-catalog-match", STATUS_PASS, "OAuth enforced and matches the catalog.", source="compass"
-                )
-            )
+        )
 
     return outcomes
 

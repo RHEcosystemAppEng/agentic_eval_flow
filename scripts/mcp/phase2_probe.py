@@ -156,8 +156,20 @@ def _tools_from(tools_resp: RpcResponse) -> list[dict]:
     return []
 
 
+def _schema_is_object(schema: object) -> bool:
+    """A JSON-Schema-ish object: declares ``type: object`` or carries ``properties``."""
+    return isinstance(schema, dict) and (schema.get("type") == "object" or "properties" in schema)
+
+
 def check_schema_conformance(client: MCPClient, tools_resp: RpcResponse) -> CheckOutcome:
-    """Every tool declares a well-formed input schema (object with type/properties)."""
+    """Every tool declares a well-formed input schema, plus a well-formed output
+    schema when one is present.
+
+    inputSchema is required by the MCP tool type, so a missing/non-object one is a
+    fail. outputSchema is optional in the MCP spec, so it is validated only when
+    present (its absence is not a violation). Whether actual tool RESPONSES conform
+    to the declared schema is behavioral and is left to Phase 3.
+    """
     tools = _tools_from(tools_resp)
     if not tools:
         return CheckOutcome("schema-conformance", STATUS_NOT_EVALUATED, "tools/list returned no tools to validate.")
@@ -171,8 +183,7 @@ def check_schema_conformance(client: MCPClient, tools_resp: RpcResponse) -> Chec
                     severity="high", message=f"tool '{name}' has no object inputSchema", rule_id="schema-missing"
                 )
             )
-            continue
-        if schema.get("type") != "object" and "properties" not in schema:
+        elif not _schema_is_object(schema):
             findings.append(
                 make_finding(
                     severity="medium",
@@ -180,11 +191,21 @@ def check_schema_conformance(client: MCPClient, tools_resp: RpcResponse) -> Chec
                     rule_id="schema-shape",
                 )
             )
+        # outputSchema is optional; validate its shape only when the tool declares one.
+        out_schema = tool.get("outputSchema")
+        if out_schema is not None and not _schema_is_object(out_schema):
+            findings.append(
+                make_finding(
+                    severity="medium",
+                    message=f"tool '{name}' outputSchema is present but not a JSON-Schema object",
+                    rule_id="output-schema-shape",
+                )
+            )
     if findings:
         return CheckOutcome(
             "schema-conformance", STATUS_FAIL, "One or more tool schemas are not well-formed.", findings=findings
         )
-    return CheckOutcome("schema-conformance", STATUS_PASS, f"All {len(tools)} tool input schemas are well-formed.")
+    return CheckOutcome("schema-conformance", STATUS_PASS, f"All {len(tools)} tool schemas are well-formed.")
 
 
 _HINT_FIELDS = ("readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint")
@@ -272,11 +293,24 @@ def check_mandatory_timeouts(client: MCPClient) -> CheckOutcome:
 
 
 def check_openapi_conformance(client: MCPClient) -> CheckOutcome:
-    """No OpenAPI contract is supplied to the probe (it lives in the MCP server's repo)."""
+    """OpenAPI conformance - deferred (not_evaluated).
+
+    NOTE (decision-gated, deferred): the ADR wants requests/responses validated
+    against the server's OpenAPI contract (ADR lines 103, 209, 257). Unlike
+    mandatory-timeouts / response-size-limit (undecidable black-box), this is a
+    solvable check awaiting inputs, deferred on purpose because two prerequisites
+    are missing: (1) no MCP repo publishes an OpenAPI contract at the standardized
+    location yet, and (2) the OpenAPI-operation <-> MCP-tool/method mapping is not
+    defined in the ADR. Wiring a validator before both exist would mean inventing
+    that convention. When settled, add an optional --openapi-file to this probe,
+    thread it through mcp-phase2.yaml, and validate here; until then this stays
+    not_evaluated (never a fail).
+    """
     return CheckOutcome(
         "openapi-conformance",
         STATUS_NOT_EVALUATED,
-        "No OpenAPI contract was provided to the probe; deferred until the MCP repo publishes one.",
+        "No OpenAPI contract provided and the contract<->tool mapping is unspecified; "
+        "deferred until an MCP repo publishes a contract at the standardized location.",
     )
 
 
