@@ -1,0 +1,129 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: mcp-phase2-conformance
+  namespace: ab-eval-flow
+spec:
+  description: >-
+    MCP evaluation Phase 2 - deterministic contract/conformance (ADR Approach 4).
+    Black-box, no LLM. Probes the deployed, running MCP server over Streamable
+    HTTP for protocol/schema/HTTP conformance and operational limits, and
+    consumes the checks Compass already collects as real facts (tool-name rules,
+    OAuth match). Uses the three-state model
+    (pass / fail / not_evaluated): an unreachable server or a check that cannot
+    produce a meaningful signal is reported not_evaluated, never failed. Assumes
+    the server was already deployed and became ready in a prior pipeline step
+    (reached at <service-name>:8080 by convention).
+  params:
+    - name: server-url
+      type: string
+      description: MCP endpoint URL, e.g. http://<service-name>:8080/mcp
+    - name: submission-name
+      type: string
+      description: Name used for the report directory (reports/<submission-name>/).
+    - name: mode
+      type: string
+      default: "block"
+      description: Gate enforcement mode - block, warn, or disabled.
+    - name: timeout
+      type: string
+      default: "30"
+      description: Per-request HTTP timeout (seconds) for the probe.
+    - name: compass-facts-file
+      type: string
+      default: ""
+      description: >-
+        Workspace-relative path to a Compass facts JSON for the consumed checks.
+        Empty skips the Compass-consume step; those checks then report
+        not_evaluated. (Facts file only; live SoundCheck retrieval is not wired yet.)
+    - name: pipeline-repo-url
+      type: string
+      default: "https://github.com/RHEcosystemAppEng/agentic_eval_flow.git"
+      description: URL of the Agentic Eval Flow pipeline repository (probe scripts).
+    - name: pipeline-repo-revision
+      type: string
+      default: "main"
+      description: Branch or SHA of the pipeline repo to use for scripts.
+  workspaces:
+    - name: source
+      description: Workspace for the pipeline checkout and the reports directory.
+  results:
+    - name: phase2-passed
+      description: Whether Phase 2 passed (no check FAILED in block mode).
+    - name: not-evaluated-count
+      description: Number of Phase 2 checks reported not_evaluated.
+    - name: report-path
+      description: Workspace-relative path to the Phase 2 reports directory.
+  steps:
+    - name: clone-pipeline-repo
+      image: registry.access.redhat.com/ubi9/python-311:9.6
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        PIPELINE_DIR="$(workspaces.source.path)/_pipeline"
+        if [ -d "$PIPELINE_DIR/.git" ]; then
+          echo "Pipeline repo already cloned, skipping"
+          exit 0
+        fi
+        git clone --depth 1 --branch "$(params.pipeline-repo-revision)" \
+          "$(params.pipeline-repo-url)" "$PIPELINE_DIR"
+        echo "Cloned pipeline repo at $(params.pipeline-repo-revision)"
+
+    - name: probe
+      image: registry.access.redhat.com/ubi9/python-311:9.6
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        PIPELINE_DIR="$(workspaces.source.path)/_pipeline"
+        REPORTS_DIR="$(workspaces.source.path)/reports/$(params.submission-name)"
+        mkdir -p "$REPORTS_DIR"
+
+        cd "$PIPELINE_DIR"
+        export PYTHONPATH="$PIPELINE_DIR"
+        pip install --quiet --no-cache-dir httpx pydantic pyyaml
+
+        echo "=== Phase 2 live probe against $(params.server-url) ==="
+        python -m scripts.mcp.phase2_probe \
+          --server-url "$(params.server-url)" \
+          --reports-dir "$REPORTS_DIR" \
+          --timeout "$(params.timeout)"
+
+        FACTS="$(params.compass-facts-file)"
+        if [ -n "$FACTS" ]; then
+          echo "=== Phase 2 Compass consume from $FACTS ==="
+          python -m scripts.mcp.compass_fetch \
+            --facts-file "$(workspaces.source.path)/$FACTS" \
+            --reports-dir "$REPORTS_DIR"
+        else
+          echo "No compass-facts-file given; Compass-consumed checks will report not_evaluated."
+        fi
+
+    - name: gate
+      image: registry.access.redhat.com/ubi9/python-311:9.6
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        PIPELINE_DIR="$(workspaces.source.path)/_pipeline"
+        REPORTS_DIR="$(workspaces.source.path)/reports/$(params.submission-name)"
+        REPORT_REL="reports/$(params.submission-name)"
+
+        cd "$PIPELINE_DIR"
+        export PYTHONPATH="$PIPELINE_DIR"
+        pip install --quiet --no-cache-dir httpx pydantic pyyaml
+
+        # Never abort before writing results: capture the exit code, emit the
+        # Tekton results from the summary, then fail the step if a check failed.
+        set +e
+        python -m scripts.mcp.run_phase2_gates \
+          --reports-dir "$REPORTS_DIR" --mode "$(params.mode)"
+        GATE_EXIT=$?
+        set -e
+
+        SUMMARY="$REPORTS_DIR/phase2-summary.json"
+        python3 -c "import json;print(str(json.load(open('$SUMMARY'))['passed']).lower(),end='')" \
+          > "$(results.phase2-passed.path)"
+        python3 -c "import json;print(json.load(open('$SUMMARY'))['counts']['not_evaluated'],end='')" \
+          > "$(results.not-evaluated-count.path)"
+        echo -n "$REPORT_REL" > "$(results.report-path.path)"
+
+        exit $GATE_EXIT
