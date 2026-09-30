@@ -61,14 +61,25 @@ def write_scan(
     scanner: str,
     target: Path,
     findings: list[dict[str, Any]],
+    *,
+    extra: dict[str, Any] | None = None,
 ) -> None:
-    """Write a normalized scan report to ``scan_path``."""
+    """Write a normalized scan report to ``scan_path``.
+
+    ``extra`` merges additional top-level metadata (e.g. a ``coverage`` block)
+    into the payload. The Phase 1 gates read only ``findings``, so extra keys are
+    informational and never change pass/fail. The canonical keys always win, so a
+    caller cannot accidentally clobber ``findings`` via ``extra``.
+    """
     scan_path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "scanner": scanner,
-        "target": str(target),
-        "findings": findings,
-    }
+    payload: dict[str, Any] = dict(extra or {})
+    payload.update(
+        {
+            "scanner": scanner,
+            "target": str(target),
+            "findings": findings,
+        }
+    )
     scan_path.write_text(json.dumps(payload, indent=2))
     logger.info("Wrote %d findings to %s", len(findings), scan_path)
 
