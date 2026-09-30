@@ -2,7 +2,8 @@ QUAY_NS ?= quay.io/ecosystem-appeng
 VERSION ?= 0.1
 TASKS_DIR := ../tasks/konflux
 
-TASKS = parse-snapshot prepare test red-team evaluate analyze-scorecard store emit-result
+TASKS = parse-snapshot prepare test red-team evaluate analyze-scorecard store emit-result \
+        create-namespace deploy-mcp wait-ready teardown-namespace
 
 .PHONY: bundles login list clean help
 

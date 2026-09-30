@@ -1,0 +1,80 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: wait-ready
+  labels:
+    app.kubernetes.io/name: abevalflow
+    app.kubernetes.io/component: konflux
+spec:
+  description: >-
+    Waits for the deployed MCP server to become ready by monitoring its
+    Kubernetes readiness status. Uses the pod's native readinessProbe
+    as defined in the MCP server's Helm chart. If the server is not
+    ready within the configured timeout, reports not-ready so the
+    pipeline can proceed to report all Phase 2/3 checks as not-evaluated.
+  params:
+    - name: namespace-name
+      type: string
+      description: Namespace where the MCP server is deployed
+    - name: readiness-timeout
+      type: string
+      default: "120"
+      description: >-
+        Maximum seconds to wait for readiness. Default 120s.
+        Override per MCP server for those that need longer startup.
+  workspaces:
+    - name: target-kubeconfig
+      description: >-
+        Kubeconfig for the target cluster. Must contain a file named
+        "kubeconfig". All oc commands use this to reach the remote cluster.
+  results:
+    - name: ready-status
+      description: '"ready" if the server is accepting connections, "not-ready" otherwise'
+  steps:
+    - name: wait
+      image: registry.redhat.io/openshift4/ose-cli:latest
+      env:
+        - name: KUBECONFIG
+          value: $(workspaces.target-kubeconfig.path)/kubeconfig
+      script: |
+        #!/usr/bin/env bash
+        set -uo pipefail
+        echo "=== WAIT FOR MCP SERVER READINESS ==="
+
+        NAMESPACE="$(params.namespace-name)"
+        TIMEOUT="$(params.readiness-timeout)"
+
+        echo "Namespace: $NAMESPACE"
+        echo "Timeout: ${TIMEOUT}s"
+
+        DEADLINE=$((SECONDS + TIMEOUT))
+
+        # Wait for at least one pod to exist in the namespace
+        echo "Waiting for pods to appear..."
+        while true; do
+          POD_COUNT=$(oc get pods -n "$NAMESPACE" --no-headers 2>/dev/null | wc -l)
+          if [ "$POD_COUNT" -gt 0 ]; then
+            echo "Found $POD_COUNT pod(s), waiting 5s for remaining pods to appear..."
+            sleep 5
+            break
+          fi
+          if [ $SECONDS -ge $DEADLINE ]; then
+            echo "ERROR: No pods found in namespace $NAMESPACE within ${TIMEOUT}s"
+            echo -n "not-ready" > "$(results.ready-status.path)"
+            exit 0
+          fi
+          sleep 3
+        done
+
+        # Wait for all pods to pass their readiness probes
+        REMAINING=$((DEADLINE - SECONDS))
+        echo "Waiting up to ${REMAINING}s for all pods to become ready..."
+        if oc wait --for=condition=Ready pod --all -n "$NAMESPACE" --timeout="${REMAINING}s" 2>&1; then
+          echo -n "ready" > "$(results.ready-status.path)"
+          echo "=== MCP server is ready ==="
+        else
+          echo "TIMEOUT: MCP server not ready within ${TIMEOUT}s"
+          oc get events -n "$NAMESPACE" --sort-by='.lastTimestamp' 2>/dev/null | tail -20 || true
+          echo -n "not-ready" > "$(results.ready-status.path)"
+          echo "=== MCP server is NOT ready ==="
+        fi

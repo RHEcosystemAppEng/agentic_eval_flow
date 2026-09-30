@@ -1,0 +1,56 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: teardown-namespace
+  labels:
+    app.kubernetes.io/name: abevalflow
+    app.kubernetes.io/component: konflux
+spec:
+  description: >-
+    Deletes the ephemeral namespace created by create-namespace.
+    Designed to run in the pipeline's finally block so it executes
+    regardless of pipeline success or failure. Gracefully handles
+    cases where the namespace does not exist.
+  params:
+    - name: namespace-name
+      type: string
+      description: Name of the ephemeral namespace to delete
+  workspaces:
+    - name: target-kubeconfig
+      description: >-
+        Kubeconfig for the target cluster. Must contain a file named
+        "kubeconfig". All oc commands use this to reach the remote cluster.
+  steps:
+    - name: delete-namespace
+      image: registry.redhat.io/openshift4/ose-cli:latest
+      env:
+        - name: KUBECONFIG
+          value: $(workspaces.target-kubeconfig.path)/kubeconfig
+      script: |
+        #!/usr/bin/env bash
+        set -uo pipefail
+        echo "=== TEARDOWN EPHEMERAL NAMESPACE ==="
+
+        NAMESPACE="$(params.namespace-name)"
+
+        if [ -z "$NAMESPACE" ]; then
+          echo "No namespace specified, nothing to tear down"
+          exit 0
+        fi
+
+        # Safety check: only delete namespaces matching the mcp-eval- prefix
+        if [[ "$NAMESPACE" != mcp-eval-* ]]; then
+          echo "ERROR: Refusing to delete namespace '$NAMESPACE' — does not match mcp-eval-* pattern"
+          exit 1
+        fi
+
+        echo "Deleting namespace: $NAMESPACE"
+
+        if oc get namespace "$NAMESPACE" &>/dev/null; then
+          oc delete namespace "$NAMESPACE" --wait=false
+          echo "Namespace deletion initiated"
+        else
+          echo "Namespace $NAMESPACE does not exist, nothing to delete"
+        fi
+
+        echo "=== Teardown complete ==="

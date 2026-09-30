@@ -1,0 +1,183 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: deploy-mcp
+  labels:
+    app.kubernetes.io/name: abevalflow
+    app.kubernetes.io/component: konflux
+spec:
+  description: >-
+    Deploys an MCP server into the ephemeral evaluation namespace using
+    its Helm chart and test values. The MCP server repository must provide
+    a Helm chart and a values-test.yaml at standardized locations.
+    Credentials are mounted from OCP Secrets, never committed to git.
+    The deployed service is accessible at <service-name>:<service-port>
+    within the namespace.
+  params:
+    - name: namespace-name
+      type: string
+      description: Ephemeral namespace to deploy into
+    - name: component-image
+      type: string
+      description: Built container image reference from the Snapshot
+    - name: git-url
+      type: string
+      description: Git repository URL of the MCP server source
+    - name: git-revision
+      type: string
+      description: Git commit SHA to checkout
+    - name: helm-chart-path
+      type: string
+      default: "chart"
+      description: Path to the Helm chart directory within the MCP server repo
+    - name: values-test-path
+      type: string
+      default: "values-test.yaml"
+      description: Path to the test values file within the MCP server repo
+    - name: service-name
+      type: string
+      default: "mcp-server"
+      description: Kubernetes Service name for the deployed MCP server
+    - name: service-port
+      type: string
+      default: "8080"
+      description: Port on which the MCP server listens
+    - name: credentials-secret
+      type: string
+      default: ""
+      description: >-
+        Name of the OCP Secret (in the pipeline namespace) containing
+        MCP server credentials. If set, the secret is copied into the
+        ephemeral namespace for the Helm release to reference.
+    - name: image-override-key
+      type: string
+      default: "image.repository"
+      description: >-
+        Helm value key to override the container image repository.
+        Set to empty string to skip image override.
+    - name: image-tag-override-key
+      type: string
+      default: "image.tag"
+      description: Helm value key to override the container image tag
+  workspaces:
+    - name: source
+      description: Workspace for cloning the MCP server repo
+    - name: target-kubeconfig
+      description: >-
+        Kubeconfig for the target cluster. Must contain a file named
+        "kubeconfig". All oc commands use this to reach the remote cluster.
+  results:
+    - name: mcp-url
+      description: Internal service URL for the deployed MCP server
+    - name: release-name
+      description: Helm release name
+  steps:
+    - name: clone-mcp-repo
+      image: registry.redhat.io/openshift4/ose-cli:latest
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        echo "=== Cloning MCP server repository ==="
+
+        GIT_URL="$(params.git-url)"
+        GIT_REVISION="$(params.git-revision)"
+        CLONE_DIR="$(workspaces.source.path)/_mcp-server-repo"
+
+        if [ -z "$GIT_URL" ]; then
+          echo "ERROR: git-url is required"
+          exit 1
+        fi
+
+        rm -rf "$CLONE_DIR"
+        git clone --depth 1 "$GIT_URL" "$CLONE_DIR"
+        cd "$CLONE_DIR"
+
+        if [ -n "$GIT_REVISION" ]; then
+          git fetch --depth 1 origin "$GIT_REVISION"
+          git -c advice.detachedHead=false checkout FETCH_HEAD
+        fi
+
+        echo "Cloned $GIT_URL at $(git rev-parse --short HEAD)"
+
+    - name: deploy
+      image: registry.redhat.io/openshift4/ose-cli:latest
+      env:
+        - name: KUBECONFIG
+          value: $(workspaces.target-kubeconfig.path)/kubeconfig
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        echo "=== DEPLOY MCP SERVER ==="
+
+        NAMESPACE="$(params.namespace-name)"
+        COMPONENT_IMAGE="$(params.component-image)"
+        SERVICE_NAME="$(params.service-name)"
+        SERVICE_PORT="$(params.service-port)"
+        CREDENTIALS_SECRET="$(params.credentials-secret)"
+        HELM_CHART="$(workspaces.source.path)/_mcp-server-repo/$(params.helm-chart-path)"
+        VALUES_FILE="$(workspaces.source.path)/_mcp-server-repo/$(params.values-test-path)"
+        RELEASE_NAME="mcp-eval"
+
+        echo "Namespace: $NAMESPACE"
+        echo "Image: $COMPONENT_IMAGE"
+        echo "Helm chart: $HELM_CHART"
+        echo "Values file: $VALUES_FILE"
+
+        if [ ! -d "$HELM_CHART" ]; then
+          echo "ERROR: Helm chart not found at $HELM_CHART"
+          exit 1
+        fi
+
+        if [ ! -f "$VALUES_FILE" ]; then
+          echo "ERROR: values-test.yaml not found at $VALUES_FILE"
+          exit 1
+        fi
+
+        # Copy credentials secret into ephemeral namespace if specified
+        if [ -n "$CREDENTIALS_SECRET" ]; then
+          PIPELINE_NS=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)
+          echo "Copying credentials secret '$CREDENTIALS_SECRET' from $PIPELINE_NS to $NAMESPACE"
+          oc get secret "$CREDENTIALS_SECRET" -n "$PIPELINE_NS" -o json \
+            | jq 'del(.metadata.namespace,.metadata.uid,.metadata.resourceVersion,.metadata.creationTimestamp,.metadata.ownerReferences)' \
+            | oc apply -n "$NAMESPACE" -f -
+        fi
+
+        # Build Helm set overrides for the built image
+        HELM_SETS=""
+        IMAGE_OVERRIDE_KEY="$(params.image-override-key)"
+        IMAGE_TAG_KEY="$(params.image-tag-override-key)"
+
+        if [ -n "$IMAGE_OVERRIDE_KEY" ] && [ -n "$COMPONENT_IMAGE" ]; then
+          if [[ "$COMPONENT_IMAGE" == *"@"* ]]; then
+            IMAGE_REPO="${COMPONENT_IMAGE%%@*}"
+            IMAGE_TAG="${COMPONENT_IMAGE#*@}"
+          elif [[ "$COMPONENT_IMAGE" == *":"* ]]; then
+            IMAGE_REPO="${COMPONENT_IMAGE%%:*}"
+            IMAGE_TAG="${COMPONENT_IMAGE#*:}"
+          else
+            IMAGE_REPO="$COMPONENT_IMAGE"
+            IMAGE_TAG="latest"
+          fi
+          HELM_SETS="--set ${IMAGE_OVERRIDE_KEY}=${IMAGE_REPO}"
+          if [ -n "$IMAGE_TAG_KEY" ]; then
+            HELM_SETS="$HELM_SETS --set ${IMAGE_TAG_KEY}=${IMAGE_TAG}"
+          fi
+        fi
+
+        # Deploy with Helm
+        echo "Deploying Helm release: $RELEASE_NAME"
+        helm upgrade --install "$RELEASE_NAME" "$HELM_CHART" \
+          --namespace "$NAMESPACE" \
+          --values "$VALUES_FILE" \
+          $HELM_SETS \
+          --wait=false
+
+        echo "Helm release deployed"
+
+        MCP_URL="http://${SERVICE_NAME}.${NAMESPACE}.svc:${SERVICE_PORT}"
+        echo "MCP URL: $MCP_URL"
+
+        echo -n "$MCP_URL" > "$(results.mcp-url.path)"
+        echo -n "$RELEASE_NAME" > "$(results.release-name.path)"
+
+        echo "=== Deploy complete ==="

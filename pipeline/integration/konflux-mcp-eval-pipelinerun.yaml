@@ -1,0 +1,225 @@
+# MCP Server Deployment Pipeline for Konflux
+#
+# Deploys an MCP server into an ephemeral namespace on a remote target
+# cluster, waits for readiness, and reports status.
+#
+# The target cluster is separate from the Konflux build cluster.
+# A kubeconfig Secret must exist in the Konflux namespace to allow
+# the pipeline tasks to reach the target cluster.
+#
+# Pipeline stages:
+#   parse-snapshot → create-namespace → deploy-mcp → wait-ready
+#   finally: teardown-namespace
+#
+# PREREQUISITES:
+#   1. Secret "mcp-eval-target-kubeconfig" in the Konflux tenant namespace
+#      containing the kubeconfig for the target cluster (key: "kubeconfig")
+#   2. ClusterRole "mcp-eval-namespace-manager" on the TARGET cluster
+#      bound to the ServiceAccount referenced in the kubeconfig
+#   3. (Optional) Credentials Secret on the target cluster if the MCP
+#      server requires backend auth — see CREDENTIALS_SECRET param
+#   4. VPN connectivity between Konflux cluster and target cluster
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: abevalflow-mcp-eval
+spec:
+  timeouts:
+    pipeline: "1h"
+    tasks: "45m"
+  pipelineSpec:
+    params:
+      # === Konflux integration ===
+      - name: SNAPSHOT
+        type: string
+        description: Konflux Snapshot JSON with component details (provided automatically)
+
+      # === MCP server deployment ===
+      - name: HELM_CHART_PATH
+        type: string
+        default: "chart"
+        description: Path to the Helm chart directory within the MCP server repo
+      - name: VALUES_TEST_PATH
+        type: string
+        default: "values-test.yaml"
+        description: Path to the test values file within the MCP server repo
+      - name: SERVICE_NAME
+        type: string
+        default: "mcp-server"
+        description: Kubernetes Service name for the deployed MCP server
+      - name: SERVICE_PORT
+        type: string
+        default: "8080"
+        description: Port on which the MCP server listens
+      - name: READINESS_TIMEOUT
+        type: string
+        default: "120"
+        description: Maximum seconds to wait for MCP server readiness
+      - name: CREDENTIALS_SECRET
+        type: string
+        default: ""
+        description: >-
+          Name of a Secret on the TARGET cluster containing MCP server
+          credentials (e.g. backend API keys). If non-empty, the
+          deploy-mcp task copies it into the ephemeral namespace for
+          the Helm release.
+      - name: BACKEND_ENDPOINTS
+        type: string
+        default: ""
+        description: >-
+          Comma-separated host:port pairs for sandbox backend endpoints
+          allowed through the namespace NetworkPolicy.
+      - name: IMAGE_OVERRIDE_KEY
+        type: string
+        default: "image.repository"
+        description: Helm value key to override container image repository
+      - name: IMAGE_TAG_OVERRIDE_KEY
+        type: string
+        default: "image.tag"
+        description: Helm value key to override container image tag
+
+    workspaces:
+      - name: shared-workspace
+      - name: target-kubeconfig
+        description: >-
+          Workspace backed by the kubeconfig Secret for the target cluster.
+          Mounted read-only into tasks that interact with the remote cluster.
+    tasks:
+      # ================================================================
+      # Stage 1: Parse the Konflux Snapshot
+      # ================================================================
+      - name: parse-snapshot
+        taskRef:
+          resolver: bundles
+          params:
+            - name: name
+              value: parse-snapshot
+            - name: bundle
+              value: quay.io/ecosystem-appeng/abevalflow-task-parse-snapshot:0.1
+            - name: kind
+              value: task
+        params:
+          - name: SNAPSHOT
+            value: $(params.SNAPSHOT)
+
+      # ================================================================
+      # Stage 2: Create ephemeral namespace on target cluster
+      # ================================================================
+      - name: create-namespace
+        runAfter: [parse-snapshot]
+        taskRef:
+          resolver: bundles
+          params:
+            - name: name
+              value: create-namespace
+            - name: bundle
+              value: quay.io/ecosystem-appeng/abevalflow-task-create-namespace:0.1
+            - name: kind
+              value: task
+        params:
+          - name: pipeline-run-id
+            value: $(context.pipelineRun.name)
+          - name: backend-endpoints
+            value: $(params.BACKEND_ENDPOINTS)
+        workspaces:
+          - name: target-kubeconfig
+            workspace: target-kubeconfig
+
+      # ================================================================
+      # Stage 3: Deploy MCP server into ephemeral namespace
+      # ================================================================
+      - name: deploy-mcp
+        runAfter: [create-namespace]
+        taskRef:
+          resolver: bundles
+          params:
+            - name: name
+              value: deploy-mcp
+            - name: bundle
+              value: quay.io/ecosystem-appeng/abevalflow-task-deploy-mcp:0.1
+            - name: kind
+              value: task
+        params:
+          - name: namespace-name
+            value: $(tasks.create-namespace.results.namespace-name)
+          - name: component-image
+            value: $(tasks.parse-snapshot.results.component-image)
+          - name: git-url
+            value: $(tasks.parse-snapshot.results.git-url)
+          - name: git-revision
+            value: $(tasks.parse-snapshot.results.git-revision)
+          - name: helm-chart-path
+            value: $(params.HELM_CHART_PATH)
+          - name: values-test-path
+            value: $(params.VALUES_TEST_PATH)
+          - name: service-name
+            value: $(params.SERVICE_NAME)
+          - name: service-port
+            value: $(params.SERVICE_PORT)
+          - name: credentials-secret
+            value: $(params.CREDENTIALS_SECRET)
+          - name: image-override-key
+            value: $(params.IMAGE_OVERRIDE_KEY)
+          - name: image-tag-override-key
+            value: $(params.IMAGE_TAG_OVERRIDE_KEY)
+        workspaces:
+          - name: source
+            workspace: shared-workspace
+          - name: target-kubeconfig
+            workspace: target-kubeconfig
+
+      # ================================================================
+      # Stage 4: Wait for MCP server readiness
+      # ================================================================
+      - name: wait-ready
+        runAfter: [deploy-mcp]
+        taskRef:
+          resolver: bundles
+          params:
+            - name: name
+              value: wait-ready
+            - name: bundle
+              value: quay.io/ecosystem-appeng/abevalflow-task-wait-ready:0.1
+            - name: kind
+              value: task
+        params:
+          - name: namespace-name
+            value: $(tasks.create-namespace.results.namespace-name)
+          - name: readiness-timeout
+            value: $(params.READINESS_TIMEOUT)
+        workspaces:
+          - name: target-kubeconfig
+            workspace: target-kubeconfig
+
+    # ================================================================
+    # Finally: Teardown ephemeral namespace (always runs)
+    # ================================================================
+    finally:
+      - name: teardown-namespace
+        taskRef:
+          resolver: bundles
+          params:
+            - name: name
+              value: teardown-namespace
+            - name: bundle
+              value: quay.io/ecosystem-appeng/abevalflow-task-teardown-namespace:0.1
+            - name: kind
+              value: task
+        params:
+          - name: namespace-name
+            value: $(tasks.create-namespace.results.namespace-name)
+        workspaces:
+          - name: target-kubeconfig
+            workspace: target-kubeconfig
+
+  workspaces:
+    - name: shared-workspace
+      volumeClaimTemplate:
+        spec:
+          accessModes: [ReadWriteOnce]
+          resources:
+            requests:
+              storage: 1Gi
+    - name: target-kubeconfig
+      secret:
+        secretName: mcp-eval-target-kubeconfig
