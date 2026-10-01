@@ -42,7 +42,7 @@ class TestOpenshellPipelineProfile:
         assert defaults["aeh-runner"] == "openshell"
         assert defaults["aeh-openshell-image"] == "registry.access.redhat.com/ubi9/python-311:9.6"
         assert defaults["openshell-sandbox-image"] == (
-            "ghcr.io/rh-forge/openclaw-saw-agent@sha256:bcc55e9b7a36d5f65e8ffc75962496f8b3617762a4cdb37fd1cf54611b72d41a"
+            "ghcr.io/rh-forge/openclaw-saw-agent@sha256:b47b92a6b3fd03327c1f2093a5c28aba0fdf3cb620e9154335688900191fe2b9"
         )
         assert defaults["enable-mlflow"] == "true"
         assert defaults["mlflow-tracking-uri"] == ("http://abevalflow-mlflow.gz-forge-eval.svc.cluster.local:5000")
