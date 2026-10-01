@@ -1,0 +1,81 @@
+# Semgrep ruleset for MCP Phase 1 "does not execute user-provided code".
+#
+# Flags dynamic / arbitrary code-execution sinks across the languages MCP
+# servers are commonly written in. Deliberately narrow (high-signal sinks only)
+# to keep false positives low and to run fully offline (no --config p/registry
+# network fetch). Extend per language as needed.
+#
+# Severity ERROR -> mapped to HIGH by scripts/mcp/no_user_code_scan.py.
+rules:
+  # ---- Python -------------------------------------------------------------
+  - id: python-dynamic-exec
+    languages: [python]
+    severity: ERROR
+    message: Dynamic code execution via eval/exec/compile.
+    patterns:
+      - pattern-either:
+          - pattern: eval(...)
+          - pattern: exec(...)
+          - pattern: compile(...)
+
+  - id: python-os-system
+    languages: [python]
+    severity: ERROR
+    message: Shell command execution via os.system.
+    pattern: os.system(...)
+
+  - id: python-subprocess-shell
+    languages: [python]
+    severity: ERROR
+    message: subprocess call with shell=True executes a shell command string.
+    patterns:
+      - pattern-either:
+          - pattern: subprocess.$FN(..., shell=True, ...)
+          - pattern: subprocess.Popen(..., shell=True, ...)
+
+  # ---- JavaScript / TypeScript -------------------------------------------
+  - id: js-dynamic-eval
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: Dynamic code execution via eval or the Function constructor.
+    patterns:
+      - pattern-either:
+          - pattern: eval(...)
+          - pattern: new Function(...)
+          - pattern: Function(...)
+
+  - id: js-child-process-exec
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: Shell command execution via child_process.exec.
+    patterns:
+      - pattern-either:
+          - pattern: child_process.exec(...)
+          - pattern: $CP.exec(...)
+          - pattern: exec(...)
+
+  # ---- Go ----------------------------------------------------------------
+  - id: go-exec-command
+    languages: [go]
+    severity: ERROR
+    message: External command execution via os/exec.
+    patterns:
+      - pattern-either:
+          - pattern: exec.Command(...)
+          - pattern: exec.CommandContext(...)
+
+  # ---- Java --------------------------------------------------------------
+  - id: java-runtime-exec
+    languages: [java]
+    severity: ERROR
+    message: External command execution via Runtime.exec / ProcessBuilder.
+    patterns:
+      - pattern-either:
+          - pattern: (Runtime $R).exec(...)
+          - pattern: new ProcessBuilder(...)
+
+  - id: java-script-engine
+    languages: [java]
+    severity: ERROR
+    message: Dynamic script evaluation via javax.script ScriptEngine.
+    pattern: (ScriptEngine $E).eval(...)
