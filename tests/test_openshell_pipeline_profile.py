@@ -61,6 +61,24 @@ class TestOpenshellPipelineProfile:
         assert uri_note in openshell
         assert openshell.find(uri_note) < openshell.find("scripts/run_aeh.py")
 
+    def test_forge_briefing_has_installation_user_fixture(self):
+        fixture = REPO / "submissions" / "openclaw-forge" / "fixtures" / "USER.md"
+        fields = {}
+        for line in fixture.read_text().splitlines():
+            if line.startswith("- ") and ": " in line:
+                key, value = line[2:].split(": ", 1)
+                fields[key.lower()] = value.strip()
+        assert all(fields.get(key) and not fields[key].startswith("<")
+                   for key in ("display name", "role", "initials"))
+        scene = _load(REPO / "submissions" / "openclaw-forge" / "scenes" / "monday-acquisition.yaml")
+        assert fields["primary email"] == scene["m365"]["user"]
+
+        task = _load(REPO / "pipeline" / "tasks" / "phases" / "evaluate.yaml")
+        step = next(s for s in task["spec"]["steps"] if s["name"] == "aeh-openshell-eval")
+        script = step["script"]
+        assert 'AGENT_EVAL_FORGE_USER_FILE="$SUBMISSION_DIR/fixtures/USER.md"' in script
+        assert script.index('[ -f "$SUBMISSION_DIR/fixtures/USER.md" ]') < script.index("scripts/run_aeh.py")
+
     def test_harbor_profiles_still_include_test(self):
         for path in (CI, CI_DEV):
             names = _task_names(_load(path)["spec"])

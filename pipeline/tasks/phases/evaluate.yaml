@@ -2070,6 +2070,13 @@ spec:
         echo "Model: $MODEL"
 
         export AGENT_EVAL_HARNESS_ROOT="$HARNESS_DIR"
+        # A published Forge briefing needs installation identity. Keep this
+        # synthetic fixture scoped to submissions that supply one; an explicit
+        # harness setting takes precedence for other deployments.
+        if [ -z "${AGENT_EVAL_FORGE_USER_FILE:-}" ] && [ -f "$SUBMISSION_DIR/fixtures/USER.md" ]; then
+          export AGENT_EVAL_FORGE_USER_FILE="$SUBMISSION_DIR/fixtures/USER.md"
+          echo "Using submission installation profile fixture"
+        fi
         if [ "$(params.enable-mlflow)" = "true" ] && [ -n "$(params.mlflow-tracking-uri)" ]; then
           export MLFLOW_TRACKING_URI="$(params.mlflow-tracking-uri)"
           echo "MLFLOW_TRACKING_URI set for AEH harness + CI logger"
