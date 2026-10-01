@@ -12,11 +12,10 @@ Consumed checks and their source facts:
                                               $.entityAuth.authServerMatch
                                               $.scopeMatch.allScopesMatch
 
-Only these two are consumed: they are the Compass tier-1 *automated* facts worth
-surfacing in our aggregate. Metadata reads Compass also owns (schema-present,
-documentation, data-source approval) are left to Compass to report directly, per
-the ADR ("consumed as existing Compass Check Results"); re-gating them here would
-just duplicate Compass.
+Only these two are consumed: the Compass tier-1 *automated* facts worth surfacing
+in our aggregate. Metadata Compass owns directly (schema-present, documentation,
+data-source approval) is not re-gated here, per the ADR ("consumed as existing
+Compass Check Results").
 
 Facts are supplied from a local JSON file. Live SoundCheck retrieval is not wired
 yet: the read endpoint and access permissions are still being settled with the

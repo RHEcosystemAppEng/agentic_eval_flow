@@ -2,19 +2,11 @@
 """MCP Phase 1 "does not execute user-provided code" scan.
 
 Runs semgrep with the bundled offline ruleset (rules/no_user_code.yml) over an
-MCP server repository and normalizes results into no-user-code-scan.json for
-NoUserCodeGate.
-
-Language coverage: the bundled ruleset covers the languages MCP servers are
-commonly written in (Python, JavaScript, TypeScript, Go, Java). semgrep only
-inspects files in a covered language, so a server written in an uncovered
-language (Ruby, Rust, C#, ...) is effectively not scanned - a zero-finding pass
-then means "nothing to scan", not "clean". To make that visible, the scan records
-a ``coverage`` block (files_scanned / languages / target_files_total) in
-no-user-code-scan.json and logs a warning when zero files were scanned, so a pass
-shows its own coverage. To cover another language, add rules to no_user_code.yml
-(keep it offline; do not switch to `--config auto`, which pulls rules from the
-semgrep registry over the network).
+MCP server repo and normalizes results into no-user-code-scan.json for
+NoUserCodeGate. The ruleset covers Python/JS/TS/Go/Java; a file in an uncovered
+language is not scanned, so the scan records a ``coverage`` block and warns when
+zero files were scanned (a zero-finding pass then means "nothing to scan", not
+"clean"). Keep the ruleset offline - do not use ``--config auto`` (network).
 
 Usage:
     python -m scripts.mcp.no_user_code_scan <target_dir> --reports-dir <dir>
@@ -35,10 +27,7 @@ logger = logging.getLogger(__name__)
 
 SCAN_FILENAME = "no-user-code-scan.json"
 SCANNER = "semgrep"
-# Offline multi-language ruleset (Python/JS/TS/Go/Java - see the module docstring
-# "Language coverage" note). A file in a language the ruleset does not cover is not
-# scanned, so a zero-finding pass on such an artifact is not meaningful; the
-# coverage block in the scan JSON records what was actually scanned.
+# Offline multi-language ruleset (Python/JS/TS/Go/Java). See module docstring.
 RULES_PATH = Path(__file__).parent / "rules" / "no_user_code.yml"
 
 # semgrep severity -> our severity.
@@ -64,11 +53,9 @@ _EXT_LANG = {
 def coverage_summary(target_dir: Path, scanned: list[str]) -> dict:
     """Summarize what semgrep actually inspected.
 
-    ``scanned`` is semgrep's ``paths.scanned`` - the files it ran rules against.
-    semgrep lists only files in a language the ruleset covers, so this already
-    excludes uncovered languages and non-code files. ``target_files_total`` counts
-    every file in the artifact, so a reader can see the scanned fraction and spot a
-    pass that inspected little or nothing.
+    ``scanned`` is semgrep's ``paths.scanned`` (only files in a covered language, so
+    uncovered languages are already excluded). ``target_files_total`` counts every
+    file, so a reader can see the scanned fraction.
     """
     languages = sorted({_EXT_LANG.get(Path(p).suffix.lower(), "other") for p in scanned})
     total = sum(1 for p in target_dir.rglob("*") if p.is_file() and ".git" not in p.parts)

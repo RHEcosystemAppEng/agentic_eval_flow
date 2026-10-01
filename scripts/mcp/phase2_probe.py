@@ -295,16 +295,12 @@ def check_mandatory_timeouts(client: MCPClient) -> CheckOutcome:
 def check_openapi_conformance(client: MCPClient) -> CheckOutcome:
     """OpenAPI conformance - deferred (not_evaluated).
 
-    NOTE (decision-gated, deferred): the ADR wants requests/responses validated
-    against the server's OpenAPI contract (ADR lines 103, 209, 257). Unlike
-    mandatory-timeouts / response-size-limit (undecidable black-box), this is a
-    solvable check awaiting inputs, deferred on purpose because two prerequisites
-    are missing: (1) no MCP repo publishes an OpenAPI contract at the standardized
-    location yet, and (2) the OpenAPI-operation <-> MCP-tool/method mapping is not
-    defined in the ADR. Wiring a validator before both exist would mean inventing
-    that convention. When settled, add an optional --openapi-file to this probe,
-    thread it through mcp-phase2.yaml, and validate here; until then this stays
-    not_evaluated (never a fail).
+    The ADR wants requests/responses validated against the server's OpenAPI
+    contract (ADR lines 103, 209, 257), but two prerequisites are missing: no MCP
+    repo publishes a contract at the standardized location yet, and the
+    OpenAPI-operation <-> MCP-tool/method mapping is undefined. Wiring a validator
+    before both exist would invent that convention, so this stays not_evaluated
+    (never a fail) until they are settled.
     """
     return CheckOutcome(
         "openapi-conformance",

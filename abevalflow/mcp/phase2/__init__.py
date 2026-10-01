@@ -11,8 +11,7 @@ Two sources feed the same set of gates:
   conformance.
 * **Compass-consumed** (scripts/mcp/compass_fetch.py) - the Compass tier-1
   automated facts consumed rather than re-probed: tool-name rules and
-  OAuth-matches-catalog. Metadata Compass also owns (schema-present,
-  documentation, data-source approval) is left to Compass to report directly.
+  OAuth-matches-catalog.
 
 Like Phase 1, this package is kept isolated from the skill pipeline: the gates
 are instantiated only here via ``run_phase2`` and are never registered in the

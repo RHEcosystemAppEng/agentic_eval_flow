@@ -25,10 +25,8 @@ logger = logging.getLogger(__name__)
 SCAN_FILENAME = "secrets-scan.json"
 SCANNER = "gitleaks"
 
-# gitleaks has no severity field. Every gitleaks hit is a candidate hardcoded
-# credential, so all findings are HIGH: the gate blocks in block mode only on
-# HIGH/CRITICAL, and a leaked secret must never pass Phase 1 just because it was
-# caught by the broad generic rule rather than a vendor-specific one.
+# gitleaks has no severity field; every hit is a candidate hardcoded credential,
+# so all findings are HIGH (the gate blocks on HIGH/CRITICAL in block mode).
 
 
 def normalize(gitleaks_findings: list[dict]) -> list[dict]:

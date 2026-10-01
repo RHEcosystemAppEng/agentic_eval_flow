@@ -7,9 +7,8 @@ gate, and writes the results back into the reports directory:
 - ``<gate>-result.json`` per gate (the full GateResult)
 - ``phase1-summary.json`` (overall pass/fail + per-gate summary)
 
-This is the Phase 1 reporting stub. The real Evaluation-results-database writer
-(three-state pass/fail/not-evaluated) is added by the pipeline layer later; Phase
-1 always executes, so its checks resolve to pass/fail only.
+Reporting stub: the three-state Evaluation-results-database writer is added by the
+pipeline layer later; Phase 1 checks are pass/fail only.
 
 Usage:
     python -m scripts.mcp.run_phase1_gates --reports-dir <dir> [--mode block|warn]
