@@ -122,16 +122,21 @@ spec:
         echo "=== PREPARE PHASE: Clone Pipeline Repo ==="
         
         PIPELINE_DIR="$(workspaces.source.path)/_pipeline"
+        PIPELINE_REV="$(params.pipeline-repo-revision)"
         if [ -d "$PIPELINE_DIR/.git" ]; then
           echo "Pipeline repo already cloned, updating..."
           cd "$PIPELINE_DIR"
-          git fetch origin "$(params.pipeline-repo-revision)"
-          git checkout "$(params.pipeline-repo-revision)" 2>/dev/null || git checkout FETCH_HEAD
+          git fetch origin "$PIPELINE_REV" --depth 1 2>/dev/null \
+            || git fetch origin "$PIPELINE_REV"
+          git checkout "$PIPELINE_REV" 2>/dev/null || git checkout FETCH_HEAD
         else
-          git clone --depth 1 --branch "$(params.pipeline-repo-revision)" \
-            "$(params.pipeline-repo-url)" "$PIPELINE_DIR"
+          if ! git clone --depth 1 --branch "$PIPELINE_REV" \
+            "$(params.pipeline-repo-url)" "$PIPELINE_DIR" 2>/dev/null; then
+            git clone "$(params.pipeline-repo-url)" "$PIPELINE_DIR"
+            git -C "$PIPELINE_DIR" checkout "$PIPELINE_REV"
+          fi
         fi
-        echo "Pipeline repo ready at $(params.pipeline-repo-revision)"
+        echo "Pipeline repo ready at $(git -C "$PIPELINE_DIR" rev-parse --short HEAD)"
 
     # Step 3: Generate tests (conditional)
     - name: generate-tests
