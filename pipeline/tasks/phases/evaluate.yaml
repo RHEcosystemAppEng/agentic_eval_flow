@@ -184,7 +184,7 @@ spec:
       default: "https://github.com/GuyZivRH/agent-eval-harness.git"
     - name: agent-eval-harness-repo-revision
       type: string
-      default: "feat/aeh-openshell-openclaw"
+      default: "main"
       description: >-
         Branch or tag of GuyZivRH/agent-eval-harness to clone. Must include the
         OpenShell create keep-alive fix (`--detach` + `sleep infinity`).
@@ -196,7 +196,7 @@ spec:
         Override only if using a different gateway (e.g. forge-saw :17670).
     - name: openshell-sandbox-image
       type: string
-      default: "ghcr.io/rh-forge/openclaw-saw-agent@sha256:bcc55e9b7a36d5f65e8ffc75962496f8b3617762a4cdb37fd1cf54611b72d41a"
+      default: "ghcr.io/rh-forge/openclaw-saw-agent@sha256:b47b92a6b3fd03327c1f2093a5c28aba0fdf3cb620e9154335688900191fe2b9"
       description: >-
         Immutable SAW Chief-of-Staff image with the daily-briefing skill and
         governed M365/Slack tools.
@@ -1817,6 +1817,46 @@ spec:
         PY
           chmod 600 "$HOME/.config/openshell/gateways/$GW_NAME/oidc_token.json"
           echo "OpenShell OIDC token cache populated via client credentials"
+          # A case can run for 15 minutes, while the client-credentials token
+          # expires after roughly five. Refresh the CLI cache throughout this
+          # step so later artifact downloads and sandbox creation stay authorized.
+          OIDC_TOKEN_CACHE="$HOME/.config/openshell/gateways/$GW_NAME/oidc_token.json"
+          (
+            umask 077
+            trap 'rm -f "${OIDC_TOKEN_JSON}.refresh"' EXIT
+            while sleep 120; do
+              if curl -ksSf --max-time 20 \
+                -u "${OPENSHELL_OIDC_CLIENT_ID}:${OPENSHELL_OIDC_CLIENT_SECRET}" \
+                -d grant_type=client_credentials \
+                "${OPENSHELL_OIDC_ISSUER%/}/protocol/openid-connect/token" \
+                >"${OIDC_TOKEN_JSON}.refresh" 2>/dev/null; then
+                python3 - "${OIDC_TOKEN_JSON}.refresh" "$OIDC_TOKEN_CACHE" \
+                  "$OPENSHELL_OIDC_ISSUER" "$OPENSHELL_OIDC_CLIENT_ID" <<'REFRESH' || true
+        import json, os, sys, tempfile, time
+        src, dst, issuer, client_id = sys.argv[1:]
+        with open(src, encoding="utf-8") as stream:
+            payload = json.load(stream)
+        cache = {"access_token": payload["access_token"],
+                 "expires_at": int(time.time()) + int(payload.get("expires_in", 300)),
+                 "issuer": issuer, "client_id": client_id}
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(dst), prefix=".oidc-token-")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                json.dump(cache, stream)
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, dst)
+        finally:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+        REFRESH
+              else
+                echo "WARN: OpenShell OIDC token refresh failed; retrying" >&2
+              fi
+            done
+          ) &
+          OIDC_REFRESH_PID=$!
+          trap 'kill "$OIDC_REFRESH_PID" 2>/dev/null || true' EXIT
+          echo "OpenShell OIDC token refresher started"
           export OPENSHELL_GATEWAY="$GW_NAME"
           echo "OpenShell OIDC gateway configured: ${GW_NAME}"
         else
@@ -2061,6 +2101,13 @@ spec:
         echo "Model: $MODEL"
 
         export AGENT_EVAL_HARNESS_ROOT="$HARNESS_DIR"
+        # A published Forge briefing needs installation identity. Keep this
+        # synthetic fixture scoped to submissions that supply one; an explicit
+        # harness setting takes precedence for other deployments.
+        if [ -z "${AGENT_EVAL_FORGE_USER_FILE:-}" ] && [ -f "$SUBMISSION_DIR/fixtures/USER.md" ]; then
+          export AGENT_EVAL_FORGE_USER_FILE="$SUBMISSION_DIR/fixtures/USER.md"
+          echo "Using submission installation profile fixture"
+        fi
         if [ "$(params.enable-mlflow)" = "true" ] && [ -n "$(params.mlflow-tracking-uri)" ]; then
           export MLFLOW_TRACKING_URI="$(params.mlflow-tracking-uri)"
           echo "MLFLOW_TRACKING_URI set for AEH harness + CI logger"
