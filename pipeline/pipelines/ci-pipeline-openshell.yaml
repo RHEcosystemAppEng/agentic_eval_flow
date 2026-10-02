@@ -5,6 +5,7 @@ metadata:
   namespace: ab-eval-flow
   labels:
     app.kubernetes.io/name: abevalflow
+    app.kubernetes.io/part-of: abevalflow
     app.kubernetes.io/version: "2.0"
     app.kubernetes.io/profile: aeh-openshell-openclaw
 spec:
@@ -102,8 +103,11 @@ spec:
       default: "https://github.com/GuyZivRH/agent-eval-harness.git"
     - name: agent-eval-harness-repo-revision
       type: string
-      default: "feat/aeh-openshell-openclaw"
-      description: Harness revision with agent_eval.openshell (feature-branch pin)
+      default: "main"
+      description: >-
+        Harness revision with agent_eval.openshell. Use a tip that includes the
+        OpenClaw brief-reader/gateway fixes (GuyZivRH/agent-eval-harness#9) until
+        that lands on upstream main.
     - name: openshell-cli-version
       type: string
       default: "0.0.116"
@@ -112,7 +116,7 @@ spec:
       default: "https://openshell.openshell.svc.cluster.local:17670"
     - name: openshell-sandbox-image
       type: string
-      default: "ghcr.io/rh-forge/openclaw-saw-agent@sha256:bcc55e9b7a36d5f65e8ffc75962496f8b3617762a4cdb37fd1cf54611b72d41a"
+      default: "ghcr.io/rh-forge/openclaw-saw-agent@sha256:b47b92a6b3fd03327c1f2093a5c28aba0fdf3cb620e9154335688900191fe2b9"
     - name: openshell-provider
       type: string
       default: "forge-ai-gateway,m365-read-intervm,slack-read-proxy,drafts-service-agent"
