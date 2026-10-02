@@ -148,6 +148,24 @@ oc get secret openshell-credentials -n guy-ziv-evalflow -o json \
 `aeh-openshell-eval` TCP-checks `:17670` and optionally runs `openshell sandbox list`.
 If SAW is down the **run fails**. That step does not install SAW.
 
+## NetworkPolicy (Forge shared namespace)
+
+When SAW VMs and Tekton share a namespace with default-deny policies, evaluate
+pods must be allowed to reach the agent gateway on `:17670`. Use the canonical
+Pipeline name `abevalflow-pipeline-openshell` (so `tekton.dev/pipeline` matches)
+and label PipelineRuns with `app.kubernetes.io/part-of: abevalflow`.
+
+Same-namespace template:
+
+```bash
+sed "s/NAMESPACE/${EVAL_NS}/g" config/forge-saw/networkpolicy-ci-openshell.yaml \
+  | oc apply -f -
+```
+
+Do not create ad-hoc copies of the Pipeline under a different name unless those
+PipelineRuns also carry the `part-of=abevalflow` label and the NetworkPolicies
+above are applied — otherwise gateway preflight times out.
+
 ## Image
 
 Stock `agent-eval-harness:v1.0.x` cannot import `agent_eval.openshell`. Point
