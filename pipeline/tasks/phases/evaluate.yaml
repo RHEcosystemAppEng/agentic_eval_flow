@@ -1826,6 +1826,44 @@ spec:
         PY
           chmod 600 "$HOME/.config/openshell/gateways/$GW_NAME/oidc_token.json"
           echo "OpenShell OIDC token cache populated via client credentials"
+          # A case can run for 15 minutes, while the client-credentials token
+          # expires after roughly five. Refresh the CLI cache throughout this
+          # step so later artifact downloads and sandbox creation stay authorized.
+          OIDC_TOKEN_CACHE="$HOME/.config/openshell/gateways/$GW_NAME/oidc_token.json"
+          (
+            while sleep 120; do
+              if curl -ksSf --max-time 20 \
+                -u "${OPENSHELL_OIDC_CLIENT_ID}:${OPENSHELL_OIDC_CLIENT_SECRET}" \
+                -d grant_type=client_credentials \
+                "${OPENSHELL_OIDC_ISSUER%/}/protocol/openid-connect/token" \
+                >"${OIDC_TOKEN_JSON}.refresh" 2>/dev/null; then
+                python3 - "${OIDC_TOKEN_JSON}.refresh" "$OIDC_TOKEN_CACHE" \
+                  "$OPENSHELL_OIDC_ISSUER" "$OPENSHELL_OIDC_CLIENT_ID" <<'REFRESH' || true
+        import json, os, sys, tempfile, time
+        src, dst, issuer, client_id = sys.argv[1:]
+        with open(src, encoding="utf-8") as stream:
+            payload = json.load(stream)
+        cache = {"access_token": payload["access_token"],
+                 "expires_at": int(time.time()) + int(payload.get("expires_in", 300)),
+                 "issuer": issuer, "client_id": client_id}
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(dst), prefix=".oidc-token-")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                json.dump(cache, stream)
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, dst)
+        finally:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+        REFRESH
+              else
+                echo "WARN: OpenShell OIDC token refresh failed; retrying" >&2
+              fi
+            done
+          ) &
+          OIDC_REFRESH_PID=$!
+          trap 'kill "$OIDC_REFRESH_PID" 2>/dev/null || true' EXIT
+          echo "OpenShell OIDC token refresher started"
           export OPENSHELL_GATEWAY="$GW_NAME"
           echo "OpenShell OIDC gateway configured: ${GW_NAME}"
         else
