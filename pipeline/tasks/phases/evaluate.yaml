@@ -1831,6 +1831,8 @@ spec:
           # step so later artifact downloads and sandbox creation stay authorized.
           OIDC_TOKEN_CACHE="$HOME/.config/openshell/gateways/$GW_NAME/oidc_token.json"
           (
+            umask 077
+            trap 'rm -f "${OIDC_TOKEN_JSON}.refresh"' EXIT
             while sleep 120; do
               if curl -ksSf --max-time 20 \
                 -u "${OPENSHELL_OIDC_CLIENT_ID}:${OPENSHELL_OIDC_CLIENT_SECRET}" \
