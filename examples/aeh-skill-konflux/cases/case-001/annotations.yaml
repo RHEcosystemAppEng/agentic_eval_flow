@@ -1,0 +1,15 @@
+expected_behavior:
+  - Returns a list of Fibonacci numbers
+  - Handles N <= 0 by returning empty list
+  - Handles N == 1 by returning [0]
+  - Includes a docstring
+  - Syntactically correct Python
+
+key_elements:
+  - function definition
+  - docstring
+  - edge case handling
+  - fibonacci sequence logic
+
+difficulty: medium
+category: algorithms

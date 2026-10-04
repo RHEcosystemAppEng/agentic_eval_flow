@@ -78,7 +78,7 @@ spec:
       description: Overall tests passed (all checks)
   steps:
     - name: setup
-      image: registry.access.redhat.com/ubi9/python-311:9.6
+      image: quay.io/ecosystem-appeng/agent-eval-harness:v1.1.8
       script: |
         #!/usr/bin/env bash
         set -euo pipefail
@@ -93,15 +93,7 @@ spec:
           echo -n "true" > "$(results.tests-passed.path)"
           exit 0
         fi
-        PIPELINE_DIR="$(workspaces.source.path)/_pipeline"
-        if [ -d "$PIPELINE_DIR/.git" ]; then
-          cd "$PIPELINE_DIR"
-          git fetch origin "$(params.pipeline-repo-revision)" 2>/dev/null || true
-          git reset --hard FETCH_HEAD 2>/dev/null || true
-        else
-          git clone --depth 1 --branch "$(params.pipeline-repo-revision)" \
-            "$(params.pipeline-repo-url)" "$PIPELINE_DIR"
-        fi
+        PIPELINE_DIR="/opt/agent-eval-harness"
         echo "Pipeline repo ready"
         echo -n "true" > "$(results.security-passed.path)"
         echo -n "warn" > "$(results.security-mode.path)"
@@ -110,7 +102,7 @@ spec:
         echo -n "true" > "$(results.tests-passed.path)"
 
     - name: security-scan
-      image: registry.access.redhat.com/ubi9/python-311:9.6
+      image: quay.io/ecosystem-appeng/agent-eval-harness:v1.1.8
       env:
         - name: MINIO_ACCESS_KEY
           valueFrom:
@@ -132,6 +124,12 @@ spec:
               optional: true
         - name: LLM_API_KEY
           value: "$(params.llm-api-key)"
+        # See sitecustomize.py in the AEH image: Python's openai/anthropic
+        # clients don't honor NODE_TLS_REJECT_UNAUTHORIZED/PYTHONHTTPSVERIFY
+        # for the internal LiteLLM route's self-signed cert. Without this,
+        # --use-llm calls fail SSL verification silently.
+        - name: AEH_INSECURE_SSL
+          value: "1"
       script: |
         #!/usr/bin/env bash
         set -euo pipefail
@@ -160,7 +158,27 @@ spec:
         if [ -d "$SUBMISSION_PATH/skills" ] && [ -f "$SUBMISSION_PATH/skills/SKILL.md" ]; then
           SUBMISSION_PATH="$SUBMISSION_PATH/skills"
         fi
-        pip install --quiet --no-cache-dir 'cisco-ai-skill-scanner==2.0.11' 2>&1 | tail -3
+        # AEH submissions reference their skill via eval.yaml's
+        # runner.plugin_dirs instead of embedding SKILL.md in the submission
+        # dir itself (e.g. plugin_dirs: ["../../../rh-sre"], skill:
+        # execution-summary -> rh-sre/skills/execution-summary/SKILL.md).
+        # Resolve the real skill directory so the scanner has something to
+        # scan (same precedence as validate.py's _check_aeh_plugin_dirs).
+        if [ -f "$SUBMISSION_PATH/eval.yaml" ]; then
+          RESOLVED_SKILL_DIR=$(python3 /opt/agent-eval-harness/scripts/resolve_skill_dir.py "$SUBMISSION_PATH" 2>/dev/null || true)
+          if [ -n "$RESOLVED_SKILL_DIR" ]; then
+            echo "Resolved AEH skill directory for scanning: $RESOLVED_SKILL_DIR"
+            SUBMISSION_PATH="$RESOLVED_SKILL_DIR"
+          fi
+        fi
+        # cisco-ai-skill-scanner must be baked into the image (see
+        # Containerfile v1.1.2+). Containers are immutable -- if it's
+        # missing, that's a build problem to fix, not something to
+        # silently patch with a runtime pip install.
+        if ! command -v skill-scanner >/dev/null 2>&1; then
+          echo "ERROR: skill-scanner not found in image -- rebuild agent-eval-harness with the current Containerfile" >&2
+          exit 1
+        fi
         SCANNER_CMD=(skill-scanner scan "$SUBMISSION_PATH" --format json --output-json "$JSON_PATH" --output-sarif "$SARIF_PATH" --lenient --verbose)
         if [ "$SCAN_MODE" = "block" ]; then
           SCANNER_CMD+=(--fail-on-severity high)
@@ -168,10 +186,20 @@ spec:
         USE_LLM="$(params.security-scan-use-llm)"
         if [ "$USE_LLM" = "true" ]; then
           SCANNER_CMD+=(--use-llm)
+          # cisco-ai-skill-scanner has its own dedicated SKILL_SCANNER_LLM_*
+          # env vars, entirely separate from OPENAI_BASE_URL/OPENAI_API_BASE
+          # (verified from its source: skill_scanner/core/analyzer_factory.py
+          # and .../analyzers/llm_provider_config.py). Routing to its OpenAI-
+          # compatible path (i.e. our LiteLLM proxy) requires an *explicit*
+          # SKILL_SCANNER_LLM_PROVIDER=openai -- the "openai/<model>" prefix
+          # alone is not enough: without the provider override, its own
+          # model-name sniffing sees "gemini" in the model string and routes
+          # straight to Google's real API instead (surfaced as
+          # litellm.NotFoundError: GeminiException).
+          export SKILL_SCANNER_LLM_PROVIDER="openai"
           export SKILL_SCANNER_LLM_MODEL="openai/$(params.llm-model)"
           export SKILL_SCANNER_LLM_API_KEY="${LLM_API_KEY:-}"
-          export OPENAI_API_KEY="${LLM_API_KEY:-}"
-          export OPENAI_BASE_URL="$(params.llm-base-url)"
+          export SKILL_SCANNER_LLM_BASE_URL="$(params.llm-base-url)"
         fi
         set +e
         "${SCANNER_CMD[@]}" 2>&1 | tee /tmp/scan-output.txt
@@ -193,7 +221,6 @@ spec:
 
         # Optional MinIO persistence
         if [ -n "${MINIO_ACCESS_KEY:-}" ] && [ -n "${MINIO_SECRET_KEY:-}" ]; then
-          pip install --quiet --no-cache-dir minio 2>&1 | tail -1
           REPORT_PREFIX="$(params.report-prefix)"
           python3 - "$JSON_PATH" "$SARIF_PATH" "$REPORT_PREFIX" "$(params.minio-endpoint)" "$(params.minio-bucket)" <<'UPLOAD'
         import os, sys
@@ -211,10 +238,13 @@ spec:
         fi
 
     - name: quality-review
-      image: registry.access.redhat.com/ubi9/python-311:9.6
+      image: quay.io/ecosystem-appeng/agent-eval-harness:v1.1.8
       env:
         - name: LLM_API_KEY
           value: "$(params.llm-api-key)"
+        # See note in security-scan step above.
+        - name: AEH_INSECURE_SSL
+          value: "1"
       script: |
         #!/usr/bin/env bash
         set -euo pipefail
@@ -231,11 +261,19 @@ spec:
           echo -n "true" > "$(results.quality-passed.path)"
           exit 0
         fi
-        PIPELINE_DIR="$(workspaces.source.path)/_pipeline"
+        PIPELINE_DIR="/opt/agent-eval-harness"
         SUBMISSION_PATH="$(workspaces.source.path)/submissions/$(params.submission-dir)"
         cd "$PIPELINE_DIR"
-        pip install --quiet --no-cache-dir pydantic pyyaml openai
         export PYTHONPATH="$PIPELINE_DIR"
+
+        # openai must be baked into the image (see Containerfile v1.1.5) --
+        # abevalflow.llm_client.get_client() imports it directly. Fail
+        # loudly instead of a runtime pip install; containers are immutable.
+        if ! python3 -c "import openai" >/dev/null 2>&1; then
+          echo "ERROR: openai not found in image -- rebuild agent-eval-harness with the current Containerfile" >&2
+          exit 1
+        fi
+
         export LLM_BASE_URL="$(params.llm-base-url)"
         export LLM_MODEL="$(params.llm-model)"
         set +e
@@ -247,7 +285,7 @@ spec:
         echo "Quality review: passed=$PASSED"
 
     - name: finalize
-      image: registry.access.redhat.com/ubi9/python-311:9.6
+      image: quay.io/ecosystem-appeng/agent-eval-harness:v1.1.8
       script: |
         #!/usr/bin/env bash
         set -euo pipefail

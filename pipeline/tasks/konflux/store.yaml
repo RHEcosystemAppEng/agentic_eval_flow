@@ -89,7 +89,7 @@ spec:
       description: Shared workspace containing evaluation artifacts
   steps:
     - name: store-to-db
-      image: registry.access.redhat.com/ubi9/python-311:9.6
+      image: quay.io/ecosystem-appeng/agent-eval-harness:v1.1.8
       env:
         - name: DATABASE_URL
           valueFrom:
@@ -112,24 +112,12 @@ spec:
           exit 0
         fi
 
-        # --- 1. Clone pipeline repo (or update to requested revision) ---
-        PIPELINE_DIR="$(workspaces.source.path)/_pipeline"
-        if [ -d "$PIPELINE_DIR" ]; then
-          echo "Pipeline repo exists, updating to requested revision"
-          git -C "$PIPELINE_DIR" fetch origin "$(params.pipeline-repo-revision)" --depth 1
-          git -C "$PIPELINE_DIR" -c advice.detachedHead=false checkout FETCH_HEAD
-        else
-          git clone --depth 1 --branch "$(params.pipeline-repo-revision)" \
-            "$(params.pipeline-repo-url)" "$PIPELINE_DIR"
-        fi
+        PIPELINE_DIR="/opt/agent-eval-harness"
 
         cd "$PIPELINE_DIR"
         export PYTHONPATH="$PIPELINE_DIR"
 
-        # --- 2. Install dependencies ---
-        pip install --quiet --no-cache-dir pydantic sqlalchemy "psycopg[binary]" "tenacity>=8.2"
-
-        # --- 3. Run store script ---
+        # --- Run store script ---
         REPORT_DIR="$(workspaces.source.path)/reports/$(params.submission-name)"
         echo "Storing results for submission=$(params.submission-name) run=$(params.pipeline-run-id)"
         echo "Report dir: $REPORT_DIR"
@@ -140,7 +128,7 @@ spec:
         echo "Results stored successfully"
 
     - name: upload-artifacts
-      image: registry.access.redhat.com/ubi9/python-311:9.6
+      image: quay.io/ecosystem-appeng/agent-eval-harness:v1.1.8
       env:
         - name: MINIO_ENDPOINT
           valueFrom:
@@ -177,24 +165,12 @@ spec:
           exit 0
         fi
 
-        # --- 1. Clone pipeline repo (or update to requested revision) ---
-        PIPELINE_DIR="$(workspaces.source.path)/_pipeline"
-        if [ -d "$PIPELINE_DIR/.git" ]; then
-          echo "Pipeline repo exists, updating to requested revision"
-          git -C "$PIPELINE_DIR" fetch origin "$(params.pipeline-repo-revision)" --depth 1
-          git -C "$PIPELINE_DIR" -c advice.detachedHead=false checkout FETCH_HEAD
-        else
-          git clone --depth 1 --branch "$(params.pipeline-repo-revision)" \
-            "$(params.pipeline-repo-url)" "$PIPELINE_DIR"
-        fi
+        PIPELINE_DIR="/opt/agent-eval-harness"
 
         cd "$PIPELINE_DIR"
         export PYTHONPATH="$PIPELINE_DIR"
 
-        # --- 2. Install dependencies ---
-        pip install --quiet --no-cache-dir minio
-
-        # --- 3. Run publish script (MinIO upload, Quay promotion, PR comment) ---
+        # --- Run publish script (MinIO upload, Quay promotion, PR comment) ---
         REPORT_DIR="$(workspaces.source.path)/reports/$(params.submission-name)"
         echo "Publishing artifacts for submission=$(params.submission-name) run=$(params.pipeline-run-id)"
         echo "Report dir: $REPORT_DIR"

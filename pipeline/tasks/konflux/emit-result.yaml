@@ -13,7 +13,27 @@ spec:
   params:
     - name: submission-name
       type: string
-      description: Submission name to locate scorecard in workspace
+      default: ""
+      description: >-
+        Submission name to locate scorecard in workspace. Leave empty to
+        derive it from submission-dir instead (basename) -- needed when
+        this task must run even if an upstream task that normally computes
+        the validated name (e.g. prepare) was skipped by a gate, since a
+        Tekton task cannot reference a result from a skipped task without
+        being cascade-skipped itself.
+    - name: submission-dir
+      type: string
+      default: ""
+      description: >-
+        Raw submission directory (e.g. rh-sre/cve-impact), used to derive
+        submission-name via basename when submission-name is empty.
+    - name: should-evaluate
+      type: string
+      default: "true"
+      description: >-
+        When not 'true', skip the report lookup entirely and emit a
+        neutral SUCCESS TEST_OUTPUT noting evaluation was gated out (e.g.
+        a PR-label gate upstream decided not to evaluate this push).
   workspaces:
     - name: source
       description: Workspace containing the evaluation reports
@@ -30,7 +50,25 @@ spec:
 
         microdnf install -y jq --nodocs 2>/dev/null || true
 
-        REPORT_DIR="$(workspaces.source.path)/reports/$(params.submission-name)"
+        SHOULD_EVALUATE="$(params.should-evaluate)"
+        if [ "$SHOULD_EVALUATE" != "true" ]; then
+          echo "Evaluation gate did not pass (should-evaluate=$SHOULD_EVALUATE) -- skipping report lookup"
+          TEST_OUTPUT=$(jq -rcn \
+            --arg date "$(date -u --iso-8601=seconds)" \
+            --arg note "Agentic Eval Flow: evaluation skipped (gate condition not met)" \
+            '{result: "SUCCESS", timestamp: $date, note: $note, successes: 0, failures: 0, warnings: 0}')
+          echo -n "$TEST_OUTPUT" | tee "$(results.TEST_OUTPUT.path)"
+          echo ""
+          echo "=== TEST_OUTPUT emitted (skipped) ==="
+          exit 0
+        fi
+
+        SUBMISSION_NAME="$(params.submission-name)"
+        if [ -z "$SUBMISSION_NAME" ]; then
+          SUBMISSION_NAME=$(basename "$(params.submission-dir)")
+        fi
+
+        REPORT_DIR="$(workspaces.source.path)/reports/${SUBMISSION_NAME}"
         SCORECARD="$REPORT_DIR/scorecard.json"
         REPORT="$REPORT_DIR/report.json"
 

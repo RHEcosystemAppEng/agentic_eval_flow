@@ -1,0 +1,29 @@
+schema_version: "1.0"
+name: aeh-skill-konflux
+description: Example AEH skill evaluation for Konflux with Compass fact-pushing
+persona: rh-developer
+version: "0.1.0"
+author: Agentic Eval Flow Team
+eval_engine: aeh
+tags:
+  - aeh
+  - konflux
+  - compass
+
+gate_policy:
+  default_mode: warn
+  combination: all_pass
+
+  push_facts:
+    endpoint: https://compass.stage.redhat.com/api/soundcheck/facts/
+    entity_ref: component:default/aeh-skill-konflux
+    bearer_token: ${COMPASS_API_TOKEN}
+
+  gates:
+    evaluation:
+      mode: block
+      threshold: 0.5
+      push_fact: true
+    security:
+      mode: warn
+      push_fact: true

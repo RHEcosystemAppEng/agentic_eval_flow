@@ -426,16 +426,22 @@ def _check_aeh_plugin_dirs(submission_dir: Path, eval_path: Path) -> list[str]:
             continue
         has_top = (root / "SKILL.md").is_file()
         has_nested = any((child / "SKILL.md").is_file() for child in root.iterdir() if child.is_dir())
-        if not has_top and not has_nested:
+        # AEH convention: plugin root may contain a skills/ subdirectory
+        skills_sub = root / "skills"
+        has_skills_sub = (skills_sub.is_dir() and
+                          any((child / "SKILL.md").is_file()
+                              for child in skills_sub.iterdir() if child.is_dir()))
+        if not has_top and not has_nested and not has_skills_sub:
             errors.append(
                 f"{eval_path.name}: plugin_dirs '{rel}/' must contain SKILL.md (flat or nested skills/<name>/SKILL.md)"
             )
         elif skill_name and not has_top:
             named = root / str(skill_name) / "SKILL.md"
-            if not named.is_file():
+            named_in_skills = root / "skills" / str(skill_name) / "SKILL.md"
+            if not named.is_file() and not named_in_skills.is_file():
                 errors.append(
                     f"{eval_path.name}: skill '{skill_name}' requires "
-                    f"{rel}/{skill_name}/SKILL.md for /{skill_name} slash command"
+                    f"{rel}/{skill_name}/SKILL.md or {rel}/skills/{skill_name}/SKILL.md"
                 )
     return errors
 

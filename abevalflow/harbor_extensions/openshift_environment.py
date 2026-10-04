@@ -49,10 +49,29 @@ class OpenShiftEnvironment(KubernetesEnvironment):
 
     def _pod_manifest(self, image: str, env: dict) -> dict:
         """Build pod manifest with emptyDir volumes for writable workdirs."""
+        # Skip SSL verification for corporate proxies with self-signed certs.
+        # NODE_TLS_REJECT_UNAUTHORIZED covers Claude Code (Node.js); Python's
+        # httpx/requests clients used by the LLM judge (agent_eval.harbor.reward)
+        # honor neither this nor PYTHONHTTPSVERIFY, so AEH_INSECURE_SSL triggers
+        # the sitecustomize.py monkeypatch baked into the AEH image instead.
+        env.setdefault("NODE_TLS_REJECT_UNAUTHORIZED", "0")
+        env.setdefault("PYTHONHTTPSVERIFY", "0")
+        env.setdefault("AEH_INSECURE_SSL", "1")
+
         manifest = super()._pod_manifest(image, env)
 
         pod_spec = manifest["spec"]
         container = pod_spec["containers"][0]
+
+        # The K8s credentials secret (AGENT_EVAL_K8S_CREDENTIALS_SECRET) is
+        # mounted wholesale via envFrom, exposing only its literal key name
+        # ("api-key" by convention here — see evaluate.yaml). Claude Code
+        # never needs ANTHROPIC_API_KEY from pod env (its key is baked into
+        # the task package's .claude/settings.json at generation time), but
+        # agent_eval.harbor.reward's LLM judge runs *inside this pod* and
+        # reads os.environ["ANTHROPIC_API_KEY"] directly — without this it
+        # silently falls through to an unconfigured MLflow judge fallback.
+        self._expose_llm_judge_api_key(container)
 
         container.setdefault("volumeMounts", []).extend(
             [
@@ -71,6 +90,44 @@ class OpenShiftEnvironment(KubernetesEnvironment):
         logger.info("OpenShiftEnvironment injected mounts: %s", mount_paths)
 
         return manifest
+
+    @staticmethod
+    def _expose_llm_judge_api_key(container: dict) -> None:
+        """Add ANTHROPIC_API_KEY sourced from the mounted credentials secret.
+
+        Discovers the secret name from the container's own envFrom (set by
+        the base KubernetesEnvironment from AGENT_EVAL_K8S_CREDENTIALS_SECRET)
+        instead of hardcoding it, so this works regardless of which secret
+        the pipeline configures. No-ops if ANTHROPIC_API_KEY is already set
+        explicitly, or if no credentials secret is mounted.
+        """
+        env_list = container.setdefault("env", [])
+        if any(e.get("name") == "ANTHROPIC_API_KEY" for e in env_list):
+            return
+
+        secret_name = next(
+            (
+                (ef.get("secretRef") or {}).get("name")
+                for ef in container.get("envFrom", [])
+                if (ef.get("secretRef") or {}).get("name")
+            ),
+            None,
+        )
+        if not secret_name:
+            return
+
+        env_list.append(
+            {
+                "name": "ANTHROPIC_API_KEY",
+                "valueFrom": {
+                    "secretKeyRef": {
+                        "name": secret_name,
+                        "key": "api-key",
+                        "optional": True,
+                    }
+                },
+            }
+        )
 
     async def start(self, force_build: bool) -> None:
         """Start the pod, then create Harbor paths needed for verifier redirect."""

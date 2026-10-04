@@ -8,7 +8,7 @@ metadata:
 spec:
   description: >-
     Generic evaluation task for Konflux integration. Dispatches to the
-    appropriate evaluation engine (a2a, harbor, ase, mcpchecker) and supports
+    appropriate evaluation engine (a2a, harbor, ase, mcpchecker, aeh) and supports
     two execution modes: "local" runs evaluation directly in the task step,
     "remote" submits an evaluation Pod to a workload cluster. Consumers
     provide the target endpoint (AGENT_ENDPOINT / MCP_URL) as a parameter;
@@ -20,12 +20,13 @@ spec:
       mcpchecker + local: supported (MCP server must be reachable)
       mcpchecker + remote: supported (untested)
       ase + local: supported (no external endpoint needed)
+      aeh + local: supported (spawns trial pods in-cluster; requires pod-creation RBAC)
       harbor + local: limited (no scaffold/build; uses local environment only)
       harbor + remote: not supported (use standalone Agentic Eval Flow pipeline)
   params:
     - name: eval-engine
       type: string
-      description: "Evaluation engine: harbor, ase, mcpchecker, a2a"
+      description: "Evaluation engine: harbor, ase, mcpchecker, a2a, aeh"
     - name: submission-dir
       type: string
       description: Submission directory name under submissions/
@@ -40,9 +41,11 @@ spec:
     - name: pipeline-repo-url
       type: string
       default: "https://github.com/RHEcosystemAppEng/agentic_eval_flow.git"
+      description: Git URL of the pipeline repo (only used by remote eval mode)
     - name: pipeline-repo-revision
       type: string
       default: "main"
+      description: Git revision of the pipeline repo (only used by remote eval mode)
     - name: submission-repo-url
       type: string
       default: ""
@@ -103,6 +106,42 @@ spec:
     - name: uplift-threshold
       type: string
       default: "0.0"
+    # AEH (Agent-Eval-Harness) params
+    - name: aeh-mode
+      type: string
+      default: "single"
+      description: "AEH evaluation mode: single or pairwise"
+    - name: aeh-image
+      type: string
+      default: "quay.io/ecosystem-appeng/agent-eval-harness:v1.1.8"
+      description: Container image for AEH trial pods
+    - name: aeh-model-override
+      type: string
+      default: ""
+      description: Override models.skill from eval.yaml (empty = use eval.yaml value)
+    - name: aeh-judge-model-override
+      type: string
+      default: ""
+      description: Override models.judge from eval.yaml (empty = use eval.yaml value)
+    - name: aeh-runner
+      type: string
+      default: "harbor"
+      description: "AEH execution backend: harbor or vanilla"
+    - name: aeh-control-config
+      type: string
+      default: "eval-control.yaml"
+      description: Control variant eval.yaml filename for pairwise mode
+    - name: aeh-treatment-config
+      type: string
+      default: "eval-treatment.yaml"
+      description: Treatment variant eval.yaml filename for pairwise mode
+    - name: aeh-kubeconfig-secret
+      type: string
+      default: ""
+      description: >-
+        Name of a Secret containing a 'kubeconfig' key for an external cluster
+        where AEH trial pods should run. When empty, AEH uses in-cluster
+        credentials and spawns pods in the pipeline namespace.
     - name: eval-mode
       type: string
       default: "local"
@@ -139,10 +178,21 @@ spec:
       description: Pass or fail recommendation
     - name: results-dir
       description: Path to evaluation results
+  volumes:
+    - name: aeh-kubeconfig
+      secret:
+        secretName: $(params.aeh-kubeconfig-secret)
+        optional: true
   steps:
     - name: run-eval
-      image: registry.redhat.io/openshift4/ose-cli:latest
+      image: quay.io/ecosystem-appeng/agent-eval-harness:v1.1.8
+      volumeMounts:
+        - name: aeh-kubeconfig
+          mountPath: /tmp/aeh-kubeconfig
+          readOnly: true
       env:
+        - name: GIT_SSL_NO_VERIFY
+          value: "true"
         - name: WORKLOAD_TOKEN
           valueFrom:
             secretKeyRef:
@@ -183,6 +233,18 @@ spec:
         echo "Mode: $EVAL_MODE"
         echo "Submission: $SUBMISSION_NAME"
 
+        # Install CLI tools (ubi9/python-311 doesn't ship oc/kubectl)
+        export PATH="$HOME/bin:$PATH"
+        mkdir -p "$HOME/bin"
+        if ! command -v kubectl &>/dev/null; then
+          curl -sLo "$HOME/bin/kubectl" "https://dl.k8s.io/release/$(curl -sL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x "$HOME/bin/kubectl"
+        fi
+        if ! command -v oc &>/dev/null; then
+          curl -sLo /tmp/oc.tar.gz "https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz"
+          tar -xzf /tmp/oc.tar.gz -C "$HOME/bin" oc && rm -f /tmp/oc.tar.gz
+        fi
+
         RESULTS_DIR="$(workspaces.source.path)/eval-results/$SUBMISSION_NAME"
         REPORT_DIR="$(workspaces.source.path)/reports/$SUBMISSION_NAME"
         mkdir -p "$RESULTS_DIR" "$REPORT_DIR"
@@ -192,15 +254,7 @@ spec:
         echo -n "fail" > "$(results.recommendation.path)"
         echo -n "$RESULTS_DIR" > "$(results.results-dir.path)"
 
-        # ---- Clone pipeline repo ----
-        PIPELINE_DIR="$(workspaces.source.path)/_pipeline"
-        if [ -d "$PIPELINE_DIR/.git" ]; then
-          git -C "$PIPELINE_DIR" fetch origin "$(params.pipeline-repo-revision)" --depth 1 2>/dev/null || true
-          git -C "$PIPELINE_DIR" -c advice.detachedHead=false checkout FETCH_HEAD 2>/dev/null || true
-        else
-          git clone --depth 1 --branch "$(params.pipeline-repo-revision)" \
-            "$(params.pipeline-repo-url)" "$PIPELINE_DIR"
-        fi
+        PIPELINE_DIR="/opt/agent-eval-harness"
 
         # ================================================================
         # REMOTE MODE: submit an eval Pod to the workload cluster
@@ -484,9 +538,7 @@ spec:
         echo "=== Local eval mode ==="
 
         cd "$PIPELINE_DIR"
-        export PYTHONPATH="$PIPELINE_DIR"
-        python3 -m ensurepip --default-pip 2>/dev/null || true
-        pip install --quiet --no-cache-dir pydantic scipy pyyaml 2>&1 | tail -3
+        export PYTHONPATH="$PIPELINE_DIR:${PYTHONPATH:-}"
 
         SUBMISSION_PATH="$(workspaces.source.path)/submissions/$SUBMISSION_DIR"
 
@@ -550,7 +602,18 @@ spec:
 
           python3 -c "from abevalflow.harbor_agents.a2a_adapter import A2AAgent; print('A2AAgent imported OK')"
 
-          pip install --quiet --no-cache-dir harbor-bench 2>&1 | tail -3 || true
+          # harbor-bench isn't baked into the agent-eval-harness image. The
+          # image's Python is already a virtualenv, so a plain/`--user` pip
+          # install fails against it (EACCES / "not visible in this
+          # virtualenv") -- a fresh venv with --system-site-packages
+          # sidesteps both while keeping the baked packages visible.
+          HARBOR_BENCH_VENV=$(mktemp -d)
+          if python3 -m venv --system-site-packages "$HARBOR_BENCH_VENV" >/dev/null 2>&1 \
+              && "$HARBOR_BENCH_VENV/bin/pip" install --quiet --no-cache-dir harbor-bench 2>&1 | tail -3; then
+            export PATH="$HARBOR_BENCH_VENV/bin:$PATH"
+          else
+            echo "WARNING: failed to provision harbor-bench venv, continuing with baked harbor CLI if present"
+          fi
           HARBOR_EXIT=0
           harbor run -c "$CONFIG_FILE" -y 2>&1 || HARBOR_EXIT=$?
           echo "Harbor exit code: $HARBOR_EXIT"
@@ -573,7 +636,17 @@ spec:
 
           echo "=== MCPChecker Evaluation (local) ==="
           echo "MCP URL: $MCP_URL"
-          pip install --quiet --no-cache-dir mcpchecker 2>&1 | tail -3
+          # mcpchecker isn't baked into the agent-eval-harness image -- see
+          # the harbor-bench install above for why a fresh
+          # --system-site-packages venv (not --user) is required here.
+          MCPCHECKER_VENV=$(mktemp -d)
+          if python3 -m venv --system-site-packages "$MCPCHECKER_VENV" >/dev/null 2>&1 \
+              && "$MCPCHECKER_VENV/bin/pip" install --quiet --no-cache-dir mcpchecker 2>&1 | tail -3; then
+            export PATH="$MCPCHECKER_VENV/bin:$PATH"
+          else
+            echo "ERROR: failed to provision mcpchecker venv"
+            exit 1
+          fi
 
           cd "$SUBMISSION_PATH"
           export MCP_URL
@@ -683,7 +756,15 @@ spec:
           echo "NOTE: Local Harbor mode uses environment.type=local (no scaffold/build)."
           echo "For full Harbor A/B with container registry, use the standalone pipeline."
 
-          pip install --quiet --no-cache-dir harbor-bench 2>&1 | tail -3 || true
+          # See the a2a branch above for why a --system-site-packages venv
+          # (not a plain/`--user` pip install) is required on this image.
+          HARBOR_BENCH_VENV=$(mktemp -d)
+          if python3 -m venv --system-site-packages "$HARBOR_BENCH_VENV" >/dev/null 2>&1 \
+              && "$HARBOR_BENCH_VENV/bin/pip" install --quiet --no-cache-dir harbor-bench 2>&1 | tail -3; then
+            export PATH="$HARBOR_BENCH_VENV/bin:$PATH"
+          else
+            echo "WARNING: failed to provision harbor-bench venv, continuing with baked harbor CLI if present"
+          fi
 
           TASK_DIR=""
           if [ -f "$SUBMISSION_PATH/task.toml" ]; then
@@ -725,12 +806,189 @@ spec:
             exit 1
           fi
 
+        # ---------- AEH Engine ----------
+        elif [ "$EVAL_ENGINE" = "aeh" ]; then
+          echo "=== AEH Evaluation (local) ==="
+          AEH_MODE="$(params.aeh-mode)"
+          AEH_RUNNER="$(params.aeh-runner)"
+          AEH_IMAGE="$(params.aeh-image)"
+          echo "Mode: $AEH_MODE | Runner: $AEH_RUNNER"
+
+          # AEH Harbor runner needs these env vars to spawn trial pods
+          if [ -f /tmp/aeh-kubeconfig/kubeconfig ]; then
+            echo "External kubeconfig detected, configuring remote cluster access"
+            export KUBECONFIG=/tmp/aeh-kubeconfig/kubeconfig
+            # Force the Python kubernetes client to use KUBECONFIG instead of
+            # in-cluster SA token (which would target the Konflux cluster).
+            unset KUBERNETES_SERVICE_HOST KUBERNETES_SERVICE_PORT 2>/dev/null || true
+            WORKLOAD_NS="$(params.workload-namespace)"
+            if [ -n "$WORKLOAD_NS" ]; then
+              kubectl config set-context --current --namespace="$WORKLOAD_NS" 2>/dev/null || true
+              export AGENT_EVAL_K8S_NAMESPACE="$WORKLOAD_NS"
+            else
+              export AGENT_EVAL_K8S_NAMESPACE=$(kubectl config view --minify -o jsonpath='{.contexts[0].context.namespace}' 2>/dev/null || echo "default")
+            fi
+          else
+            export AGENT_EVAL_K8S_NAMESPACE=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace 2>/dev/null || echo "default")
+          fi
+          export AGENT_EVAL_K8S_CREDENTIALS_SECRET="llm-credentials"
+          export AGENT_EVAL_RUNS_DIR="$REPORT_DIR"
+          export ANTHROPIC_BASE_URL="$(params.llm-api-base)"
+          export ANTHROPIC_API_KEY="$LLM_API_KEY"
+          export AGENT_EVAL_K8S_KEEP_RUN="0"
+          echo "K8s namespace: $AGENT_EVAL_K8S_NAMESPACE"
+          echo "KUBECONFIG: ${KUBECONFIG:-in-cluster}"
+
+          # agent_eval + harbor + abevalflow + scripts are all in /opt/agent-eval-harness
+
+          EVAL_CONFIG="eval.yaml"
+          CONTROL_CONFIG="$(params.aeh-control-config)"
+          TREATMENT_CONFIG="$(params.aeh-treatment-config)"
+
+          MODEL="$(params.aeh-model-override)"
+          if [ -z "$MODEL" ]; then
+            CFG_FILE="$SUBMISSION_PATH/$EVAL_CONFIG"
+            [ "$AEH_MODE" = "pairwise" ] && CFG_FILE="$SUBMISSION_PATH/$TREATMENT_CONFIG"
+            MODEL=$(python3 -c "
+        import yaml
+        config = yaml.safe_load(open('$CFG_FILE'))
+        models = config.get('models', {})
+        if isinstance(models, str):
+            print(models)
+        else:
+            print(models.get('skill', 'claude-sonnet'))
+        ")
+          fi
+
+          JUDGE_OVERRIDE="$(params.aeh-judge-model-override)"
+          if [ -z "$JUDGE_OVERRIDE" ] && [ -n "$MODEL" ]; then
+            JUDGE_OVERRIDE="$MODEL"
+          fi
+
+          echo "Model: $MODEL | Judge: ${JUDGE_OVERRIDE:-none}"
+
+          AEH_THRESHOLD=$(python3 -c "
+        from pathlib import Path
+        from abevalflow.aeh_scoring import resolve_evaluation_threshold
+        print(resolve_evaluation_threshold(Path('$SUBMISSION_PATH') / 'metadata.yaml'))
+        ")
+          echo "AEH threshold: $AEH_THRESHOLD"
+
+          SKILL_NAME=$(python3 -c "
+        import yaml
+        cfg = '$EVAL_CONFIG'
+        if '$AEH_MODE' == 'pairwise':
+            cfg = '$TREATMENT_CONFIG'
+        config = yaml.safe_load(open('$SUBMISSION_PATH/' + cfg))
+        print(config.get('skill', '$SUBMISSION_NAME'))
+        ")
+
+          EVAL_TMP="$(workspaces.source.path)/_eval_tmp"
+          mkdir -p "$EVAL_TMP/aeh-tasks" "$EVAL_TMP/aeh-jobs"
+
+          if [ "$AEH_MODE" = "pairwise" ]; then
+            echo "=== AEH Pairwise A/B Evaluation ==="
+
+            set +e
+            python scripts/run_aeh.py pairwise \
+              --runner "$AEH_RUNNER" \
+              --control-config "$SUBMISSION_PATH/$CONTROL_CONFIG" \
+              --treatment-config "$SUBMISSION_PATH/$TREATMENT_CONFIG" \
+              --output "$REPORT_DIR" \
+              --run-id "$PIPELINE_RUN_ID" \
+              --model "$MODEL" \
+              ${JUDGE_OVERRIDE:+--judge-model "$JUDGE_OVERRIDE"} \
+              ${AEH_IMAGE:+--image "$AEH_IMAGE"} \
+              --tasks-dir "$EVAL_TMP/aeh-tasks" \
+              --jobs-dir "$EVAL_TMP/aeh-jobs" \
+              --judge pairwise
+            AEH_EXIT=$?
+            set -e
+
+            CONTROL_DIR="$REPORT_DIR/$SKILL_NAME/control-$PIPELINE_RUN_ID"
+            TREATMENT_DIR="$REPORT_DIR/$SKILL_NAME/treatment-$PIPELINE_RUN_ID"
+
+            if [ ! -f "$CONTROL_DIR/summary.yaml" ]; then
+              echo "ERROR: Control run failed - no summary.yaml in $CONTROL_DIR"
+              exit 1
+            fi
+            if [ ! -f "$TREATMENT_DIR/summary.yaml" ]; then
+              echo "ERROR: Treatment run failed - no summary.yaml in $TREATMENT_DIR"
+              exit 1
+            fi
+
+            python scripts/aggregate_aeh.py "$TREATMENT_DIR" \
+              --mode pairwise \
+              --control-dir "$CONTROL_DIR" \
+              --submission-name "$SUBMISSION_NAME" \
+              --threshold "$AEH_THRESHOLD" \
+              --output "$REPORT_DIR/report.json"
+
+          else
+            echo "=== AEH Single Evaluation ==="
+
+            OUT_DIR="$REPORT_DIR/$SKILL_NAME/$PIPELINE_RUN_ID"
+            mkdir -p "$OUT_DIR"
+
+            set +e
+            python scripts/run_aeh.py single \
+              --runner "$AEH_RUNNER" \
+              --config "$SUBMISSION_PATH/$EVAL_CONFIG" \
+              --output "$OUT_DIR" \
+              ${MODEL:+--model "$MODEL"} \
+              ${JUDGE_OVERRIDE:+--judge-model "$JUDGE_OVERRIDE"} \
+              ${AEH_IMAGE:+--image "$AEH_IMAGE"} \
+              --tasks-dir "$EVAL_TMP/aeh-tasks" \
+              --jobs-dir "$EVAL_TMP/aeh-jobs"
+            AEH_EXIT=$?
+            set -e
+
+            if [ ! -f "$OUT_DIR/summary.yaml" ] && [ ! -f "$OUT_DIR/run_result.json" ]; then
+              echo "ERROR: AEH single produced no summary.yaml or run_result.json"
+              exit 1
+            fi
+
+            python scripts/aggregate_aeh.py "$OUT_DIR" \
+              --submission-name "$SUBMISSION_NAME" \
+              --threshold "$AEH_THRESHOLD" \
+              --output "$REPORT_DIR/report.json"
+          fi
+
+          if [ "$AEH_EXIT" -ne 0 ]; then
+            if [ -f "$REPORT_DIR/report.json" ]; then
+              echo "WARNING: AEH exited $AEH_EXIT but report.json was produced, continuing"
+            else
+              echo "ERROR: AEH evaluation exited $AEH_EXIT with no report"
+              exit "$AEH_EXIT"
+            fi
+          fi
+
+          if [ -f "$REPORT_DIR/report.json" ]; then
+            python3 -c "
+        import json, sys
+        r = json.load(open(sys.argv[1]))
+        s = r.get('summary', {})
+        t = s.get('treatment', {}).get('mean_reward')
+        rec = s.get('recommendation', 'fail')
+        open(sys.argv[2], 'w').write(str(t if t is not None else 0.0))
+        open(sys.argv[3], 'w').write(str(s.get('control', {}).get('mean_reward', 0.0)))
+        open(sys.argv[4], 'w').write(rec)
+        print(f'Recommendation: {rec}, Mean reward: {t}')
+        " "$REPORT_DIR/report.json" \
+              "$(results.treatment-mean-reward.path)" \
+              "$(results.control-mean-reward.path)" \
+              "$(results.recommendation.path)"
+          fi
+
+          echo "=== AEH evaluate phase complete ==="
+          exit 0
+
         else
           echo "ERROR: Unsupported eval engine: $EVAL_ENGINE"
           exit 1
         fi
 
-        # ---- Run analyze.py (for local mode) ----
+        # ---- Run analyze.py (for local mode, non-AEH engines) ----
         echo "=== Running analyze.py ==="
         ANALYZE_ARGS=(
           --results-dir "$RESULTS_DIR"

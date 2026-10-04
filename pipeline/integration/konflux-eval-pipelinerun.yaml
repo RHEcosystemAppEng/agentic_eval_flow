@@ -38,7 +38,7 @@ spec:
       - name: EVAL_ENGINE
         type: string
         default: "a2a"
-        description: "Evaluation engine: harbor, ase, mcpchecker, a2a"
+        description: "Evaluation engine: harbor, ase, mcpchecker, a2a, aeh"
       - name: SUBMISSION_REPO_URL
         type: string
         default: "https://github.com/RHEcosystemAppEng/agentic_eval_flow.git"
@@ -104,6 +104,43 @@ spec:
           Name of the Secret containing 'token' key for the workload cluster.
           Only used when EVAL_MODE=remote.
 
+      # === AEH (Agent-Eval-Harness) ===
+      - name: AEH_MODE
+        type: string
+        default: "single"
+        description: "AEH evaluation mode: single or pairwise"
+      - name: AEH_IMAGE
+        type: string
+        default: "quay.io/ecosystem-appeng/agent-eval-harness:v1.1.8"
+        description: Container image for AEH trial pods
+      - name: AEH_MODEL_OVERRIDE
+        type: string
+        default: ""
+        description: Override models.skill from eval.yaml (empty = use eval.yaml value)
+      - name: AEH_JUDGE_MODEL_OVERRIDE
+        type: string
+        default: ""
+        description: Override models.judge from eval.yaml (empty = use eval.yaml value)
+      - name: AEH_RUNNER
+        type: string
+        default: "harbor"
+        description: "AEH execution backend: harbor or vanilla"
+      - name: AEH_CONTROL_CONFIG
+        type: string
+        default: "eval-control.yaml"
+        description: Control variant eval.yaml filename for pairwise mode
+      - name: AEH_TREATMENT_CONFIG
+        type: string
+        default: "eval-treatment.yaml"
+        description: Treatment variant eval.yaml filename for pairwise mode
+      - name: AEH_KUBECONFIG_SECRET
+        type: string
+        default: ""
+        description: >-
+          Name of a Secret containing a 'kubeconfig' key for an external cluster
+          where AEH trial pods should run. When empty, AEH uses in-cluster
+          credentials. Use with WORKLOAD_NAMESPACE to target a specific namespace.
+
       # === Red team (adversarial testing) ===
       - name: ENABLE_RED_TEAM
         type: string
@@ -152,7 +189,7 @@ spec:
             - name: name
               value: parse-snapshot
             - name: bundle
-              value: quay.io/ecosystem-appeng/abevalflow-task-parse-snapshot:0.1
+              value: quay.io/ecosystem-appeng/abevalflow-task-parse-snapshot:AEH
             - name: kind
               value: task
         params:
@@ -170,7 +207,7 @@ spec:
             - name: name
               value: prepare
             - name: bundle
-              value: quay.io/ecosystem-appeng/abevalflow-task-prepare:0.1
+              value: quay.io/ecosystem-appeng/abevalflow-task-prepare:AEH
             - name: kind
               value: task
         params:
@@ -190,6 +227,12 @@ spec:
             value: $(context.pipelineRun.name)
           - name: enable-generation
             value: "false"
+          - name: aeh-mode
+            value: $(params.AEH_MODE)
+          - name: aeh-control-config
+            value: $(params.AEH_CONTROL_CONFIG)
+          - name: aeh-treatment-config
+            value: $(params.AEH_TREATMENT_CONFIG)
         workspaces:
           - name: source
             workspace: shared-workspace
@@ -205,7 +248,7 @@ spec:
             - name: name
               value: test
             - name: bundle
-              value: quay.io/ecosystem-appeng/abevalflow-task-test:0.1
+              value: quay.io/ecosystem-appeng/abevalflow-task-test:AEH
             - name: kind
               value: task
         params:
@@ -255,7 +298,7 @@ spec:
             - name: name
               value: red-team
             - name: bundle
-              value: quay.io/ecosystem-appeng/abevalflow-task-red-team:0.1
+              value: quay.io/ecosystem-appeng/abevalflow-task-red-team:AEH
             - name: kind
               value: task
         params:
@@ -301,7 +344,7 @@ spec:
             - name: name
               value: evaluate
             - name: bundle
-              value: quay.io/ecosystem-appeng/abevalflow-task-evaluate:0.1
+              value: quay.io/ecosystem-appeng/abevalflow-task-evaluate:AEH
             - name: kind
               value: task
         params:
@@ -339,6 +382,23 @@ spec:
             value: $(params.WORKLOAD_NAMESPACE)
           - name: workload-credentials-secret
             value: $(params.WORKLOAD_CREDENTIALS_SECRET)
+          # AEH params
+          - name: aeh-mode
+            value: $(params.AEH_MODE)
+          - name: aeh-image
+            value: $(params.AEH_IMAGE)
+          - name: aeh-model-override
+            value: $(params.AEH_MODEL_OVERRIDE)
+          - name: aeh-judge-model-override
+            value: $(params.AEH_JUDGE_MODEL_OVERRIDE)
+          - name: aeh-runner
+            value: $(params.AEH_RUNNER)
+          - name: aeh-control-config
+            value: $(params.AEH_CONTROL_CONFIG)
+          - name: aeh-treatment-config
+            value: $(params.AEH_TREATMENT_CONFIG)
+          - name: aeh-kubeconfig-secret
+            value: $(params.AEH_KUBECONFIG_SECRET)
         workspaces:
           - name: source
             workspace: shared-workspace
@@ -354,7 +414,7 @@ spec:
             - name: name
               value: analyze-scorecard
             - name: bundle
-              value: quay.io/ecosystem-appeng/abevalflow-task-analyze-scorecard:0.1
+              value: quay.io/ecosystem-appeng/abevalflow-task-analyze-scorecard:AEH
             - name: kind
               value: task
         params:
@@ -391,7 +451,7 @@ spec:
             - name: name
               value: store
             - name: bundle
-              value: quay.io/ecosystem-appeng/abevalflow-task-store:0.1
+              value: quay.io/ecosystem-appeng/abevalflow-task-store:AEH
             - name: kind
               value: task
         params:
@@ -426,7 +486,7 @@ spec:
             - name: name
               value: emit-result
             - name: bundle
-              value: quay.io/ecosystem-appeng/abevalflow-task-emit-result:0.1
+              value: quay.io/ecosystem-appeng/abevalflow-task-emit-result:AEH
             - name: kind
               value: task
         params:

@@ -577,6 +577,8 @@ class HarborRunner(BaseRunner):
             cmd.extend(["--image", self.image])
         if tasks_dir:
             cmd.extend(["--tasks-dir", str(tasks_dir)])
+            if self.judge_model or self.model or self.image:
+                cmd.append("--regenerate")
         if jobs_dir:
             cmd.extend(["--jobs-dir", str(jobs_dir)])
 
@@ -669,9 +671,18 @@ class HarborRunner(BaseRunner):
 
         eval_config["environment"]["type"] = "kubernetes"
 
-        # Write patched config to same directory as original to preserve relative paths
-        # This is critical - if we write to a different directory, relative paths in
-        # the config (like cases/, skills/, etc.) will break
+        # Resolve plugin_dirs to absolute paths.  AEH resolves them relative
+        # to CWD (project_root), which inside the Tekton step is
+        # /opt/agent-eval-harness — not the submission directory.  Making them
+        # absolute here avoids that mismatch.
+        config_dir = config.parent.resolve()
+        runner_cfg = eval_config.get("runner", {})
+        if isinstance(runner_cfg.get("plugin_dirs"), list):
+            runner_cfg["plugin_dirs"] = [
+                str((config_dir / p).resolve()) if not Path(p).is_absolute() else p
+                for p in runner_cfg["plugin_dirs"]
+            ]
+
         patched_config = config.parent / f"{config.stem}-openshift.yaml"
         with open(patched_config, "w") as f:
             yaml.dump(eval_config, f)

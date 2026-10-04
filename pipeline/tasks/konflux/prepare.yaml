@@ -8,8 +8,8 @@ metadata:
 spec:
   description: >-
     Preparation phase: clones the submission repository, optionally generates
-    evaluation files, and validates the submission structure. Adapted for Konflux
-    integration — no hardcoded namespace, configurable pipeline repo URL.
+    evaluation files, and validates the submission structure. Scripts and
+    dependencies are baked into the AEH image at /opt/agent-eval-harness.
   params:
     - name: repo-url
       type: string
@@ -23,13 +23,7 @@ spec:
     - name: eval-engine
       type: string
       default: "harbor"
-      description: Evaluation engine (harbor, ase, mcpchecker, a2a, both)
-    - name: pipeline-repo-url
-      type: string
-      default: "https://github.com/RHEcosystemAppEng/agentic_eval_flow.git"
-    - name: pipeline-repo-revision
-      type: string
-      default: "main"
+      description: Evaluation engine (harbor, ase, mcpchecker, a2a, aeh, both)
     - name: pipeline-run-name
       type: string
       description: Name of the PipelineRun
@@ -51,6 +45,19 @@ spec:
     - name: max-workspace-mb
       type: string
       default: "500"
+    # AEH params (passed to validate.py)
+    - name: aeh-mode
+      type: string
+      default: "single"
+      description: "AEH evaluation mode: single or pairwise"
+    - name: aeh-control-config
+      type: string
+      default: "eval-control.yaml"
+      description: Control variant eval.yaml filename for AEH pairwise mode
+    - name: aeh-treatment-config
+      type: string
+      default: "eval-treatment.yaml"
+      description: Treatment variant eval.yaml filename for AEH pairwise mode
   workspaces:
     - name: source
       description: Workspace for the cloned repository
@@ -73,7 +80,10 @@ spec:
       description: JSON validation result object
   steps:
     - name: clone-repo
-      image: registry.access.redhat.com/ubi9/python-311:9.6
+      image: quay.io/ecosystem-appeng/agent-eval-harness:v1.1.8
+      env:
+        - name: GIT_SSL_NO_VERIFY
+          value: "true"
       script: |
         #!/usr/bin/env bash
         set -euo pipefail
@@ -93,26 +103,8 @@ spec:
         cd "$CHECKOUT_DIR"
         echo "Cloned at $(git rev-parse HEAD)"
 
-    - name: clone-pipeline-repo
-      image: registry.access.redhat.com/ubi9/python-311:9.6
-      script: |
-        #!/usr/bin/env bash
-        set -euo pipefail
-        echo "=== PREPARE PHASE: Clone Pipeline Repo ==="
-        PIPELINE_DIR="$(workspaces.source.path)/_pipeline"
-        if [ -d "$PIPELINE_DIR/.git" ]; then
-          echo "Pipeline repo already cloned, updating..."
-          cd "$PIPELINE_DIR"
-          git fetch origin "$(params.pipeline-repo-revision)"
-          git checkout "$(params.pipeline-repo-revision)" 2>/dev/null || git checkout FETCH_HEAD
-        else
-          git clone --depth 1 --branch "$(params.pipeline-repo-revision)" \
-            "$(params.pipeline-repo-url)" "$PIPELINE_DIR"
-        fi
-        echo "Pipeline repo ready at $(params.pipeline-repo-revision)"
-
     - name: generate-tests
-      image: registry.access.redhat.com/ubi9/python-311:9.6
+      image: quay.io/ecosystem-appeng/agent-eval-harness:v1.1.8
       env:
         - name: LLM_BASE_URL
           value: "$(params.llm-base-url)"
@@ -144,12 +136,21 @@ spec:
           echo "[]" > "$(results.generated-files.path)"
           exit 0
         fi
-        PIPELINE_DIR="$(workspaces.source.path)/_pipeline"
+        PIPELINE_DIR="/opt/agent-eval-harness"
         SUBMISSION_PATH="$(workspaces.source.path)/submissions/$(params.submission-dir)"
         WORKSPACE_DIR="$(workspaces.source.path)"
         cd "$PIPELINE_DIR"
-        pip install --quiet --no-cache-dir pydantic pyyaml openai pytest
         export PYTHONPATH="$PIPELINE_DIR"
+
+        # openai/pytest must be baked into the image (see Containerfile
+        # v1.1.5) -- containers are immutable, so a missing dependency here
+        # is a build problem to fix, not something to silently patch with a
+        # runtime pip install.
+        if ! python3 -c "import openai, pytest" >/dev/null 2>&1; then
+          echo "ERROR: openai/pytest not found in image -- rebuild agent-eval-harness with the current Containerfile" >&2
+          exit 1
+        fi
+
         GENERATED='[]'
         if [ "$EVAL_ENGINE" = "ase" ] || [ "$EVAL_ENGINE" = "both" ]; then
           if [ ! -f "$SUBMISSION_PATH/evals/evals.json" ]; then
@@ -184,12 +185,12 @@ spec:
         echo "Generated files: $GENERATED"
 
     - name: validate
-      image: registry.access.redhat.com/ubi9/python-311:9.6
+      image: quay.io/ecosystem-appeng/agent-eval-harness:v1.1.8
       script: |
         #!/usr/bin/env bash
         set -euo pipefail
         echo "=== PREPARE PHASE: Validate Submission ==="
-        PIPELINE_DIR="$(workspaces.source.path)/_pipeline"
+        PIPELINE_DIR="/opt/agent-eval-harness"
         SUBMISSION_PATH="$(workspaces.source.path)/submissions/$(params.submission-dir)"
         MAX_MB=$(params.max-workspace-mb)
         SIZE_KB=$(du -sk "$(workspaces.source.path)" | cut -f1)
@@ -201,9 +202,13 @@ spec:
         echo "Workspace size: ${SIZE_MB}MB (limit: ${MAX_MB}MB)"
         cd "$PIPELINE_DIR"
         export PYTHONPATH="$PIPELINE_DIR"
-        pip install --quiet --no-cache-dir pydantic pyyaml
-        python scripts/validate.py "$SUBMISSION_PATH" \
-          --eval-engine "$(params.eval-engine)" \
+        VALIDATE_ARGS=("$SUBMISSION_PATH" --eval-engine "$(params.eval-engine)")
+        if [ "$(params.eval-engine)" = "aeh" ]; then
+          VALIDATE_ARGS+=(--aeh-mode "$(params.aeh-mode)")
+          VALIDATE_ARGS+=(--aeh-control-config "$(params.aeh-control-config)")
+          VALIDATE_ARGS+=(--aeh-treatment-config "$(params.aeh-treatment-config)")
+        fi
+        python scripts/validate.py "${VALIDATE_ARGS[@]}" \
           | tee /tmp/validation-output.json
         cat /tmp/validation-output.json | tr -d '\n' > "$(results.validation-result.path)"
         REPORTS_DIR="$(workspaces.source.path)/reports/$(params.submission-dir)"

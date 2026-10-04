@@ -1,0 +1,51 @@
+skill: aeh-skill-konflux
+
+runner:
+  type: claude-code
+  effort: low
+  plugin_dirs: [skills]
+  settings:
+    permission_mode: bypassPermissions
+
+models:
+  skill: claude-sonnet
+  judge: claude-sonnet
+
+dataset:
+  path: cases
+
+reward:
+  formula: weighted
+  score_range: [0, 1]
+  weights:
+    correctness: 1.0
+    helpfulness: 1.0
+
+judges:
+  - name: correctness
+    type: llm
+    prompt: |
+      Evaluate whether the agent's response correctly addresses the user's request.
+      Score 1.0 if fully correct, 0.5 if partially correct, 0.0 if incorrect.
+
+      User request: {input}
+      Agent response: {output}
+
+      Respond with a JSON object: {"score": <number>, "reason": "<explanation>"}
+
+  - name: helpfulness
+    type: llm
+    prompt: |
+      Evaluate how helpful and complete the agent's response is.
+      Score 1.0 if very helpful, 0.5 if somewhat helpful, 0.0 if not helpful.
+
+      User request: {input}
+      Agent response: {output}
+
+      Respond with a JSON object: {"score": <number>, "reason": "<explanation>"}
+
+thresholds:
+  correctness:
+    min_mean: 0.7
+  helpfulness:
+    min_mean: 0.5

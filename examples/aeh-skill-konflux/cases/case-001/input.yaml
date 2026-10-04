@@ -1,0 +1,9 @@
+prompt: |
+  Write a Python function called `fibonacci` that returns the first N
+  Fibonacci numbers as a list. Include a docstring and handle edge cases
+  (N <= 0 returns empty list, N == 1 returns [0]).
+
+context:
+  language: python
+  difficulty: medium
+  expected_output: "A function returning [0, 1, 1, 2, 3, 5, ...] for N items"

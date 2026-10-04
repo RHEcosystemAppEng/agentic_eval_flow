@@ -4,29 +4,49 @@
 # along with Harbor and necessary dependencies for running evaluations
 # in a Kubernetes/OpenShift environment.
 #
-# Build (from repo root — COPY abevalflow requires repo-root context):
-#   podman build -t quay.io/ecosystem-appeng/agent-eval-harness:v1.0.4 \
-#     --build-arg AEH_SHA=<commit-sha> \
+# Build (from repo root — COPY requires repo-root context):
+#   podman build -t quay.io/ecosystem-appeng/agent-eval-harness:v1.1.8 \
 #     -f containers/agent-eval-harness/Containerfile .
 #
-# Required build args (PIN BEFORE BUILDING):
-#   AEH_SHA: Commit SHA of agent-eval-harness repo (7-40 hex chars; no branch/HEAD)
+# AEH_SHA defaults to the current pinned commit (see ARG below) -- only
+# pass --build-arg AEH_SHA=<commit-sha> when deliberately bumping the
+# upstream agent-eval-harness framework version (7-40 hex chars; no
+# branch/HEAD -- rejected by the validation step below). Bumping this
+# tag's own version (below) without changing AEH_SHA means an
+# added-dependency/source-patch release, not an upstream AEH version
+# change -- see the pip install block and patch_mcp_config.py for what's
+# baked in beyond upstream AEH itself.
 #
-# Published smoke-tested image: quay.io/ecosystem-appeng/agent-eval-harness:v1.0.4
-# (AEH upstream 1.30.1 / 75f7188299f6594425175ef71ec41a7a6a6f6ffd — rebuild with
-# that SHA or a newer main tip). Do not leave REPLACE_WITH_COMMIT_SHA.
-
+# This image bakes in every dependency the downstream Konflux pipeline
+# steps need (cisco-ai-skill-scanner, harness-eval, psycopg[binary],
+# minio, openai, pytest) so no step re-installs anything fresh on every
+# fanned-out matrix leg. Containers here are treated as immutable: a step
+# whose dependency isn't baked into the image tag it declares hard-fails
+# with a clear error instead of silently falling back to a runtime pip
+# install -- a missing dependency is a build problem to fix, not a
+# runtime one to patch around.
+#
+# Also patches the vendored agent_eval/harbor/run.py at build time (see
+# patch_mcp_config.py, applied right after checkout) to forward each
+# runner.plugin_dirs pack's mcps.json to Harbor's own --mcp-config option,
+# alongside the existing --skill forwarding -- upstream resolves --skill
+# but never forwards MCP server config on its own.
 #
 # Note: Uses official Harbor from PyPI (>=0.13.0), not the skills_eval_corrections fork.
 # The fork's OpenShift backend is only needed for Harbor engine evaluations, not AEH.
 
 FROM registry.access.redhat.com/ubi9/python-312:latest
 
-# Build args - MUST be pinned to specific commits for reproducibility
-# Build will FAIL if SHA is not provided (no default branch names allowed)
-# Example: --build-arg AEH_SHA=abc123def456
+# Build args - MUST be pinned to specific commits for reproducibility.
+# Defaults to the current pinned upstream AEH commit so a bare `podman
+# build` with no --build-arg still produces a correct, reproducible
+# image. Override with
+# --build-arg AEH_SHA=<new-sha> only when deliberately bumping the
+# upstream agent-eval-harness framework version -- the validation below
+# still rejects branch names (main/HEAD) or any non-SHA value, so this
+# can never silently drift to a moving target.
 ARG AEH_REPO=https://github.com/opendatahub-io/agent-eval-harness.git
-ARG AEH_SHA=REPLACE_WITH_COMMIT_SHA
+ARG AEH_SHA=2a10e504242b42f508ecbfe813080abe1e16a501
 
 LABEL name="agent-eval-harness" \
       vendor="Red Hat Ecosystem App Engineering" \
@@ -63,10 +83,29 @@ RUN git init /opt/agent-eval-harness \
     && git checkout ${AEH_SHA} \
     && rm -rf .git
 
-# Copy abevalflow module for OpenShift environment extensions
-# This provides OpenShiftEnvironment class that adds emptyDir mounts for /workspace and /tmp
-# Required by trial pods to work with OpenShift's read-only root filesystem (restricted-v2 SCC)
+# Patch the vendored agent_eval/harbor/run.py to forward each pack's
+# mcps.json to Harbor's --mcp-config option (see patch_mcp_config.py's
+# own docstring for the full rationale). Anchored on exact source
+# strings, not line numbers -- fails the build loudly (not a silent
+# no-op) if a future AEH_SHA bump changes that file enough for the
+# anchors to stop matching, per this Containerfile's existing "no
+# runtime fallback for pinned-dependency gaps" policy (see v1.1.5 note
+# above).
+COPY containers/agent-eval-harness/patch_mcp_config.py /tmp/patch_mcp_config.py
+RUN python3 /tmp/patch_mcp_config.py /opt/agent-eval-harness/agent_eval/harbor/run.py \
+    && rm -f /tmp/patch_mcp_config.py
+
+# Copy abevalflow module and pipeline scripts
+# abevalflow: OpenShiftEnvironment, AEH scoring, Harbor extensions
+# scripts: run_aeh.py, aggregate_aeh.py, validate.py, analyze.py, etc.
 COPY --chown=1001:0 abevalflow /opt/agent-eval-harness/abevalflow
+COPY --chown=1001:0 scripts /opt/agent-eval-harness/scripts
+
+# sitecustomize.py: opt-in (AEH_INSECURE_SSL=1) SSL verification bypass for
+# Python HTTP clients (httpx/requests/urllib3) so in-pod LLM judge calls can
+# reach the LiteLLM proxy over a self-signed OpenShift route. Auto-imported
+# by every Python process once on site-packages (see module docstring).
+COPY --chown=1001:0 containers/agent-eval-harness/sitecustomize.py /tmp/sitecustomize.py
 
 # Python dependencies
 # - Harbor (official PyPI package >=0.13.0 required by agent-eval-harness)
@@ -78,15 +117,49 @@ COPY --chown=1001:0 abevalflow /opt/agent-eval-harness/abevalflow
 # - mlflow[genai] + pandas for post-evaluate AEH MLflow logging/traces
 #   (full mlflow — skinny breaks async trace export / AsyncExportQueue).
 #   evaluate.yaml still pip-installs to /tmp as a fallback for older images.
+# - cisco-ai-skill-scanner: SKILL.md security scanner (test phase). Pinned
+#   to match downstream pipelines' own pin; bump both together.
+# - harness-eval: deterministic SKILL.md security+quality scanner (test
+#   phase, skillmd-scan step). Pinned to match downstream pipelines' own
+#   pin; bump both together.
+# Downstream steps check `command -v` first and fail loudly (no runtime
+# pip install) if either is missing -- see v1.1.5 note above.
+# - openai: used by abevalflow.llm_client.get_client() (LLM judge calls in
+#   quality-review). No runtime fallback -- see v1.1.5 note above.
+# - pytest: used by prepare.yaml's harbor/ase test generation. No runtime
+#   fallback -- see v1.1.5 note above.
+# - psycopg[binary]: PostgreSQL driver SQLAlchemy needs for `postgresql+
+#   psycopg://` DATABASE_URLs (store_results.py). No runtime fallback
+#   exists for this one (nor did it exist upstream) -- SQLAlchemy raises
+#   ModuleNotFoundError from inside its own dialect resolution, not from a
+#   top-level `import` our scripts control, so there's no clean place to
+#   `command -v`-guard a pip-install fallback the way we do above.
+# - minio: MinIO client for report/artifact uploads (publish.py). Same
+#   reasoning -- no runtime fallback, always required if MINIO_* secrets
+#   are ever configured.
 RUN pip install --no-cache-dir \
     "harbor>=0.13.0" \
     "kubernetes>=32.0.0" \
     pyyaml \
+    pydantic \
     "anthropic[vertex]" \
     jinja2 \
     scipy \
     "mlflow[genai]" \
-    pandas
+    pandas \
+    "cisco-ai-skill-scanner==2.0.11" \
+    "harness-eval==7.9.0" \
+    "psycopg[binary]" \
+    minio \
+    openai \
+    pytest
+
+# Install sitecustomize.py into every site-packages dir so it's auto-imported
+# regardless of which one Python resolves first.
+RUN for d in $(python3 -c "import site; print('\n'.join(site.getsitepackages()))"); do \
+      cp /tmp/sitecustomize.py "$d/sitecustomize.py" && chmod 644 "$d/sitecustomize.py"; \
+    done \
+    && rm -f /tmp/sitecustomize.py
 
 # Set up environment
 ENV PYTHONPATH=/opt/agent-eval-harness \
@@ -97,10 +170,11 @@ ENV PYTHONPATH=/opt/agent-eval-harness \
 # - /logs: Harbor log output
 # - /tests: Test artifacts
 # - /solution: Agent solution artifacts
+# - /harbor: Harbor uploads skills/tasks here at runtime
 # - /opt/agent-eval-harness: AEH package (needs read access)
-RUN mkdir -p /workspace /logs /tests /solution \
-    && chgrp -R 0 /workspace /logs /tests /solution /opt/agent-eval-harness \
-    && chmod -R g=u /workspace /logs /tests /solution /opt/agent-eval-harness
+RUN mkdir -p /workspace /logs /tests /solution /harbor \
+    && chgrp -R 0 /workspace /logs /tests /solution /harbor /opt/agent-eval-harness \
+    && chmod -R g=u /workspace /logs /tests /solution /harbor /opt/agent-eval-harness
 
 WORKDIR /workspace
 

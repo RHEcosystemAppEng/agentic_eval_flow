@@ -8,7 +8,16 @@ Usage::
 
 The script reads ``{report-dir}/report.json``, validates it against the
 ``AnalysisResult`` Pydantic model, and inserts one ``EvaluationRun`` row
-plus one ``Trial`` row per trial into the database.
+plus one ``Trial`` row per trial into the database (plus a nested
+``ScorecardRow``/``GateResultRow``/``CertificationRow`` set when
+``scorecard.json`` is also present).
+
+If ``report.json`` is absent but ``scorecard.json`` exists (a leg that only
+ran cheap, non-LLM checks this run -- no eval, no report.json), see
+``store_scorecard_only`` below: it persists the same
+``ScorecardRow``/``GateResultRow``/``CertificationRow`` set standalone,
+since none of those three tables have a foreign-key dependency on
+``EvaluationRun``.
 
 Idempotency: if ``pipeline_run_id`` already exists, the insert is skipped.
 """
@@ -308,6 +317,86 @@ def store_mcpchecker(
     return True
 
 
+def store_scorecard_only(
+    report_dir: Path,
+    database_url: str | None = None,
+    run_id: str | None = None,
+) -> bool:
+    """Persist a scorecard produced WITHOUT a full AnalysisResult -- e.g. a leg
+    that only ran the cheap, non-LLM checks (security-scan/skillmd-scan) this
+    run, with no LLM evaluation to produce report.json.
+
+    Inserts ScorecardRow/GateResultRow/CertificationRow independent of
+    EvaluationRun -- these three tables have no foreign-key dependency on
+    EvaluationRun at all (see map_scorecard_to_row/map_gate_results/
+    map_certifications and abevalflow.db.models.ScorecardRow), so a
+    security/quality-only scorecard (no eval gate, no trials) is a fully
+    valid, standalone row. This is what lets the merged Tekton evaluate-skill
+    Task leverage store/analyze-and-scorecard (and their Compass Facts /
+    Postgres persistence) for EVERY skill's cheap checks, not just skills
+    that also went through the LLM evaluation chain this run.
+
+    Returns True on success, including the idempotent "already exists" case.
+    """
+    scorecard_path = report_dir / "scorecard.json"
+    raw = scorecard_path.read_bytes()
+    try:
+        scorecard = Scorecard.model_validate_json(raw)
+    except Exception:
+        logger.exception("Failed to validate scorecard JSON")
+        return False
+
+    effective_run_id = run_id or _compute_content_hash(raw)
+    logger.info("Scorecard-only Run ID: %s", effective_run_id)
+
+    engine = get_engine(database_url)
+    init_db(engine)
+    session_factory = make_session(engine)
+
+    with session_factory() as session:
+        existing = session.execute(
+            select(ScorecardRow).where(ScorecardRow.pipeline_run_id == effective_run_id)
+        ).scalar_one_or_none()
+
+        if existing is not None:
+            logger.warning(
+                "Scorecard for run %s already exists (id=%s) -- skipping",
+                effective_run_id,
+                existing.id,
+            )
+            return True
+
+        sc_row = map_scorecard_to_row(scorecard)
+        gate_rows = map_gate_results(scorecard, sc_row)
+        cert_rows = map_certifications(scorecard, sc_row)
+
+        session.add(sc_row)
+        session.add_all(gate_rows)
+        session.add_all(cert_rows)
+
+        try:
+            session.commit()
+        except IntegrityError as e:
+            session.rollback()
+            logger.warning(
+                "Concurrent insert for scorecard run %s -- treating as idempotent: %s",
+                effective_run_id,
+                str(e)[:100],
+            )
+            return True
+
+        logger.info(
+            "Stored scorecard-only: submission=%s run_id=%s gates=%d certifications=%d recommendation=%s",
+            scorecard.submission_name,
+            effective_run_id,
+            len(gate_rows),
+            len(cert_rows),
+            scorecard.recommendation.value,
+        )
+
+    return True
+
+
 def store(
     report_dir: Path,
     database_url: str | None = None,
@@ -315,19 +404,29 @@ def store(
 ) -> bool:
     """Load, validate, and persist a report. Returns True on success.
 
-    Supports both A/B reports (report.json) and MCPChecker reports
-    (mcpchecker-report.json). Checks for both and stores whichever exists.
+    Supports A/B reports (report.json), MCPChecker reports
+    (mcpchecker-report.json), and scorecard-only runs (scorecard.json with
+    no report.json -- see store_scorecard_only). Checks in that order and
+    stores whichever is found.
     """
     report_path = report_dir / "report.json"
     mcpchecker_report_path = report_dir / "mcpchecker-report.json"
+    scorecard_path = report_dir / "scorecard.json"
 
     if mcpchecker_report_path.exists():
         logger.info("Found MCPChecker report, storing to mcpchecker_results table")
         return store_mcpchecker(report_dir, database_url, run_id)
 
     if not report_path.exists():
-        logger.error("Report not found: %s", report_path)
-        return False
+        if not scorecard_path.exists():
+            logger.error("Neither report.json nor scorecard.json found in %s", report_dir)
+            return False
+        logger.info(
+            "No report.json (no LLM evaluation ran this leg) -- storing scorecard-only "
+            "run from %s",
+            scorecard_path,
+        )
+        return store_scorecard_only(report_dir, database_url, run_id)
 
     raw = report_path.read_bytes()
     try:

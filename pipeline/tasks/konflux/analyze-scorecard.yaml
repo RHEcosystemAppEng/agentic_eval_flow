@@ -124,25 +124,15 @@ spec:
       description: Number of gates that failed
   steps:
     - name: analyze
-      image: registry.access.redhat.com/ubi9/python-311:9.6
+      image: quay.io/ecosystem-appeng/agent-eval-harness:v1.1.8
       script: |
         #!/usr/bin/env bash
         set -euo pipefail
 
-        # --- 1. Clone pipeline repo (or update to requested revision) ---
-        PIPELINE_DIR="$(workspaces.source.path)/_pipeline"
-        if [ -d "$PIPELINE_DIR" ]; then
-          echo "Pipeline repo exists, updating to requested revision"
-          git -C "$PIPELINE_DIR" fetch origin "$(params.pipeline-repo-revision)" --depth 1
-          git -C "$PIPELINE_DIR" -c advice.detachedHead=false checkout FETCH_HEAD
-        else
-          git clone --depth 1 --branch "$(params.pipeline-repo-revision)" \
-            "$(params.pipeline-repo-url)" "$PIPELINE_DIR"
-        fi
+        PIPELINE_DIR="/opt/agent-eval-harness"
 
         cd "$PIPELINE_DIR"
         export PYTHONPATH="$PIPELINE_DIR"
-        pip install --quiet --no-cache-dir pydantic scipy pyyaml
 
         # --- 2. Use pre-computed report or run analysis ---
         REPORT_DIR="$(workspaces.source.path)/reports/$(params.submission-name)"
@@ -223,7 +213,7 @@ spec:
         cat "$REPORT_DIR/report.md" 2>/dev/null || echo "(report.md not available)"
 
     - name: aggregate-scorecard
-      image: registry.access.redhat.com/ubi9/python-311:9.6
+      image: quay.io/ecosystem-appeng/agent-eval-harness:v1.1.8
       env:
         - name: COMPASS_API_TOKEN
           valueFrom:
@@ -246,10 +236,9 @@ spec:
 
         echo "=== Aggregating Unified Scorecard ==="
 
-        PIPELINE_DIR="$(workspaces.source.path)/_pipeline"
+        PIPELINE_DIR="/opt/agent-eval-harness"
         cd "$PIPELINE_DIR"
         export PYTHONPATH="$PIPELINE_DIR"
-        pip install --quiet --no-cache-dir pydantic pyyaml
 
         SUBMISSION_DIR="$(workspaces.source.path)/submissions/$(params.submission-name)"
         RESULTS_DIR="$(workspaces.source.path)/eval-results/$(params.submission-name)"
@@ -290,7 +279,7 @@ spec:
         echo "=== Scorecard aggregation complete ==="
 
     - name: check-degradation
-      image: registry.access.redhat.com/ubi9/python-311:9.6
+      image: quay.io/ecosystem-appeng/agent-eval-harness:v1.1.8
       env:
         - name: DATABASE_URL
           valueFrom:
@@ -325,10 +314,10 @@ spec:
           exit 0
         fi
 
-        PIPELINE_DIR="$(workspaces.source.path)/_pipeline"
+        PIPELINE_DIR="/opt/agent-eval-harness"
         if [ ! -d "$PIPELINE_DIR" ]; then
-          echo "Pipeline repo missing after analyze step, skipping degradation check"
-          write_skip_results "Pipeline repo unavailable"
+          echo "Pipeline directory missing, skipping degradation check"
+          write_skip_results "Pipeline directory unavailable"
           exit 0
         fi
 
@@ -336,8 +325,6 @@ spec:
         echo "Submission: $(params.submission-name)"
         echo "Pipeline Run: $(params.pipeline-run-id)"
         echo "Threshold: $(params.degradation-threshold)"
-
-        pip install --quiet --no-cache-dir sqlalchemy "psycopg[binary]" "tenacity>=8.2" scipy pydantic pyyaml
 
         cd "$PIPELINE_DIR"
         export PYTHONPATH="$PIPELINE_DIR"

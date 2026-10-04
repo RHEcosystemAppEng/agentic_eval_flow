@@ -1,5 +1,5 @@
 QUAY_NS ?= quay.io/ecosystem-appeng
-VERSION ?= 0.1
+VERSION ?= AEH
 TASKS_DIR := ../tasks/konflux
 
 TASKS = parse-snapshot prepare test red-team evaluate analyze-scorecard store emit-result

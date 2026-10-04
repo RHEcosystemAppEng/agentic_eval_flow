@@ -2,7 +2,7 @@
 
 This guide explains how to integrate Agentic Eval Flow evaluation into any Konflux
 application pipeline. Agentic Eval Flow provides generic evaluation tasks as Tekton
-Bundles that can evaluate A2A agents, MCP servers, and skills.
+Bundles that can evaluate A2A agents, MCP servers, skills, and AEH-based agent/skill evaluations.
 
 ## Architecture
 
@@ -21,7 +21,7 @@ These tasks handle the entire evaluation lifecycle:
 | `parse-snapshot` | Extract component image and git info from a Konflux Snapshot |
 | `prepare` | Clone and validate the submission definition |
 | `test` | Run security scans and quality review (optional) |
-| `evaluate` | Execute the evaluation engine (A2A, MCPChecker, Harbor, ASE) |
+| `evaluate` | Execute the evaluation engine (A2A, MCPChecker, Harbor, ASE, AEH) |
 | `analyze-scorecard` | Produce a certification scorecard from results |
 | `store` | Persist results to PostgreSQL/MinIO (optional) |
 | `emit-result` | Map scorecard to Konflux's `TEST_OUTPUT` format |
@@ -38,7 +38,7 @@ tasks. Agentic Eval Flow never deploys or manages your application.
 SNAPSHOT: "<Konflux Snapshot JSON>"
 
 # What to evaluate
-EVAL_ENGINE: "a2a"              # a2a | harbor | ase | mcpchecker
+EVAL_ENGINE: "a2a"              # a2a | harbor | ase | mcpchecker | aeh
 SUBMISSION_REPO_URL: ""         # Git repo containing the submission definition
 SUBMISSION_DIR: ""              # Directory name under submissions/
 SUBMISSION_REVISION: "main"     # Git ref for the submission repo
@@ -70,6 +70,7 @@ PIPELINE_REPO_REVISION: "main"
 | `mcpchecker` | `MCP_URL`, `SUBMISSION_*`, `LLM_*` |
 | `harbor` | `SUBMISSION_*`, `LLM_*` |
 | `ase` | `SUBMISSION_*`, `LLM_*` |
+| `aeh` | `SUBMISSION_*`, `LLM_*`, `AEH_*` |
 
 ### Engine x Mode Validation Matrix
 
@@ -78,11 +79,17 @@ PIPELINE_REPO_REVISION: "main"
 | `a2a` | Supported | **Fully tested** (E2E on Konflux) |
 | `mcpchecker` | Supported | Supported (untested) |
 | `ase` | Supported (no external endpoint needed) | Not yet implemented |
+| `aeh` | Supported (spawns trial pods in-cluster) | Not applicable (pods spawned in pipeline cluster) |
 | `harbor` | Limited (local environment only, no scaffold/build) | Not supported (use standalone pipeline) |
 
 For `harbor` in Konflux, the local mode runs with `environment.type: local` which
 does not perform the full scaffold/build/eval cycle. For full Harbor A/B testing
 with container registry support, use the standalone Agentic Eval Flow pipeline on OpenShift.
+
+For `aeh` in Konflux, the evaluate task uses the AEH HarborRunner which spawns trial
+pods directly in the pipeline namespace. This requires the Tekton task's ServiceAccount
+to have RBAC permissions to create/delete/get pods and secrets in its own namespace.
+See the AEH RBAC section below.
 
 ### Multi-component Applications
 
@@ -170,13 +177,94 @@ submission/
       environment/Dockerfile
 ```
 
+### Skill Submission (AEH)
+
+AEH (Agent-Eval-Harness) evaluations support both **single** and **pairwise** modes.
+
+**Single mode** evaluates one skill configuration:
+
+```
+submission/
+  metadata.yaml          # name, eval_engine: aeh, gate_policy, push_facts
+  eval.yaml              # AEH evaluation config (skill, models, judges, dataset)
+  cases/
+    case-001/
+      input.yaml         # Test case input
+      annotations.yaml   # Expected behavior annotations
+  skills/
+    <skill-name>/
+      SKILL.md           # Skill definition
+```
+
+**Pairwise mode** compares a treatment (with-skill) vs control (without-skill):
+
+```
+submission/
+  metadata.yaml
+  eval-treatment.yaml    # Treatment variant eval config
+  eval-control.yaml      # Control variant eval config
+  cases/
+    case-001/
+      input.yaml
+      annotations.yaml
+  skills/
+    <skill-name>/
+      SKILL.md
+```
+
+AEH-specific pipeline parameters:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `AEH_MODE` | `single` | `single` or `pairwise` |
+| `AEH_IMAGE` | `quay.io/ecosystem-appeng/agent-eval-harness:v1.0.0` | Container image for trial pods |
+| `AEH_MODEL_OVERRIDE` | (empty) | Override `models.skill` from eval.yaml |
+| `AEH_JUDGE_MODEL_OVERRIDE` | (empty) | Override `models.judge` from eval.yaml |
+| `AEH_RUNNER` | `harbor` | Execution backend (`harbor` or `vanilla`) |
+| `AEH_CONTROL_CONFIG` | `eval-control.yaml` | Control config filename (pairwise) |
+| `AEH_TREATMENT_CONFIG` | `eval-treatment.yaml` | Treatment config filename (pairwise) |
+
+### AEH RBAC Requirements
+
+AEH's HarborRunner spawns Kubernetes pods for each trial directly in the pipeline
+namespace. The Tekton task's ServiceAccount needs the following RBAC:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: aeh-trial-runner
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["create", "delete", "get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: aeh-trial-runner
+subjects:
+  - kind: ServiceAccount
+    name: appstudio-pipeline   # or your Konflux SA name
+roleRef:
+  kind: Role
+  name: aeh-trial-runner
+  apiGroup: rbac.authorization.k8s.io
+```
+
+An `llm-credentials` Secret with an `api-key` key is also expected in the namespace
+for trial pods to access the LLM proxy.
+
 ### metadata.yaml Reference
 
 ```yaml
 name: my-evaluation              # Unique evaluation name
 description: What this evaluates
 version: "1.0.0"
-eval_engine: a2a                  # a2a | harbor | ase | mcpchecker
+eval_engine: a2a                  # a2a | harbor | ase | mcpchecker | aeh
 
 experiment:
   n_trials: 5                    # Number of evaluation trials
@@ -269,6 +357,36 @@ Key steps:
   value: "my-mcp-server-eval"
 ```
 
+### Pattern 4: AEH Skill Evaluation
+
+```yaml
+# In your IntegrationTestScenario params:
+- name: EVAL_ENGINE
+  value: "aeh"
+- name: AEH_MODE
+  value: "single"                # or "pairwise"
+- name: SUBMISSION_REPO_URL
+  value: "https://github.com/myorg/my-submissions.git"
+- name: SUBMISSION_DIR
+  value: "my-skill-aeh-eval"
+- name: LLM_API_BASE
+  value: "http://litellm.my-namespace.svc:4000"
+```
+
+For pairwise mode, add:
+
+```yaml
+- name: AEH_MODE
+  value: "pairwise"
+- name: AEH_CONTROL_CONFIG
+  value: "eval-control.yaml"
+- name: AEH_TREATMENT_CONFIG
+  value: "eval-treatment.yaml"
+```
+
+See `examples/aeh-skill-konflux/` for a complete AEH submission with Compass
+fact-pushing configuration.
+
 ## Secrets
 
 ### Required Secrets by Mode
@@ -277,6 +395,7 @@ Key steps:
 |--------|--------------|
 | `workload-cluster-credentials` | `EVAL_MODE=remote` only |
 | `llm-credentials` | When LLM proxy needs a real API key |
+| `llm-credentials` | `EVAL_ENGINE=aeh` (forwarded into trial pods) |
 
 ### Optional Secrets
 
