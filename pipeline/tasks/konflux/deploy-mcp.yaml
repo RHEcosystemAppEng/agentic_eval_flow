@@ -68,8 +68,32 @@ spec:
     - name: release-name
       description: Helm release name
   steps:
-    - name: deploy
+    - name: copy-credentials
       image: registry.redhat.io/openshift4/ose-cli:latest
+      env:
+        - name: KUBECONFIG
+          value: $(workspaces.target-kubeconfig.path)/kubeconfig
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        CREDENTIALS_SECRET="$(params.credentials-secret)"
+
+        if [ -z "$CREDENTIALS_SECRET" ]; then
+          echo "No credentials secret specified, skipping"
+          exit 0
+        fi
+
+        NAMESPACE="$(params.namespace-name)"
+        PIPELINE_NS=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)
+
+        echo "Copying credentials secret '$CREDENTIALS_SECRET' from $PIPELINE_NS to $NAMESPACE"
+        oc get secret "$CREDENTIALS_SECRET" -n "$PIPELINE_NS" -o json \
+          | jq 'del(.metadata.namespace,.metadata.uid,.metadata.resourceVersion,.metadata.creationTimestamp,.metadata.ownerReferences)' \
+          | oc apply -n "$NAMESPACE" -f -
+
+    - name: deploy-helm
+      image: registry.access.redhat.com/ubi9/ubi-minimal:latest
       env:
         - name: KUBECONFIG
           value: $(workspaces.target-kubeconfig.path)/kubeconfig
@@ -82,7 +106,6 @@ spec:
         COMPONENT_IMAGE="$(params.component-image)"
         SERVICE_NAME="$(params.service-name)"
         SERVICE_PORT="$(params.service-port)"
-        CREDENTIALS_SECRET="$(params.credentials-secret)"
         HELM_CHART="$(workspaces.source.path)/_mcp-server-repo/$(params.helm-chart-path)"
         VALUES_FILE="$(workspaces.source.path)/_mcp-server-repo/$(params.values-test-path)"
         RELEASE_NAME="mcp-eval"
@@ -102,14 +125,11 @@ spec:
           exit 1
         fi
 
-        # Copy credentials secret into ephemeral namespace if specified
-        if [ -n "$CREDENTIALS_SECRET" ]; then
-          PIPELINE_NS=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)
-          echo "Copying credentials secret '$CREDENTIALS_SECRET' from $PIPELINE_NS to $NAMESPACE"
-          oc get secret "$CREDENTIALS_SECRET" -n "$PIPELINE_NS" -o json \
-            | jq 'del(.metadata.namespace,.metadata.uid,.metadata.resourceVersion,.metadata.creationTimestamp,.metadata.ownerReferences)' \
-            | oc apply -n "$NAMESPACE" -f -
-        fi
+        # Install helm
+        echo "Installing helm..."
+        curl -fsSL https://get.helm.sh/helm-v3.16.3-linux-amd64.tar.gz | tar -xz -C /tmp
+        mv /tmp/linux-amd64/helm /usr/local/bin/
+        rm -rf /tmp/linux-amd64
 
         # Build Helm set overrides for the built image
         HELM_SETS=""
