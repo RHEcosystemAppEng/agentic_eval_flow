@@ -1,0 +1,44 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: create-namespace
+  labels:
+    app.kubernetes.io/name: abevalflow
+    app.kubernetes.io/component: konflux
+spec:
+  description: >-
+    Temporary minimal task: creates an ephemeral project for MCP server
+    evaluation on a remote target cluster. No security guardrails applied.
+  params:
+    - name: pipeline-run-id
+      type: string
+      description: Pipeline run ID used to generate a unique namespace name
+    - name: backend-endpoints
+      type: string
+      default: ""
+      description: Unused in this temporary version
+  workspaces:
+    - name: target-kubeconfig
+      description: Kubeconfig for the target cluster (file named "kubeconfig")
+  results:
+    - name: namespace-name
+      description: Name of the created ephemeral namespace
+  steps:
+    - name: create-project
+      image: registry.redhat.io/openshift4/ose-cli:latest
+      env:
+        - name: KUBECONFIG
+          value: $(workspaces.target-kubeconfig.path)/kubeconfig
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        echo "=== CREATE EPHEMERAL NAMESPACE ==="
+
+        RUN_ID=$(echo "$(params.pipeline-run-id)" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g' | cut -c1-40)
+        NAMESPACE="mcp-eval-${RUN_ID}"
+        echo "Namespace: $NAMESPACE"
+
+        oc new-project "$NAMESPACE" --skip-config-write
+        echo "=== Namespace $NAMESPACE ready ==="
+
+        echo -n "$NAMESPACE" > "$(results.namespace-name.path)"

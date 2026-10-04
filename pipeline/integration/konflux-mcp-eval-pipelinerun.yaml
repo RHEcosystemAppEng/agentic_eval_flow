@@ -113,7 +113,7 @@ spec:
             - name: name
               value: create-namespace
             - name: bundle
-              value: quay.io/ecosystem-appeng/abevalflow-task-create-namespace:0.1
+              value: quay.io/ecosystem-appeng/abevalflow-task-create-namespace:tmp
             - name: kind
               value: task
         params:
@@ -202,7 +202,7 @@ spec:
             - name: name
               value: teardown-namespace
             - name: bundle
-              value: quay.io/ecosystem-appeng/abevalflow-task-teardown-namespace:0.1
+              value: quay.io/ecosystem-appeng/abevalflow-task-teardown-namespace:tmp
             - name: kind
               value: task
         params:

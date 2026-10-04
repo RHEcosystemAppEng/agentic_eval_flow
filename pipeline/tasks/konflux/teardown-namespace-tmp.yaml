@@ -1,0 +1,51 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: teardown-namespace
+  labels:
+    app.kubernetes.io/name: abevalflow
+    app.kubernetes.io/component: konflux
+spec:
+  description: >-
+    Temporary minimal task: deletes the ephemeral project created by
+    create-namespace. Runs in the pipeline's finally block.
+  params:
+    - name: namespace-name
+      type: string
+      description: Name of the ephemeral namespace to delete
+  workspaces:
+    - name: target-kubeconfig
+      description: Kubeconfig for the target cluster (file named "kubeconfig")
+  steps:
+    - name: delete-project
+      image: registry.redhat.io/openshift4/ose-cli:latest
+      env:
+        - name: KUBECONFIG
+          value: $(workspaces.target-kubeconfig.path)/kubeconfig
+      script: |
+        #!/usr/bin/env bash
+        set -uo pipefail
+        echo "=== TEARDOWN EPHEMERAL NAMESPACE ==="
+
+        NAMESPACE="$(params.namespace-name)"
+
+        if [ -z "$NAMESPACE" ]; then
+          echo "No namespace specified, nothing to tear down"
+          exit 0
+        fi
+
+        if [[ "$NAMESPACE" != mcp-eval-* ]]; then
+          echo "ERROR: Refusing to delete namespace '$NAMESPACE' — does not match mcp-eval-* pattern"
+          exit 1
+        fi
+
+        echo "Deleting project: $NAMESPACE"
+
+        if oc get project "$NAMESPACE" &>/dev/null; then
+          oc delete project "$NAMESPACE" --wait=false
+          echo "Project deletion initiated"
+        else
+          echo "Project $NAMESPACE does not exist, nothing to delete"
+        fi
+
+        echo "=== Teardown complete ==="
