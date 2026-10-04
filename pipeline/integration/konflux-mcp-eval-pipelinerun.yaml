@@ -117,9 +117,9 @@ spec:
             - name: kind
               value: task
         params:
-          - name: url
+          - name: URL
             value: $(tasks.parse-snapshot.results.git-url)
-          - name: revision
+          - name: REVISION
             value: $(tasks.parse-snapshot.results.git-revision)
         workspaces:
           - name: output
