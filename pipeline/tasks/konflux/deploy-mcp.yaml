@@ -8,8 +8,10 @@ metadata:
 spec:
   description: >-
     Deploys an MCP server into the ephemeral evaluation namespace using
-    its Helm chart and test values. The MCP server repository must provide
-    a Helm chart and a values-test.yaml at standardized locations.
+    its Helm chart and test values. The MCP server repository must be
+    pre-cloned into the source workspace at _mcp-server-repo by the
+    pipeline's fetch-mcp-repo task. The Helm chart and values-test.yaml
+    must exist at standardized locations in the repository.
     Credentials are mounted from OCP Secrets, never committed to git.
     The deployed service is accessible at <service-name>:<service-port>
     within the namespace.
@@ -20,12 +22,6 @@ spec:
     - name: component-image
       type: string
       description: Built container image reference from the Snapshot
-    - name: git-url
-      type: string
-      description: Git repository URL of the MCP server source
-    - name: git-revision
-      type: string
-      description: Git commit SHA to checkout
     - name: helm-chart-path
       type: string
       default: "chart"
@@ -72,33 +68,6 @@ spec:
     - name: release-name
       description: Helm release name
   steps:
-    - name: clone-mcp-repo
-      image: registry.redhat.io/openshift4/ose-cli:latest
-      script: |
-        #!/usr/bin/env bash
-        set -euo pipefail
-        echo "=== Cloning MCP server repository ==="
-
-        GIT_URL="$(params.git-url)"
-        GIT_REVISION="$(params.git-revision)"
-        CLONE_DIR="$(workspaces.source.path)/_mcp-server-repo"
-
-        if [ -z "$GIT_URL" ]; then
-          echo "ERROR: git-url is required"
-          exit 1
-        fi
-
-        rm -rf "$CLONE_DIR"
-        git clone --depth 1 "$GIT_URL" "$CLONE_DIR"
-        cd "$CLONE_DIR"
-
-        if [ -n "$GIT_REVISION" ]; then
-          git fetch --depth 1 origin "$GIT_REVISION"
-          git -c advice.detachedHead=false checkout FETCH_HEAD
-        fi
-
-        echo "Cloned $GIT_URL at $(git rev-parse --short HEAD)"
-
     - name: deploy
       image: registry.redhat.io/openshift4/ose-cli:latest
       env:

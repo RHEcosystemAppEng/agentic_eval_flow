@@ -8,7 +8,7 @@
 # the pipeline tasks to reach the target cluster.
 #
 # Pipeline stages:
-#   parse-snapshot → create-namespace → deploy-mcp → wait-ready
+#   parse-snapshot → fetch-mcp-repo → create-namespace → deploy-mcp → wait-ready
 #   finally: teardown-namespace
 #
 # PREREQUISITES:
@@ -103,7 +103,29 @@ spec:
             value: $(params.SNAPSHOT)
 
       # ================================================================
-      # Stage 2: Create ephemeral namespace on target cluster
+      # Stage 2: Fetch MCP server source repository
+      # ================================================================
+      - name: fetch-mcp-repo
+        runAfter: [parse-snapshot]
+        taskRef:
+          resolver: cluster
+          params:
+            - name: name
+              value: git-clone
+            - name: kind
+              value: task
+        params:
+          - name: url
+            value: $(tasks.parse-snapshot.results.git-url)
+          - name: revision
+            value: $(tasks.parse-snapshot.results.git-revision)
+        workspaces:
+          - name: output
+            workspace: shared-workspace
+            subPath: _mcp-server-repo
+
+      # ================================================================
+      # Stage 3: Create ephemeral namespace on target cluster
       # ================================================================
       - name: create-namespace
         runAfter: [parse-snapshot]
@@ -126,10 +148,10 @@ spec:
             workspace: target-kubeconfig
 
       # ================================================================
-      # Stage 3: Deploy MCP server into ephemeral namespace
+      # Stage 4: Deploy MCP server into ephemeral namespace
       # ================================================================
       - name: deploy-mcp
-        runAfter: [create-namespace]
+        runAfter: [fetch-mcp-repo, create-namespace]
         taskRef:
           resolver: bundles
           params:
@@ -144,10 +166,6 @@ spec:
             value: $(tasks.create-namespace.results.namespace-name)
           - name: component-image
             value: $(tasks.parse-snapshot.results.component-image)
-          - name: git-url
-            value: $(tasks.parse-snapshot.results.git-url)
-          - name: git-revision
-            value: $(tasks.parse-snapshot.results.git-revision)
           - name: helm-chart-path
             value: $(params.HELM_CHART_PATH)
           - name: values-test-path
@@ -169,7 +187,7 @@ spec:
             workspace: target-kubeconfig
 
       # ================================================================
-      # Stage 4: Wait for MCP server readiness
+      # Stage 5: Wait for MCP server readiness
       # ================================================================
       - name: wait-ready
         runAfter: [deploy-mcp]
