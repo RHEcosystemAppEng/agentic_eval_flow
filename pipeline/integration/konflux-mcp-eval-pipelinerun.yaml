@@ -112,6 +112,8 @@ spec:
           params:
             - name: name
               value: git-clone
+            - name: namespace
+              value: openshift-pipelines
             - name: kind
               value: task
         params:
