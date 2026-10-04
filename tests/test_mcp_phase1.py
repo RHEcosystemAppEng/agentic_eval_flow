@@ -163,9 +163,7 @@ def test_integration_secrets_detects_planted_key(tmp_path):
     # AKIA+16 key still trips its AWS rule; the full value lives only in the temp file.
     access_key = "AKIA" + "".join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(16))
     secret_key = "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(40))
-    (repo / "config.py").write_text(
-        f'AWS_ACCESS_KEY_ID = "{access_key}"\naws_secret = "{secret_key}"\n'
-    )
+    (repo / "config.py").write_text(f'AWS_ACCESS_KEY_ID = "{access_key}"\naws_secret = "{secret_key}"\n')
     reports = tmp_path / "reports"
     reports.mkdir()
     rc = _run_scanner(secrets_scan, [str(repo), "--reports-dir", str(reports)])
