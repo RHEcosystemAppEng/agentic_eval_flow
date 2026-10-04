@@ -121,7 +121,7 @@ spec:
             value: $(tasks.parse-snapshot.results.git-url)
           - name: REVISION
             value: $(tasks.parse-snapshot.results.git-revision)
-          - name: sslVerify
+          - name: SSL_VERIFY
             value: "false"
         workspaces:
           - name: output
