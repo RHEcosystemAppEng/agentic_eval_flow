@@ -7,11 +7,11 @@ metadata:
     app.kubernetes.io/component: konflux
 spec:
   description: >-
-    Waits for the deployed MCP server to become ready by monitoring its
-    Kubernetes readiness status. Uses the pod's native readinessProbe
-    as defined in the MCP server's Helm chart. If the server is not
-    ready within the configured timeout, reports not-ready so the
-    pipeline can proceed to report all Phase 2/3 checks as not-evaluated.
+    Waits for all Deployments and StatefulSets created by the Helm
+    release to complete their rollout, then verifies every pod in the
+    namespace is Ready. Fails the task if no workloads appear, any
+    rollout does not complete, any pod is not ready, or pods are in
+    an error state (CrashLoopBackOff, ImagePullBackOff, etc.).
   params:
     - name: namespace-name
       type: string
@@ -29,7 +29,7 @@ spec:
         "kubeconfig". All oc commands use this to reach the remote cluster.
   results:
     - name: ready-status
-      description: '"ready" if the server is accepting connections, "not-ready" otherwise'
+      description: '"ready" if all workloads are healthy; not written on failure'
   steps:
     - name: wait
       image: registry.redhat.io/openshift4/ose-cli:latest
@@ -39,42 +39,92 @@ spec:
       script: |
         #!/usr/bin/env bash
         set -uo pipefail
-        echo "=== WAIT FOR MCP SERVER READINESS ==="
+        echo "=== WAIT FOR HELM RELEASE READINESS ==="
 
         NAMESPACE="$(params.namespace-name)"
         TIMEOUT="$(params.readiness-timeout)"
+        DEADLINE=$((SECONDS + TIMEOUT))
 
         echo "Namespace: $NAMESPACE"
         echo "Timeout: ${TIMEOUT}s"
 
-        DEADLINE=$((SECONDS + TIMEOUT))
+        fail() {
+          echo ""
+          echo "=== Pod status ==="
+          oc get pods -n "$NAMESPACE" -o wide 2>/dev/null || true
+          echo ""
+          echo "=== Diagnostic events ==="
+          oc get events -n "$NAMESPACE" --sort-by='.lastTimestamp' 2>/dev/null | tail -20 || true
+          echo "=== FAILED: $1 ==="
+          exit 1
+        }
 
-        # Wait for at least one pod to exist in the namespace
-        echo "Waiting for pods to appear..."
+        # ── Phase 1: Wait for workload controllers or pods to appear ──
+        echo "Waiting for workloads to be created..."
         while true; do
+          DEPLOY_COUNT=$(oc get deployments -n "$NAMESPACE" --no-headers 2>/dev/null | wc -l)
+          STS_COUNT=$(oc get statefulsets -n "$NAMESPACE" --no-headers 2>/dev/null | wc -l)
           POD_COUNT=$(oc get pods -n "$NAMESPACE" --no-headers 2>/dev/null | wc -l)
-          if [ "$POD_COUNT" -gt 0 ]; then
-            echo "Found $POD_COUNT pod(s), waiting 5s for remaining pods to appear..."
-            sleep 5
+          TOTAL=$((DEPLOY_COUNT + STS_COUNT + POD_COUNT))
+
+          if [ "$TOTAL" -gt 0 ]; then
+            echo "Workloads detected"
             break
           fi
+
           if [ $SECONDS -ge $DEADLINE ]; then
-            echo "ERROR: No pods found in namespace $NAMESPACE within ${TIMEOUT}s"
-            echo -n "not-ready" > "$(results.ready-status.path)"
-            exit 0
+            fail "No workloads found in namespace $NAMESPACE within ${TIMEOUT}s"
           fi
           sleep 3
         done
 
-        # Wait for all pods to pass their readiness probes
-        REMAINING=$((DEADLINE - SECONDS))
-        echo "Waiting up to ${REMAINING}s for all pods to become ready..."
-        if oc wait --for=condition=Ready pod --all -n "$NAMESPACE" --timeout="${REMAINING}s" 2>&1; then
-          echo -n "ready" > "$(results.ready-status.path)"
-          echo "=== MCP server is ready ==="
-        else
-          echo "TIMEOUT: MCP server not ready within ${TIMEOUT}s"
-          oc get events -n "$NAMESPACE" --sort-by='.lastTimestamp' 2>/dev/null | tail -20 || true
-          echo -n "not-ready" > "$(results.ready-status.path)"
-          echo "=== MCP server is NOT ready ==="
+        # Brief settle to allow all Helm-created resources to appear
+        sleep 2
+
+        # ── Phase 2: Wait for each Deployment rollout ──
+        for DEPLOY in $(oc get deployments -n "$NAMESPACE" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+          REMAINING=$((DEADLINE - SECONDS))
+          if [ "$REMAINING" -le 0 ]; then
+            fail "Timeout before checking Deployment/$DEPLOY"
+          fi
+
+          echo "Waiting for Deployment/$DEPLOY rollout (${REMAINING}s remaining)..."
+          if ! oc rollout status "deployment/$DEPLOY" -n "$NAMESPACE" --timeout="${REMAINING}s" 2>&1; then
+            fail "Deployment/$DEPLOY failed rollout"
+          fi
+          echo "  Deployment/$DEPLOY is ready"
+        done
+
+        # ── Phase 3: Wait for each StatefulSet rollout ──
+        for STS in $(oc get statefulsets -n "$NAMESPACE" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+          REMAINING=$((DEADLINE - SECONDS))
+          if [ "$REMAINING" -le 0 ]; then
+            fail "Timeout before checking StatefulSet/$STS"
+          fi
+
+          echo "Waiting for StatefulSet/$STS rollout (${REMAINING}s remaining)..."
+          if ! oc rollout status "statefulset/$STS" -n "$NAMESPACE" --timeout="${REMAINING}s" 2>&1; then
+            fail "StatefulSet/$STS failed rollout"
+          fi
+          echo "  StatefulSet/$STS is ready"
+        done
+
+        # ── Phase 4: Final pod-level sweep ──
+        # Catches standalone pods, Jobs, sidecars — anything not
+        # managed by a Deployment or StatefulSet
+        POD_COUNT=$(oc get pods -n "$NAMESPACE" --no-headers 2>/dev/null | wc -l)
+        if [ "$POD_COUNT" -eq 0 ]; then
+          fail "No pods exist in namespace $NAMESPACE"
         fi
+
+        REMAINING=$((DEADLINE - SECONDS))
+        echo ""
+        echo "Verifying all $POD_COUNT pod(s) are Ready (${REMAINING}s remaining)..."
+        if ! oc wait --for=condition=Ready pod --all -n "$NAMESPACE" --timeout="${REMAINING}s" 2>&1; then
+          fail "Some pods are not Ready after waiting"
+        fi
+
+        # ── Success ──
+        echo -n "ready" > "$(results.ready-status.path)"
+        echo ""
+        echo "=== All workloads are ready ==="
