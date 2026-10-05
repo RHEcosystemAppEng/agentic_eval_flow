@@ -20,7 +20,7 @@ spec:
       type: string
       default: "harbor"
       description: >-
-        Evaluation engine used: 'harbor', 'ase', 'a2a', 'aeh',
+        Evaluation engine used: 'harbor', 'ase', 'a2a', 'mcpchecker', 'aeh',
         'aeh_openshell_openclaw', or 'both'. Controls which analysis path runs.
     - name: commit-sha
       type: string
@@ -220,6 +220,14 @@ spec:
           python scripts/analyze.py "${ARGS[@]}"
 
           echo "=== Both mode: ASE report already at $REPORT_DIR ==="
+
+        elif [ "$EVAL_ENGINE" = "mcpchecker" ]; then
+          echo "=== MCPChecker mode: using report from evaluate ==="
+          if [ ! -f "$REPORT_DIR/mcpchecker-report.json" ]; then
+            echo "ERROR: MCPChecker report not found at $REPORT_DIR/mcpchecker-report.json"
+            exit 1
+          fi
+          echo "Found MCPChecker report at $REPORT_DIR"
         fi
 
         # --- 3. Enrich report with PR/LLM metadata (ASE mode) ---
@@ -246,7 +254,7 @@ spec:
         fi
 
         # --- 5. Regenerate markdown from enriched JSON (ASE/both only) ---
-        if [ "$EVAL_ENGINE" != "harbor" ] && [ "$EVAL_ENGINE" != "a2a" ]; then
+        if [ "$EVAL_ENGINE" != "harbor" ] && [ "$EVAL_ENGINE" != "a2a" ] && [ "$EVAL_ENGINE" != "mcpchecker" ]; then
           echo "Regenerating report.md from enriched JSON..."
           python3 -c "import sys;sys.path.insert(0,'$PIPELINE_DIR');from pathlib import Path;from abevalflow.report import AnalysisResult;from scripts.analyze import render_markdown;d=Path(sys.argv[1]);r=AnalysisResult.model_validate_json((d/'report.json').read_text());(d/'report.md').write_text(render_markdown(r))" "$REPORT_DIR"
         fi
@@ -261,18 +269,31 @@ spec:
         # --- 6. Extract results for Tekton ---
         echo -n "$REPORT_DIR" > "$(results.report-path.path)"
 
-        python3 -c "import json,sys;r=json.loads(open(sys.argv[1]).read());s=r['summary'];open(sys.argv[2],'w').write(s['recommendation']);t,c=s['treatment'].get('mean_reward'),s['control'].get('mean_reward');open(sys.argv[3],'w').write(f'{t:.4f}' if t is not None else 'N/A');open(sys.argv[4],'w').write(f'{c:.4f}' if c is not None else 'N/A');g=s.get('mean_reward_gap');open(sys.argv[5],'w').write(f'{g:+.4f}' if g is not None else 'N/A');tt,fi=s.get('ttest_p_value'),s.get('fisher_p_value');open(sys.argv[6],'w').write(f'{tt:.4f}' if tt is not None else 'N/A');open(sys.argv[7],'w').write(f'{fi:.4f}' if fi is not None else 'N/A')" \
-          "$REPORT_DIR/report.json" \
-          "$(results.recommendation.path)" \
-          "$(results.treatment-mean-reward.path)" \
-          "$(results.control-mean-reward.path)" \
-          "$(results.mean-reward-gap.path)" \
-          "$(results.ttest-p-value.path)" \
-          "$(results.fisher-p-value.path)"
+        if [ "$EVAL_ENGINE" = "mcpchecker" ]; then
+          python3 -c "import json,sys;r=json.load(open(sys.argv[1]));score=r.get('overall_score');rec=r.get('recommendation') or ('pass' if isinstance(score,(int,float)) and score>=0.7 else 'fail');open(sys.argv[2],'w').write(rec);open(sys.argv[3],'w').write(f'{score:.4f}' if isinstance(score,(int,float)) else 'N/A');open(sys.argv[4],'w').write('N/A');open(sys.argv[5],'w').write('N/A');open(sys.argv[6],'w').write('N/A');open(sys.argv[7],'w').write('N/A')" \
+            "$REPORT_DIR/mcpchecker-report.json" \
+            "$(results.recommendation.path)" \
+            "$(results.treatment-mean-reward.path)" \
+            "$(results.control-mean-reward.path)" \
+            "$(results.mean-reward-gap.path)" \
+            "$(results.ttest-p-value.path)" \
+            "$(results.fisher-p-value.path)"
+        else
+          python3 -c "import json,sys;r=json.loads(open(sys.argv[1]).read());s=r['summary'];open(sys.argv[2],'w').write(s['recommendation']);t,c=s['treatment'].get('mean_reward'),s['control'].get('mean_reward');open(sys.argv[3],'w').write(f'{t:.4f}' if t is not None else 'N/A');open(sys.argv[4],'w').write(f'{c:.4f}' if c is not None else 'N/A');g=s.get('mean_reward_gap');open(sys.argv[5],'w').write(f'{g:+.4f}' if g is not None else 'N/A');tt,fi=s.get('ttest_p_value'),s.get('fisher_p_value');open(sys.argv[6],'w').write(f'{tt:.4f}' if tt is not None else 'N/A');open(sys.argv[7],'w').write(f'{fi:.4f}' if fi is not None else 'N/A')" \
+            "$REPORT_DIR/report.json" \
+            "$(results.recommendation.path)" \
+            "$(results.treatment-mean-reward.path)" \
+            "$(results.control-mean-reward.path)" \
+            "$(results.mean-reward-gap.path)" \
+            "$(results.ttest-p-value.path)" \
+            "$(results.fisher-p-value.path)"
+        fi
 
         echo "=== Analysis complete ==="
         echo "Report: $REPORT_DIR"
-        cat "$REPORT_DIR/report.md"
+        if [ -f "$REPORT_DIR/report.md" ]; then
+          cat "$REPORT_DIR/report.md"
+        fi
 
     - name: aggregate-scorecard
       image: registry.access.redhat.com/ubi9/python-311:9.6
