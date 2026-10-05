@@ -14,6 +14,11 @@ data:
           model: openai/rits/zai-org/glm-5-3
           api_base: os.environ/INFERENCE_ENDPOINT_URL
           api_key: os.environ/INFERENCE_API_KEY
+      - model_name: rits/zai-org/GLM-5-3-Flash
+        litellm_params:
+          model: openai/rits/zai-org/GLM-5-3-Flash
+          api_base: os.environ/INFERENCE_ENDPOINT_URL
+          api_key: os.environ/INFERENCE_API_KEY
 
     litellm_settings:
       drop_params: true

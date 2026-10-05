@@ -132,7 +132,9 @@ spec:
         export PYTHONPATH="$PIPELINE_DIR"
 
         # --- 2. Install dependencies ---
-        pip install --quiet --no-cache-dir pydantic sqlalchemy "psycopg[binary]" "tenacity>=8.2" pyyaml mlflow
+        # Support both postgresql+psycopg:// (v3) and legacy/plain URLs that
+        # SQLAlchemy resolves through the psycopg2 dialect.
+        pip install --quiet --no-cache-dir pydantic sqlalchemy "psycopg[binary]" psycopg2-binary "tenacity>=8.2" pyyaml mlflow
 
         # --- 3. Run store script ---
         REPORT_DIR="$(workspaces.source.path)/reports/$(params.submission-name)"
