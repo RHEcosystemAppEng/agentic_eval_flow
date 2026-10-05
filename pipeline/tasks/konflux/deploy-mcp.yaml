@@ -125,7 +125,9 @@ spec:
           exit 1
         fi
 
-        # Install helm
+        # Install tar and helm
+        echo "Installing tar..."
+        microdnf install -y tar gzip
         echo "Installing helm..."
         curl -fsSL https://get.helm.sh/helm-v3.16.3-linux-amd64.tar.gz | tar -xz -C /tmp
         mv /tmp/linux-amd64/helm /usr/local/bin/
