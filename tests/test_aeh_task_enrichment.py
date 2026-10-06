@@ -100,6 +100,49 @@ def test_enrich_copies_skills_and_sets_skills_dir(tmp_path: Path):
     assert 'skills_dir = "/workspace/skills"' in toml
 
 
+def test_enrich_copies_skills_from_pack_root_skills_subdir(tmp_path: Path):
+    """plugin_dirs pointing at a pack ROOT (e.g. ["../../../rh-sre"]), not
+    directly at its skills/ folder -- the convention every agentic-plugins
+    submission uses so the SAME plugin_dirs entry also resolves the pack's
+    mcps.json for the mock-MCP swap step (see aeh-skill-eval.yaml). The real
+    skill lives two levels down: <plugin_dirs entry>/skills/<name>/SKILL.md.
+    Mirrors scripts/validate.py's _check_aeh_plugin_dirs 'skills_sub' case.
+    """
+    submission = tmp_path / "submissions" / "rh-sre" / "cve-validation"
+    pack_root = tmp_path / "rh-sre"
+    skill_dir = pack_root / "skills" / "cve-validation"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("---\nname: cve-validation\n---\n# cve-validation\n")
+    (pack_root / "mcps.json").write_text("{}")
+    (submission / "cases" / "case-001").mkdir(parents=True)
+    (submission / "eval.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "skill": "cve-validation",
+                "dataset": {"path": "cases"},
+                "runner": {"type": "claude-code", "plugin_dirs": ["../../../rh-sre"]},
+                "judges": [{"name": "exit_success"}],
+            }
+        )
+    )
+
+    tasks = tmp_path / "tasks"
+    task = tasks / "case-001"
+    _write_generated_task(task)
+
+    enrich_harbor_tasks(tasks, config_path=submission / "eval.yaml")
+
+    # Copied environment/skills/cve-validation/SKILL.md -- NOT
+    # environment/skills/skills/cve-validation/SKILL.md (no doubled "skills/"
+    # level) -- and the sibling mcps.json / other pack dirs are not dragged
+    # along into the Harbor skills_dir scan.
+    assert (task / "environment" / "skills" / "cve-validation" / "SKILL.md").is_file()
+    assert not (task / "environment" / "skills" / "skills").exists()
+    assert not (task / "environment" / "skills" / "mcps.json").exists()
+    toml = (task / "task.toml").read_text()
+    assert 'skills_dir = "/workspace/skills"' in toml
+
+
 def test_enrich_preserves_tool_interception_artifacts(tmp_path: Path):
     submission = tmp_path / "submission"
     skill_dir = submission / "skills" / "demo-skill"

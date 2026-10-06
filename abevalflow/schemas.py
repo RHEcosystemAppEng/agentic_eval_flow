@@ -44,6 +44,25 @@ class SecurityScanMode(StrEnum):
     BLOCK = "block"
 
 
+class AehMode(StrEnum):
+    """AEH evaluation mode. Mirrors scripts/validate.py --aeh-mode choices.
+
+    'single' evaluates the skilled agent alone against eval.yaml's own
+    threshold (the catalog-wide default — see .tekton/*.yaml AEH_MODE
+    param). 'pairwise' additionally runs a vanilla-vs-skilled control/
+    treatment A/B comparison via eval-control.yaml / eval-treatment.yaml
+    (aeh_control_config / aeh_treatment_config below) and reports win-rate
+    uplift. Declaring this HERE, per-submission, lets one skill opt into
+    pairwise without flipping the pipeline-wide default for every other
+    skill's leg of the same Matrix fan-out — see aeh-skill-eval.yaml's
+    validate step, which prefers this value over the pipeline's own
+    aeh-mode param when set.
+    """
+
+    SINGLE = "single"
+    PAIRWISE = "pairwise"
+
+
 class RedTeamMode(StrEnum):
     SMOKE = "smoke"
     FULL = "full"
@@ -576,6 +595,37 @@ class SubmissionMetadata(BaseModel):
             "Evaluation engine: 'harbor' for full containerized A/B evaluation, "
             "'ase' for lightweight LLM-as-a-judge via agent-skills-eval, "
             "'both' to run both engines. Pipeline param takes precedence."
+        ),
+    )
+
+    aeh_mode: AehMode = Field(
+        default=AehMode.SINGLE,
+        description=(
+            "AEH evaluation mode for THIS submission: 'single' (default) or "
+            "'pairwise' (vanilla-vs-skilled control/treatment A/B comparison). "
+            "Overrides the pipeline-wide AEH_MODE param for just this skill's "
+            "Matrix leg, so a catalog-wide .tekton/*.yaml default (always "
+            "'single') never has to flip for every other skill just to let "
+            "one submission run pairwise. Only meaningful when eval_engine "
+            "is 'aeh' (or 'aeh_openshell_openclaw'); requires "
+            "aeh_control_config / aeh_treatment_config files alongside this "
+            "metadata.yaml when set to 'pairwise'."
+        ),
+    )
+    aeh_control_config: str = Field(
+        default="eval-control.yaml",
+        min_length=1,
+        description=(
+            "Control-variant AEH config filename (relative to this submission "
+            "dir), used only when aeh_mode is 'pairwise'."
+        ),
+    )
+    aeh_treatment_config: str = Field(
+        default="eval-treatment.yaml",
+        min_length=1,
+        description=(
+            "Treatment-variant AEH config filename (relative to this "
+            "submission dir), used only when aeh_mode is 'pairwise'."
         ),
     )
 
