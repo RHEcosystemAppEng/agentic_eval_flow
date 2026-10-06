@@ -156,12 +156,16 @@ def main() -> int:
         try:
             loaded = json.loads(args.facts_file.read_text())
         except (json.JSONDecodeError, OSError) as exc:
-            logger.warning("Could not read facts file %s (%s); consumed checks reported not_evaluated.", args.facts_file, exc)
+            logger.warning(
+                "Could not read facts file %s (%s); consumed checks reported not_evaluated.", args.facts_file, exc
+            )
         else:
             if isinstance(loaded, dict):
                 facts = loaded
             else:
-                logger.warning("Facts file %s is not a JSON object; consumed checks reported not_evaluated.", args.facts_file)
+                logger.warning(
+                    "Facts file %s is not a JSON object; consumed checks reported not_evaluated.", args.facts_file
+                )
 
     outcomes = map_facts(facts)
     for outcome in outcomes:
