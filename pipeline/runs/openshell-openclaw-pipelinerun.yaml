@@ -9,6 +9,9 @@ spec:
   pipelineRef:
     name: abevalflow-pipeline-openshell
   params:
+    # [Optional] Add a submission repository for this run; this replaces the deployed Pipeline default.
+    # - name: repo-url
+    #   value: "<submission-repo-url>"
     - name: submission-dir
       value: "openclaw-forge"
     - name: eval-engine
@@ -19,6 +22,11 @@ spec:
       value: "feat/aeh-openshell-openclaw"
     - name: pipeline-repo-revision
       value: "feat/aeh-openshell-openclaw"
+    # [Optional] Add a harness repository or revision for this run; these replace Pipeline defaults.
+    # - name: agent-eval-harness-repo-url
+    #   value: "<harness-repo-url>"
+    # - name: agent-eval-harness-repo-revision
+    #   value: "<harness-commit-or-branch>"
     - name: openshell-gateway-endpoint
       # Certificate-valid hostname, resolved to this namespace's Service below.
       value: "https://host.containers.internal:17670"
@@ -26,6 +34,7 @@ spec:
       value: "openshell-gateway-mtls"
     - name: openshell-ai-gateway-ca-secret
       value: "forge-agent-upstream-tls"
+    # To use another sandbox image, replace the value below with <image@sha256:digest>.
     - name: openshell-sandbox-image
       value: "ghcr.io/rh-forge/openclaw-saw-agent@sha256:bcc55e9b7a36d5f65e8ffc75962496f8b3617762a4cdb37fd1cf54611b72d41a"
     - name: openshell-provider
