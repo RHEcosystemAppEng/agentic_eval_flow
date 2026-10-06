@@ -15,6 +15,12 @@ spec:
     resolves to pass/fail only. Normalized scan JSON and per-gate GateResults
     are written under reports/<submission-name>/.
   params:
+    - name: mcp-eval-image
+      type: string
+      default: "quay.io/ecosystem-appeng/abevalflow-mcp-eval:0.1"
+      description: >-
+        MCP eval image with the scanners (gitleaks, semgrep, licensee) and the
+        pipeline code (scripts.mcp, abevalflow.mcp) baked in at PYTHONPATH=/opt.
     - name: source-subdir
       type: string
       default: "."
@@ -34,78 +40,26 @@ spec:
       description: >-
         Space-separated approved SPDX ids overriding the built-in allow-list
         (e.g. "apache-2.0 mit"). Empty uses DEFAULT_ALLOWED_LICENSES.
-    - name: pipeline-repo-url
-      type: string
-      default: "https://github.com/RHEcosystemAppEng/agentic_eval_flow.git"
-      description: URL of the Agentic Eval Flow pipeline repository (scanner scripts).
-    - name: pipeline-repo-revision
-      type: string
-      default: "main"
-      description: Branch or SHA of the pipeline repo to use for scripts.
   workspaces:
     - name: source
       description: Workspace containing the MCP server source to evaluate.
   results:
     - name: phase1-passed
       description: Whether all Phase 1 gates passed (true/false).
-    - name: secrets-passed
-      description: Whether the secrets-management gate passed.
-    - name: no-user-code-passed
-      description: Whether the no-user-code-execution gate passed.
-    - name: license-passed
-      description: Whether the license-compliance gate passed.
     - name: report-path
       description: Workspace-relative path to the Phase 1 reports directory.
   steps:
-    - name: clone-pipeline-repo
-      image: registry.access.redhat.com/ubi9/python-311:9.6
-      script: |
-        #!/usr/bin/env bash
-        set -euo pipefail
-        PIPELINE_DIR="$(workspaces.source.path)/_pipeline"
-        if [ -d "$PIPELINE_DIR/.git" ]; then
-          echo "Pipeline repo already cloned, skipping"
-          exit 0
-        fi
-        git clone --depth 1 --branch "$(params.pipeline-repo-revision)" \
-          "$(params.pipeline-repo-url)" "$PIPELINE_DIR"
-        echo "Cloned pipeline repo at $(params.pipeline-repo-revision)"
-
     - name: scan
-      image: registry.access.redhat.com/ubi9/python-311:9.6
-      # Tekton steps run as separate containers sharing only the workspaces, not
-      # the container root filesystem. Tools must be installed in the SAME step
-      # that runs the scanners, so install and scan live together here.
+      image: $(params.mcp-eval-image)
       env:
         - name: SEMGREP_ENABLE_VERSION_CHECK
           value: "0"  # no phone-home version check; stay offline
       script: |
         #!/usr/bin/env bash
         set -euo pipefail
-        PIPELINE_DIR="$(workspaces.source.path)/_pipeline"
         SOURCE_DIR="$(workspaces.source.path)/$(params.source-subdir)"
         REPORTS_DIR="$(workspaces.source.path)/reports/$(params.submission-name)"
         mkdir -p "$REPORTS_DIR"
-
-        echo "=== Installing gitleaks (secrets) ==="
-        GITLEAKS_VERSION="8.30.0"
-        curl -sL \
-          "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
-          | tar -xz -C /usr/local/bin gitleaks
-        gitleaks version
-
-        echo "=== Installing semgrep (no-user-code) ==="
-        pip install --quiet --no-cache-dir semgrep
-        semgrep --version
-
-        echo "=== Installing licensee (license) ==="
-        dnf install -y --quiet ruby ruby-devel gcc make redhat-rpm-config 2>&1 | tail -3
-        gem install --quiet licensee
-        licensee version
-
-        cd "$PIPELINE_DIR"
-        export PYTHONPATH="$PIPELINE_DIR"
-        pip install --quiet --no-cache-dir pydantic pyyaml
 
         LICENSE_ARGS=""
         for spdx in $(params.allowed-licenses); do
@@ -119,17 +73,12 @@ spec:
         python -m scripts.mcp.license_scan "$SOURCE_DIR" --reports-dir "$REPORTS_DIR" $LICENSE_ARGS
 
     - name: gate
-      image: registry.access.redhat.com/ubi9/python-311:9.6
+      image: $(params.mcp-eval-image)
       script: |
         #!/usr/bin/env bash
         set -euo pipefail
-        PIPELINE_DIR="$(workspaces.source.path)/_pipeline"
         REPORTS_DIR="$(workspaces.source.path)/reports/$(params.submission-name)"
         REPORT_REL="reports/$(params.submission-name)"
-
-        cd "$PIPELINE_DIR"
-        export PYTHONPATH="$PIPELINE_DIR"
-        pip install --quiet --no-cache-dir pydantic pyyaml
 
         # Never abort before writing results: capture the exit code, emit
         # Tekton results from the summary, then fail the step if a gate failed.
@@ -140,20 +89,8 @@ spec:
         set -e
 
         SUMMARY="$REPORTS_DIR/phase1-summary.json"
-        emit() {
-          python3 -c "
-        import json, sys
-        data = json.load(open('$SUMMARY'))
-        gates = {g['gate']: g['passed'] for g in data['gates']}
-        print(str(gates.get(sys.argv[1], False)).lower(), end='')
-        " "$1"
-        }
-
         python3 -c "import json;print(str(json.load(open('$SUMMARY'))['passed']).lower(),end='')" \
           > "$(results.phase1-passed.path)"
-        emit mcp-secrets > "$(results.secrets-passed.path)"
-        emit mcp-no-user-code > "$(results.no-user-code-passed.path)"
-        emit mcp-license > "$(results.license-passed.path)"
         echo -n "$REPORT_REL" > "$(results.report-path.path)"
 
         exit $GATE_EXIT

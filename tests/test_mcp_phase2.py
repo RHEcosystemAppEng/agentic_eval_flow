@@ -19,7 +19,7 @@ from abevalflow.mcp.phase2.base import Phase2Gate
 from abevalflow.schemas import GatePolicy
 from scripts.mcp import compass_fetch, phase2_probe, run_phase2_gates
 from scripts.mcp._phase2 import STATUS_FAIL, STATUS_NOT_EVALUATED, STATUS_PASS, CheckOutcome, write_check_result
-from scripts.mcp.mcp_client import RpcResponse, _parse_sse
+from scripts.mcp._mcp_client import RpcResponse, _parse_sse
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -238,12 +238,27 @@ def test_map_facts_oauth_explicit_false_fails_only_for_false():
     assert {f["rule_id"] for f in out.findings} == {"oauth-server-match"}
 
 
-def test_missing_facts_file_fails(monkeypatch, tmp_path):
+def test_missing_facts_file_degrades_to_not_evaluated(monkeypatch, tmp_path):
     monkeypatch.setattr(
         "sys.argv",
         ["compass_fetch", "--facts-file", str(tmp_path / "nope.json"), "--reports-dir", str(tmp_path)],
     )
-    assert compass_fetch.main() == 1
+    assert compass_fetch.main() == 0
+    for check in ("tool-name-rules", "oauth-catalog-match"):
+        data = json.loads((tmp_path / f"{check}-check.json").read_text())
+        assert data["status"] == STATUS_NOT_EVALUATED
+
+
+def test_malformed_facts_file_degrades_to_not_evaluated(monkeypatch, tmp_path):
+    bad = tmp_path / "bad.json"
+    bad.write_text("{ not valid json ")
+    monkeypatch.setattr(
+        "sys.argv",
+        ["compass_fetch", "--facts-file", str(bad), "--reports-dir", str(tmp_path)],
+    )
+    assert compass_fetch.main() == 0
+    data = json.loads((tmp_path / "tool-name-rules-check.json").read_text())
+    assert data["status"] == STATUS_NOT_EVALUATED
 
 
 # ---------------------------------------------------------------------------

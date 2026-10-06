@@ -30,7 +30,7 @@ from scripts.mcp._phase2 import (
     CheckOutcome,
     write_check_result,
 )
-from scripts.mcp.mcp_client import MCPClient, MCPConnectionError, RpcResponse
+from scripts.mcp._mcp_client import MCPClient, MCPConnectionError, RpcResponse
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)

@@ -149,10 +149,19 @@ def main() -> int:
     parser.add_argument("--facts-file", type=Path, required=True, help="Local JSON file of Compass facts")
     args = parser.parse_args()
 
+    facts: dict[str, Any] = {}
     if not args.facts_file.is_file():
-        logger.error("Facts file not found: %s", args.facts_file)
-        return 1
-    facts = json.loads(args.facts_file.read_text())
+        logger.warning("Facts file not found: %s; consumed checks reported not_evaluated.", args.facts_file)
+    else:
+        try:
+            loaded = json.loads(args.facts_file.read_text())
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.warning("Could not read facts file %s (%s); consumed checks reported not_evaluated.", args.facts_file, exc)
+        else:
+            if isinstance(loaded, dict):
+                facts = loaded
+            else:
+                logger.warning("Facts file %s is not a JSON object; consumed checks reported not_evaluated.", args.facts_file)
 
     outcomes = map_facts(facts)
     for outcome in outcomes:

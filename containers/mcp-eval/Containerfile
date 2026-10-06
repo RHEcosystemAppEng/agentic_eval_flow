@@ -1,0 +1,61 @@
+# MCP server evaluation image for ABEvalFlow Phase 1 (static) + Phase 2 (conformance).
+#
+# Dedicated image so the two MCP Tekton tasks no longer clone the pipeline repo or
+# install tools at runtime. Nothing else pulls this image, so changes here cannot
+# affect the shared eval-base pipelines.
+#
+# Bakes:
+#   - the MCP eval code and its full import closure (abevalflow.mcp / gates /
+#     schemas / observability, and scripts.mcp) importable via PYTHONPATH=/opt
+#   - the scanners/probes it shells out to: gitleaks, semgrep, licensee
+#   - the minimal Python deps the code imports: pydantic, pyyaml, httpx
+#
+# Build from repo root (COPY needs repo-root context):
+#   podman build -t quay.io/ecosystem-appeng/abevalflow-mcp-eval:0.1 \
+#     -f containers/mcp-eval/Containerfile .
+
+# Base tracks :latest (same as Dockerfile.base / agent-eval-harness) so UBI9 CVE
+# patches keep flowing. The tools and Python deps that affect runtime behavior are
+# pinned below, which is where version drift would actually break the eval code.
+FROM registry.access.redhat.com/ubi9/python-312:latest
+
+# Pinned tool + Python dep versions (avoids the version drift called out in review;
+# e.g. an unpinned pydantic v3 would break the schemas the eval code relies on).
+ARG GITLEAKS_VERSION=8.30.0
+ARG SEMGREP_VERSION=1.179.0
+ARG PYDANTIC_VERSION=2.13.5
+ARG PYYAML_VERSION=6.0.3
+ARG HTTPX_VERSION=0.28.1
+
+USER 0
+
+# MCP eval code — only the verified import closure (abevalflow.mcp pulls in
+# gates, schemas, observability; scripts.mcp are the Tekton entry points).
+COPY abevalflow/__init__.py /opt/abevalflow/__init__.py
+COPY abevalflow/schemas.py /opt/abevalflow/schemas.py
+COPY abevalflow/mcp /opt/abevalflow/mcp
+COPY abevalflow/gates /opt/abevalflow/gates
+COPY abevalflow/observability /opt/abevalflow/observability
+COPY scripts/__init__.py /opt/scripts/__init__.py
+COPY scripts/mcp /opt/scripts/mcp
+
+ENV PYTHONPATH=/opt
+
+# Scanners/probes (shelled out to, not imported) + minimal Python deps (imported).
+# licensee's native dep (rugged -> libgit2) needs a build toolchain to compile;
+# install it, build the gem, then drop the toolchain to keep the image lean.
+RUN curl -LsSf \
+      "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+      | tar -xz -C /usr/local/bin gitleaks \
+ && pip install --no-cache-dir \
+      "semgrep==${SEMGREP_VERSION}" \
+      "pydantic==${PYDANTIC_VERSION}" \
+      "pyyaml==${PYYAML_VERSION}" \
+      "httpx==${HTTPX_VERSION}" \
+ && dnf install -y ruby ruby-devel gcc gcc-c++ make cmake pkgconf-pkg-config openssl-devel \
+ && gem install licensee \
+ && dnf remove -y ruby-devel gcc gcc-c++ make cmake pkgconf-pkg-config openssl-devel \
+ && dnf clean all
+
+USER 1001
+WORKDIR /workspace
