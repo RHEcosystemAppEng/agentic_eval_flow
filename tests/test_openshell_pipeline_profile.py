@@ -42,7 +42,7 @@ class TestOpenshellPipelineProfile:
         assert defaults["aeh-runner"] == "openshell"
         assert defaults["aeh-openshell-image"] == "registry.access.redhat.com/ubi9/python-311:9.6"
         assert defaults["openshell-sandbox-image"] == (
-            "ghcr.io/rh-forge/openclaw-saw-agent@sha256:bcc55e9b7a36d5f65e8ffc75962496f8b3617762a4cdb37fd1cf54611b72d41a"
+            "ghcr.io/rh-forge/openclaw-saw-agent@sha256:b47b92a6b3fd03327c1f2093a5c28aba0fdf3cb620e9154335688900191fe2b9"
         )
         assert defaults["enable-mlflow"] == "true"
         assert defaults["mlflow-tracking-uri"] == ("http://abevalflow-mlflow.gz-forge-eval.svc.cluster.local:5000")
@@ -60,6 +60,24 @@ class TestOpenshellPipelineProfile:
         uri_note = "MLFLOW_TRACKING_URI set for AEH harness + CI logger"
         assert uri_note in openshell
         assert openshell.find(uri_note) < openshell.find("scripts/run_aeh.py")
+
+    def test_forge_briefing_has_installation_user_fixture(self):
+        fixture = REPO / "submissions" / "openclaw-forge" / "fixtures" / "USER.md"
+        fields = {}
+        for line in fixture.read_text().splitlines():
+            if line.startswith("- ") and ": " in line:
+                key, value = line[2:].split(": ", 1)
+                fields[key.lower()] = value.strip()
+        assert all(fields.get(key) and not fields[key].startswith("<")
+                   for key in ("display name", "role", "initials"))
+        scene = _load(REPO / "submissions" / "openclaw-forge" / "scenes" / "monday-acquisition.yaml")
+        assert fields["primary email"] == scene["m365"]["user"]
+
+        task = _load(REPO / "pipeline" / "tasks" / "phases" / "evaluate.yaml")
+        step = next(s for s in task["spec"]["steps"] if s["name"] == "aeh-openshell-eval")
+        script = step["script"]
+        assert 'AGENT_EVAL_FORGE_USER_FILE="$SUBMISSION_DIR/fixtures/USER.md"' in script
+        assert script.index('[ -f "$SUBMISSION_DIR/fixtures/USER.md" ]') < script.index("scripts/run_aeh.py")
 
     def test_harbor_profiles_still_include_test(self):
         for path in (CI, CI_DEV):
