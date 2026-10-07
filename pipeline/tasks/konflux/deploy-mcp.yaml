@@ -99,9 +99,9 @@ spec:
         for SECRET_NAME in "${SECRETS[@]}"; do
           SECRET_NAME=$(echo "$SECRET_NAME" | xargs)
           echo "Fetching secret '$SECRET_NAME' from $PIPELINE_NS"
-          oc get secret "$SECRET_NAME" -n "$PIPELINE_NS" -o json \
-            | sed -e '/"namespace":/d' -e '/"uid":/d' -e '/"resourceVersion":/d' -e '/"creationTimestamp":/d' \
-            > "/tmp/pull-secret/${SECRET_NAME}.json"
+          oc get secret "$SECRET_NAME" -n "$PIPELINE_NS" -o yaml \
+            | sed -e '/^  namespace:/d' -e '/^  uid:/d' -e '/^  resourceVersion:/d' -e '/^  creationTimestamp:/d' \
+            > "/tmp/pull-secret/${SECRET_NAME}.yaml"
         done
 
     - name: apply-secrets
@@ -119,7 +119,7 @@ spec:
 
         NAMESPACE="$(params.namespace-name)"
 
-        for SECRET_FILE in /tmp/pull-secret/*.json; do
+        for SECRET_FILE in /tmp/pull-secret/*.yaml; do
           [ -f "$SECRET_FILE" ] || continue
           echo "Applying secret $(basename "$SECRET_FILE") to $NAMESPACE"
           oc apply -n "$NAMESPACE" -f "$SECRET_FILE"
