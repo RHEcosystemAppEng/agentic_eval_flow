@@ -53,6 +53,12 @@ spec:
       type: string
       default: "image.ref"
       description: Helm value key for the container image ref (tag or digest)
+    - name: image-pull-secret
+      type: string
+      default: "image-pull-secret"
+      description: >-
+        Name of the image pull Secret in the Konflux namespace to copy
+        into the ephemeral namespace for registry authentication.
   workspaces:
     - name: source
       description: Workspace for cloning the MCP server repo
@@ -75,15 +81,21 @@ spec:
         #!/usr/bin/env bash
         set -euo pipefail
 
+        NAMESPACE="$(params.namespace-name)"
+        PIPELINE_NS=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)
+        IMAGE_PULL_SECRET="$(params.image-pull-secret)"
+
+        echo "Copying image pull secret '$IMAGE_PULL_SECRET' from $PIPELINE_NS to $NAMESPACE"
+        oc get secret "$IMAGE_PULL_SECRET" -n "$PIPELINE_NS" -o json \
+          | jq 'del(.metadata.namespace,.metadata.uid,.metadata.resourceVersion,.metadata.creationTimestamp,.metadata.ownerReferences)' \
+          | oc apply -n "$NAMESPACE" -f -
+
         CREDENTIALS_SECRET="$(params.credentials-secret)"
 
         if [ -z "$CREDENTIALS_SECRET" ]; then
-          echo "No credentials secret specified, skipping"
+          echo "No additional credentials secret specified, skipping"
           exit 0
         fi
-
-        NAMESPACE="$(params.namespace-name)"
-        PIPELINE_NS=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)
 
         echo "Copying credentials secret '$CREDENTIALS_SECRET' from $PIPELINE_NS to $NAMESPACE"
         oc get secret "$CREDENTIALS_SECRET" -n "$PIPELINE_NS" -o json \
@@ -151,8 +163,11 @@ spec:
           exit 1
         fi
 
-        HELM_SETS="--set ${IMAGE_KEY}=${IMAGE_REPO} --set ${IMAGE_REF_KEY}=${IMAGE_REF}"
+        IMAGE_PULL_SECRET="$(params.image-pull-secret)"
+
+        HELM_SETS="--set ${IMAGE_KEY}=${IMAGE_REPO} --set ${IMAGE_REF_KEY}=${IMAGE_REF} --set imagePullSecrets[0].name=${IMAGE_PULL_SECRET}"
         echo "Image override: repo=${IMAGE_REPO} ref=${IMAGE_REF}"
+        echo "Image pull secret: ${IMAGE_PULL_SECRET}"
 
         # Deploy with Helm
         echo "Deploying Helm release: $RELEASE_NAME"

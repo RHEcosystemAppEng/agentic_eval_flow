@@ -77,6 +77,12 @@ spec:
         type: string
         default: "image.ref"
         description: Helm value key for the container image ref (tag or digest)
+      - name: IMAGE_PULL_SECRET
+        type: string
+        default: "image-pull-secret"
+        description: >-
+          Name of the image pull Secret in the Konflux namespace to copy
+          into the ephemeral namespace for registry authentication.
 
     workspaces:
       - name: shared-workspace
@@ -184,6 +190,8 @@ spec:
             value: $(params.IMAGE_KEY)
           - name: image-ref-key
             value: $(params.IMAGE_REF_KEY)
+          - name: image-pull-secret
+            value: $(params.IMAGE_PULL_SECRET)
         workspaces:
           - name: source
             workspace: shared-workspace
