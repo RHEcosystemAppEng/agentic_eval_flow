@@ -69,14 +69,14 @@ spec:
         description: >-
           Comma-separated host:port pairs for sandbox backend endpoints
           allowed through the namespace NetworkPolicy.
-      - name: IMAGE_OVERRIDE_KEY
+      - name: IMAGE_KEY
         type: string
         default: "image.repository"
-        description: Helm value key to override container image repository
-      - name: IMAGE_TAG_OVERRIDE_KEY
+        description: Helm value key for the container image repository
+      - name: IMAGE_REF_KEY
         type: string
-        default: "image.tag"
-        description: Helm value key to override container image tag
+        default: "image.ref"
+        description: Helm value key for the container image ref (tag or digest)
 
     workspaces:
       - name: shared-workspace
@@ -180,10 +180,10 @@ spec:
             value: $(params.SERVICE_PORT)
           - name: credentials-secret
             value: $(params.CREDENTIALS_SECRET)
-          - name: image-override-key
-            value: $(params.IMAGE_OVERRIDE_KEY)
-          - name: image-tag-override-key
-            value: $(params.IMAGE_TAG_OVERRIDE_KEY)
+          - name: image-key
+            value: $(params.IMAGE_KEY)
+          - name: image-ref-key
+            value: $(params.IMAGE_REF_KEY)
         workspaces:
           - name: source
             workspace: shared-workspace

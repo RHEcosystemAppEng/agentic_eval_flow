@@ -45,16 +45,14 @@ spec:
         Name of the OCP Secret (in the pipeline namespace) containing
         MCP server credentials. If set, the secret is copied into the
         ephemeral namespace for the Helm release to reference.
-    - name: image-override-key
+    - name: image-key
       type: string
       default: "image.repository"
-      description: >-
-        Helm value key to override the container image repository.
-        Set to empty string to skip image override.
-    - name: image-tag-override-key
+      description: Helm value key for the container image repository
+    - name: image-ref-key
       type: string
-      default: "image.tag"
-      description: Helm value key to override the container image tag
+      default: "image.ref"
+      description: Helm value key for the container image ref (tag or digest)
   workspaces:
     - name: source
       description: Workspace for cloning the MCP server repo
@@ -133,27 +131,28 @@ spec:
         mv /tmp/linux-amd64/helm /usr/local/bin/
         rm -rf /tmp/linux-amd64
 
-        # Build Helm set overrides for the built image
-        HELM_SETS=""
-        IMAGE_OVERRIDE_KEY="$(params.image-override-key)"
-        IMAGE_TAG_KEY="$(params.image-tag-override-key)"
-
-        if [ -n "$IMAGE_OVERRIDE_KEY" ] && [ -n "$COMPONENT_IMAGE" ]; then
-          if [[ "$COMPONENT_IMAGE" == *"@"* ]]; then
-            IMAGE_REPO="${COMPONENT_IMAGE%%@*}"
-            IMAGE_TAG="${COMPONENT_IMAGE#*@}"
-          elif [[ "$COMPONENT_IMAGE" == *":"* ]]; then
-            IMAGE_REPO="${COMPONENT_IMAGE%%:*}"
-            IMAGE_TAG="${COMPONENT_IMAGE#*:}"
-          else
-            IMAGE_REPO="$COMPONENT_IMAGE"
-            IMAGE_TAG="latest"
-          fi
-          HELM_SETS="--set ${IMAGE_OVERRIDE_KEY}=${IMAGE_REPO}"
-          if [ -n "$IMAGE_TAG_KEY" ]; then
-            HELM_SETS="$HELM_SETS --set ${IMAGE_TAG_KEY}=${IMAGE_TAG}"
-          fi
+        # Split component image into repo + ref
+        if [ -z "$COMPONENT_IMAGE" ]; then
+          echo "ERROR: No Konflux-generated component image found"
+          exit 1
         fi
+
+        IMAGE_KEY="$(params.image-key)"
+        IMAGE_REF_KEY="$(params.image-ref-key)"
+
+        if [[ "$COMPONENT_IMAGE" == *"@"* ]]; then
+          IMAGE_REPO="${COMPONENT_IMAGE%%@*}"
+          IMAGE_REF="${COMPONENT_IMAGE#*@}"
+        elif [[ "$COMPONENT_IMAGE" == *":"* ]]; then
+          IMAGE_REPO="${COMPONENT_IMAGE%:*}"
+          IMAGE_REF="${COMPONENT_IMAGE##*:}"
+        else
+          echo "ERROR: Konflux-generated image is invalid, cannot split into repo and ref: $COMPONENT_IMAGE"
+          exit 1
+        fi
+
+        HELM_SETS="--set ${IMAGE_KEY}=${IMAGE_REPO} --set ${IMAGE_REF_KEY}=${IMAGE_REF}"
+        echo "Image override: repo=${IMAGE_REPO} ref=${IMAGE_REF}"
 
         # Deploy with Helm
         echo "Deploying Helm release: $RELEASE_NAME"
