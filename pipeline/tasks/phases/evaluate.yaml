@@ -1661,22 +1661,13 @@ spec:
         - secretRef:
             name: $(params.openshell-oidc-secret)
             optional: true
-        - secretRef:
-            name: inference
-            optional: false
       env:
         - name: HOME
           value: /tmp/openshell-home
         - name: INFERENCE_API_KEY
-          valueFrom:
-            secretKeyRef:
-              name: inference
-              key: api_key
+          value: "$(params.llm-api-key)"
         - name: OPENAI_API_KEY
-          valueFrom:
-            secretKeyRef:
-              name: inference
-              key: api_key
+          value: "$(params.llm-api-key)"
         - name: AGENT_EVAL_RUNS_DIR
           value: $(workspaces.source.path)/reports
         - name: OPENSHELL_GATEWAY_ENDPOINT
