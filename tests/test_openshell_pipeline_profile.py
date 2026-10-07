@@ -61,6 +61,25 @@ class TestOpenshellPipelineProfile:
         assert uri_note in openshell
         assert openshell.find(uri_note) < openshell.find("scripts/run_aeh.py")
 
+    def test_openshell_eval_uses_llm_param_instead_of_inference_secret(self):
+        task = _load(REPO / "pipeline" / "tasks" / "phases" / "evaluate.yaml")
+        openshell = next(step for step in task["spec"]["steps"] if step["name"] == "aeh-openshell-eval")
+
+        env_from_secret_names = {
+            source["secretRef"]["name"] for source in openshell.get("envFrom", []) if "secretRef" in source
+        }
+        env_secret_names = {
+            env["valueFrom"]["secretKeyRef"]["name"]
+            for env in openshell.get("env", [])
+            if "secretKeyRef" in env.get("valueFrom", {})
+        }
+        assert "inference" not in env_from_secret_names | env_secret_names
+
+        for name in ("INFERENCE_API_KEY", "OPENAI_API_KEY"):
+            env = next(item for item in openshell["env"] if item["name"] == name)
+            assert env["value"] == "$(params.llm-api-key)"
+            assert "valueFrom" not in env
+
     def test_harbor_profiles_still_include_test(self):
         for path in (CI, CI_DEV):
             names = _task_names(_load(path)["spec"])
