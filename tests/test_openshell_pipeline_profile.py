@@ -63,15 +63,10 @@ class TestOpenshellPipelineProfile:
 
     def test_openshell_eval_uses_llm_param_instead_of_inference_secret(self):
         task = _load(REPO / "pipeline" / "tasks" / "phases" / "evaluate.yaml")
-        openshell = next(
-            step for step in task["spec"]["steps"]
-            if step["name"] == "aeh-openshell-eval"
-        )
+        openshell = next(step for step in task["spec"]["steps"] if step["name"] == "aeh-openshell-eval")
 
         env_from_secret_names = {
-            source["secretRef"]["name"]
-            for source in openshell.get("envFrom", [])
-            if "secretRef" in source
+            source["secretRef"]["name"] for source in openshell.get("envFrom", []) if "secretRef" in source
         }
         env_secret_names = {
             env["valueFrom"]["secretKeyRef"]["name"]
