@@ -55,14 +55,13 @@ spec:
         type: string
         default: "120"
         description: Maximum seconds to wait for MCP server readiness
-      - name: CREDENTIALS_SECRET
+      - name: CREDENTIALS_SECRETS
         type: string
         default: ""
         description: >-
-          Name of a Secret on the TARGET cluster containing MCP server
-          credentials (e.g. backend API keys). If non-empty, the
-          deploy-mcp task copies it into the ephemeral namespace for
-          the Helm release.
+          Comma-separated names of Secrets in the Konflux namespace to
+          copy into the ephemeral namespace (e.g. backend API keys).
+          If empty, only the image pull secret is copied.
       - name: BACKEND_ENDPOINTS
         type: string
         default: ""
@@ -184,8 +183,8 @@ spec:
             value: $(params.SERVICE_NAME)
           - name: service-port
             value: $(params.SERVICE_PORT)
-          - name: credentials-secret
-            value: $(params.CREDENTIALS_SECRET)
+          - name: credentials-secrets
+            value: $(params.CREDENTIALS_SECRETS)
           - name: image-key
             value: $(params.IMAGE_KEY)
           - name: image-ref-key

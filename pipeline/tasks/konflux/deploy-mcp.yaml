@@ -38,13 +38,13 @@ spec:
       type: string
       default: "8080"
       description: Port on which the MCP server listens
-    - name: credentials-secret
+    - name: credentials-secrets
       type: string
       default: ""
       description: >-
-        Name of the OCP Secret (in the pipeline namespace) containing
-        MCP server credentials. If set, the secret is copied into the
-        ephemeral namespace for the Helm release to reference.
+        Comma-separated names of Secrets in the Konflux namespace to
+        copy into the ephemeral namespace (e.g. backend API keys).
+        If empty, only the image pull secret is copied.
     - name: image-key
       type: string
       default: "image.repository"
@@ -71,36 +71,59 @@ spec:
       description: Internal service URL for the deployed MCP server
     - name: release-name
       description: Helm release name
+  volumes:
+    - name: pull-secret
+      emptyDir:
+        medium: Memory
+        sizeLimit: 64Mi
   steps:
-    - name: copy-credentials
+    - name: fetch-secrets
+      image: registry.redhat.io/openshift4/ose-cli:latest
+      volumeMounts:
+        - name: pull-secret
+          mountPath: /tmp/pull-secret
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        PIPELINE_NS=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)
+        IMAGE_PULL_SECRET="$(params.image-pull-secret)"
+        CREDENTIALS_SECRETS="$(params.credentials-secrets)"
+
+        ALL_SECRETS="$IMAGE_PULL_SECRET"
+        if [ -n "$CREDENTIALS_SECRETS" ]; then
+          ALL_SECRETS="${ALL_SECRETS},${CREDENTIALS_SECRETS}"
+        fi
+
+        IFS=',' read -ra SECRETS <<< "$ALL_SECRETS"
+        for SECRET_NAME in "${SECRETS[@]}"; do
+          SECRET_NAME=$(echo "$SECRET_NAME" | xargs)
+          echo "Fetching secret '$SECRET_NAME' from $PIPELINE_NS"
+          oc get secret "$SECRET_NAME" -n "$PIPELINE_NS" -o json \
+            | sed -e '/"namespace":/d' -e '/"uid":/d' -e '/"resourceVersion":/d' -e '/"creationTimestamp":/d' \
+            > "/tmp/pull-secret/${SECRET_NAME}.json"
+        done
+
+    - name: apply-secrets
       image: registry.redhat.io/openshift4/ose-cli:latest
       env:
         - name: KUBECONFIG
           value: $(workspaces.target-kubeconfig.path)/kubeconfig
+      volumeMounts:
+        - name: pull-secret
+          mountPath: /tmp/pull-secret
+          readOnly: true
       script: |
         #!/usr/bin/env bash
         set -euo pipefail
 
         NAMESPACE="$(params.namespace-name)"
-        PIPELINE_NS=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)
-        IMAGE_PULL_SECRET="$(params.image-pull-secret)"
 
-        echo "Copying image pull secret '$IMAGE_PULL_SECRET' from $PIPELINE_NS to $NAMESPACE"
-        oc get secret "$IMAGE_PULL_SECRET" -n "$PIPELINE_NS" -o json \
-          | jq 'del(.metadata.namespace,.metadata.uid,.metadata.resourceVersion,.metadata.creationTimestamp,.metadata.ownerReferences)' \
-          | oc apply -n "$NAMESPACE" -f -
-
-        CREDENTIALS_SECRET="$(params.credentials-secret)"
-
-        if [ -z "$CREDENTIALS_SECRET" ]; then
-          echo "No additional credentials secret specified, skipping"
-          exit 0
-        fi
-
-        echo "Copying credentials secret '$CREDENTIALS_SECRET' from $PIPELINE_NS to $NAMESPACE"
-        oc get secret "$CREDENTIALS_SECRET" -n "$PIPELINE_NS" -o json \
-          | jq 'del(.metadata.namespace,.metadata.uid,.metadata.resourceVersion,.metadata.creationTimestamp,.metadata.ownerReferences)' \
-          | oc apply -n "$NAMESPACE" -f -
+        for SECRET_FILE in /tmp/pull-secret/*.json; do
+          [ -f "$SECRET_FILE" ] || continue
+          echo "Applying secret $(basename "$SECRET_FILE") to $NAMESPACE"
+          oc apply -n "$NAMESPACE" -f "$SECRET_FILE"
+        done
 
     - name: deploy-helm
       image: registry.access.redhat.com/ubi9/ubi-minimal:latest
