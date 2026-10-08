@@ -111,7 +111,7 @@ spec:
         description: "AEH evaluation mode: single or pairwise"
       - name: AEH_IMAGE
         type: string
-        default: "quay.io/ecosystem-appeng/agent-eval-harness:v1.1.8"
+        default: "quay.io/ecosystem-appeng/agent-eval-harness:v1.2.2"
         description: Container image for AEH trial pods
       - name: AEH_MODEL_OVERRIDE
         type: string

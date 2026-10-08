@@ -446,6 +446,80 @@ def _check_aeh_plugin_dirs(submission_dir: Path, eval_path: Path) -> list[str]:
     return errors
 
 
+def _check_mock_mcp_servers(submission_dir: Path, eval_path: Path) -> list[str]:
+    """Validate the per-case stdio mock MCP convention.
+
+    For every ``cases/<case>/mock-mcps/<server>/fixture.json``:
+    - fixture.json must be valid JSON shaped ``{"sequence": [...]}`` (the
+      shape generic-mock-mcp-server's ``--strategy fixtures`` expects).
+    - a matching shared ``submissions/<plugin>/mcp-servers/<server>/
+      schema.json`` must exist (sibling of this submission_dir's parent --
+      shared across every skill submitted under that plugin, NOT the real
+      ``<plugin>/`` source tree) and be valid JSON.
+
+    See abevalflow.harbor_extensions.aeh_task_enrichment's docstring for
+    why schema is plugin-shared while fixtures are per-case.
+    """
+    if not eval_path.is_file():
+        return []
+    try:
+        data = yaml.safe_load(eval_path.read_text()) or {}
+    except yaml.YAMLError:
+        return []
+    if not isinstance(data, dict):
+        return []
+
+    dataset = data.get("dataset") or {}
+    dataset_rel = "cases"
+    if isinstance(dataset, dict):
+        dataset_rel = str(dataset.get("path") or "cases").strip() or "cases"
+
+    cases_root = submission_dir / dataset_rel
+    if not cases_root.is_dir():
+        return []
+
+    mcp_schema_root = submission_dir.parent / "mcp-servers"
+    errors: list[str] = []
+    schema_cache: dict[str, bool] = {}
+
+    for case_dir in sorted(p for p in cases_root.iterdir() if p.is_dir()):
+        mock_mcps_dir = case_dir / "mock-mcps"
+        if not mock_mcps_dir.is_dir():
+            continue
+        for server_dir in sorted(p for p in mock_mcps_dir.iterdir() if p.is_dir()):
+            server = server_dir.name
+            fixture_path = server_dir / "fixture.json"
+            rel = fixture_path.relative_to(submission_dir)
+            if not fixture_path.is_file():
+                errors.append(f"{rel}: mock-mcps/{server}/ must contain fixture.json")
+                continue
+            try:
+                fixture_data = json.loads(fixture_path.read_text())
+            except json.JSONDecodeError as exc:
+                errors.append(f"{rel}: invalid JSON: {exc}")
+                continue
+            if not isinstance(fixture_data, dict) or not isinstance(fixture_data.get("sequence"), list):
+                errors.append(f'{rel}: must be a JSON object with a "sequence" list')
+
+            if server not in schema_cache:
+                schema_path = mcp_schema_root / server / "schema.json"
+                if not schema_path.is_file():
+                    errors.append(
+                        f"cases/*/mock-mcps/{server}/ requires a shared schema.json at "
+                        f"{schema_path} (plugin-shared, sibling of this submission's own directory)"
+                    )
+                    schema_cache[server] = False
+                else:
+                    try:
+                        json.loads(schema_path.read_text())
+                        schema_cache[server] = True
+                    except json.JSONDecodeError as exc:
+                        errors.append(f"{schema_path}: invalid JSON: {exc}")
+                        schema_cache[server] = False
+
+    return errors
+
+
 def _check_aeh_tool_interception(submission_dir: Path, eval_path: Path) -> list[str]:
     """Validate inputs.tools / permissions / tool_handlers.yaml for Harbor MCP hooks.
 
@@ -630,6 +704,7 @@ def _check_aeh_structure(
             errors.extend(_check_aeh_eval_yaml_file(control_path))
             errors.extend(_check_aeh_plugin_dirs(submission_dir, control_path))
             errors.extend(_check_aeh_tool_interception(submission_dir, control_path))
+            errors.extend(_check_mock_mcp_servers(submission_dir, control_path))
 
         if not treatment_path.is_file():
             errors.append(f"AEH pairwise: missing {treatment_config}")
@@ -637,12 +712,14 @@ def _check_aeh_structure(
             errors.extend(_check_aeh_eval_yaml_file(treatment_path))
             errors.extend(_check_aeh_plugin_dirs(submission_dir, treatment_path))
             errors.extend(_check_aeh_tool_interception(submission_dir, treatment_path))
+            errors.extend(_check_mock_mcp_servers(submission_dir, treatment_path))
             # Treatment config drives score.py pairwise — enforce contract there
             errors.extend(_check_aeh_pairwise_contract(treatment_path))
     else:
         errors.extend(_check_aeh_eval_yaml(submission_dir))
         errors.extend(_check_aeh_plugin_dirs(submission_dir, submission_dir / "eval.yaml"))
         errors.extend(_check_aeh_tool_interception(submission_dir, submission_dir / "eval.yaml"))
+        errors.extend(_check_mock_mcp_servers(submission_dir, submission_dir / "eval.yaml"))
 
     errors.extend(_check_aeh_cases(submission_dir))
     errors.extend(_check_aeh_skill_matches_metadata(submission_dir, aeh_mode, control_config, treatment_config))

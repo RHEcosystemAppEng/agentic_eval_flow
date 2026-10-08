@@ -97,7 +97,10 @@ my-aeh-eval/
 ├── skills/…/SKILL.md    # Optional skill package
 └── cases/
     └── case-001/
-        └── input.yaml
+        ├── input.yaml
+        └── mock-mcps/           # Optional, see "Mock MCP servers" below
+            └── <server-name>/
+                └── fixture.json
 ```
 
 **Pairwise** (`aeh-mode=pairwise`):
@@ -110,8 +113,61 @@ my-aeh-pairwise/
 ├── skills/<name>/SKILL.md
 └── cases/
     └── case-001/
-        └── input.yaml
+        ├── input.yaml
+        └── mock-mcps/
+            └── <server-name>/
+                └── fixture.json
 ```
+
+### Mock MCP servers (AEH submissions)
+
+For a skill whose `eval.yaml` (`runner.plugin_dirs`) points at a pack that
+declares real MCP servers in its own `mcps.json` (e.g. `rh-sre/mcps.json`'s
+`lightspeed-mcp`), evaluation can swap any of those server names for a
+config-driven mock instead of calling the real, credentialed server:
+
+```
+submissions/<plugin>/
+├── mcp-servers/                     # Shared across every skill under this plugin
+│   └── <server-name>/
+│       └── schema.json              # Tool contract: same for every case
+├── <skill-a>/
+│   ├── eval.yaml
+│   └── cases/
+│       ├── case-001/
+│       │   ├── input.yaml
+│       │   └── mock-mcps/
+│       │       └── <server-name>/
+│       │           └── fixture.json # THIS case's tool-call sequence
+│       └── case-002/
+│           └── input.yaml           # No mock-mcps/ -- this case needs no MCP mock
+└── <skill-b>/
+    ├── eval.yaml
+    └── cases/
+        └── case-001/
+            ├── input.yaml
+            └── mock-mcps/
+                └── <server-name>/
+                    └── fixture.json # A different sequence, same shared schema.json
+```
+
+- `mcp-servers/<server-name>/schema.json` is **plugin-shared**: one tool
+  contract (`name`, `description`, `inputSchema`, `outputSchema`,
+  `outputExample` per tool) reused by every case of every skill submitted
+  under that plugin. Lives alongside the plugin's skill submission dirs
+  (`submissions/<plugin>/mcp-servers/...`), not inside the real
+  `<plugin>/` source tree.
+- `cases/<case>/mock-mcps/<server-name>/fixture.json` is **per-case**:
+  `{"sequence": [{"tool": "...", "input": {...}, "output": {...}}, ...]}` --
+  the exact ordered tool-call responses that one case's trial should see.
+  A case with no `mock-mcps/` folder needs no MCP mock at all.
+- A skill is auto-opted into mocking a server name the moment any of its
+  cases defines `mock-mcps/<that-name>/fixture.json` -- no separate flag,
+  deploy step, or image to configure. The mock server (generic-mock-mcp-
+  server, pinned into the shared trial base image) runs as a plain stdio
+  subprocess per trial pod; see
+  `abevalflow.harbor_extensions.aeh_task_enrichment`'s docstring for the
+  full mechanism.
 
 Verified smoke samples in [skill-submissions](https://github.com/RHEcosystemAppEng/skill-submissions):
 - Branch `eval/aeh-hello-world-single` -> `aeh-hello-world-single`

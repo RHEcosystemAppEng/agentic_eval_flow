@@ -124,7 +124,7 @@ spec:
       description: Number of gates that failed
   steps:
     - name: analyze
-      image: quay.io/ecosystem-appeng/agent-eval-harness:v1.1.8
+      image: quay.io/ecosystem-appeng/agent-eval-harness:v1.2.2
       script: |
         #!/usr/bin/env bash
         set -euo pipefail
@@ -213,7 +213,7 @@ spec:
         cat "$REPORT_DIR/report.md" 2>/dev/null || echo "(report.md not available)"
 
     - name: aggregate-scorecard
-      image: quay.io/ecosystem-appeng/agent-eval-harness:v1.1.8
+      image: quay.io/ecosystem-appeng/agent-eval-harness:v1.2.2
       env:
         - name: COMPASS_API_TOKEN
           valueFrom:
@@ -279,7 +279,7 @@ spec:
         echo "=== Scorecard aggregation complete ==="
 
     - name: check-degradation
-      image: quay.io/ecosystem-appeng/agent-eval-harness:v1.1.8
+      image: quay.io/ecosystem-appeng/agent-eval-harness:v1.2.2
       env:
         - name: DATABASE_URL
           valueFrom:

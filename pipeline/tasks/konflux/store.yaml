@@ -89,7 +89,7 @@ spec:
       description: Shared workspace containing evaluation artifacts
   steps:
     - name: store-to-db
-      image: quay.io/ecosystem-appeng/agent-eval-harness:v1.1.8
+      image: quay.io/ecosystem-appeng/agent-eval-harness:v1.2.2
       env:
         - name: DATABASE_URL
           valueFrom:
@@ -128,7 +128,7 @@ spec:
         echo "Results stored successfully"
 
     - name: upload-artifacts
-      image: quay.io/ecosystem-appeng/agent-eval-harness:v1.1.8
+      image: quay.io/ecosystem-appeng/agent-eval-harness:v1.2.2
       env:
         - name: MINIO_ENDPOINT
           valueFrom:

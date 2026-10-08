@@ -174,6 +174,70 @@ class TestHarborRunner:
         prepare.assert_called_once()
         assert prepare.call_args[0][1] == tasks_dir
 
+    @patch("subprocess.run")
+    def test_harbor_runner_omits_regenerate_after_enrichment(self, mock_run, tmp_path):
+        """--regenerate must NOT be passed when tasks were just prepared+
+        enriched in this same call: agent_eval.harbor.run's --regenerate
+        unconditionally purges and re-generates task packages via bare
+        upstream generate_tasks(), which has no knowledge of our enrichment
+        (mock-mcp schema/fixture staging, skills/, annotations.yaml, reward
+        injection) -- silently wiping it before Harbor uploads the task to a
+        trial pod. See the comment at the --regenerate call site for the
+        real-world failure this caused.
+        """
+        mock_run.return_value = MagicMock(returncode=0)
+        runner = HarborRunner(model="test-model", image="quay.io/test/image:v1")
+        config = tmp_path / "eval.yaml"
+        config.write_text(yaml.dump({"skill": "demo", "models": {"skill": "m"}}))
+        output = tmp_path / "output"
+        tasks_dir = tmp_path / "tasks"
+
+        with patch.object(runner, "_prepare_enriched_tasks"):
+            runner.run_single(config, output, tasks_dir=tasks_dir)
+
+        call_args = mock_run.call_args[0][0]
+        assert "--regenerate" not in call_args
+
+    @patch("subprocess.run")
+    def test_harbor_runner_omits_judge_model_after_enrichment(self, mock_run, tmp_path):
+        """--judge-model must also be omitted after enrichment: agent_eval.
+        harbor.run hard-rejects --judge-model against pre-generated tasks
+        unless --regenerate is also passed, and enrich_harbor_tasks() already
+        baked judge_model into the packages directly."""
+        mock_run.return_value = MagicMock(returncode=0)
+        runner = HarborRunner(
+            model="test-model", judge_model="judge-model", image="quay.io/test/image:v1"
+        )
+        config = tmp_path / "eval.yaml"
+        config.write_text(yaml.dump({"skill": "demo", "models": {"skill": "m"}}))
+        output = tmp_path / "output"
+        tasks_dir = tmp_path / "tasks"
+
+        with patch.object(runner, "_prepare_enriched_tasks"):
+            runner.run_single(config, output, tasks_dir=tasks_dir)
+
+        call_args = mock_run.call_args[0][0]
+        assert "--judge-model" not in call_args
+        assert "--model" in call_args
+        assert "test-model" in call_args
+
+    @patch("subprocess.run")
+    def test_harbor_runner_keeps_regenerate_without_tasks_dir_prep(self, mock_run, tmp_path):
+        """--regenerate is still passed on the tasks_dir-reuse path (no
+        image, so _prepare_enriched_tasks never ran this call) -- stale
+        pre-existing packages may not match a newly-passed model/judge."""
+        mock_run.return_value = MagicMock(returncode=0)
+        runner = HarborRunner(model="test-model", judge_model="judge-model")
+        config = tmp_path / "eval.yaml"
+        config.write_text(yaml.dump({"skill": "demo", "models": {"skill": "m"}}))
+        output = tmp_path / "output"
+        tasks_dir = tmp_path / "tasks"
+
+        runner.run_single(config, output, tasks_dir=tasks_dir)
+
+        call_args = mock_run.call_args[0][0]
+        assert "--regenerate" in call_args
+
     def test_harbor_runner_requires_model(self):
         """Harbor runner should fail fast without model."""
         runner = HarborRunner()  # No model

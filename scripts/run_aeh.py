@@ -548,7 +548,8 @@ class HarborRunner(BaseRunner):
 
         # Pre-generate + enrich task packages so Harbor skips bare upstream
         # generation (missing skills/ + annotations wiring in AEH v1.0.3).
-        if tasks_dir is not None and self.image:
+        tasks_already_enriched = tasks_dir is not None and self.image
+        if tasks_already_enriched:
             self._prepare_enriched_tasks(patched_config, Path(tasks_dir))
 
         cmd = [
@@ -571,13 +572,36 @@ class HarborRunner(BaseRunner):
 
         if self.model:
             cmd.extend(["--model", self.model])
-        if self.judge_model:
+        # agent_eval.harbor.run hard-rejects --judge-model against
+        # pre-generated tasks unless --regenerate is also passed (it assumes
+        # the judge model wouldn't otherwise take effect). When we already
+        # prepared+enriched tasks_dir above, enrich_harbor_tasks() already
+        # baked self.judge_model into the task packages directly, so passing
+        # --judge-model here too is both redundant and (with --regenerate
+        # correctly omitted, per above) a hard error. Only forward it on the
+        # tasks_dir-reuse path, where no enrichment happened this call.
+        if self.judge_model and not tasks_already_enriched:
             cmd.extend(["--judge-model", self.judge_model])
         if self.image:
             cmd.extend(["--image", self.image])
         if tasks_dir:
             cmd.extend(["--tasks-dir", str(tasks_dir)])
-            if self.judge_model or self.model or self.image:
+            # Do NOT pass --regenerate when _prepare_enriched_tasks just
+            # generated+enriched this exact tasks_dir above: agent_eval.
+            # harbor.run's --regenerate unconditionally purges and
+            # re-generates task packages via bare upstream generate_tasks(),
+            # which knows nothing about our enrichment (mock-mcp schema/
+            # fixture staging, skills/, annotations.yaml, reward injection).
+            # That silently wiped every enriched file we just wrote -- e.g.
+            # mcp-servers/<server>/schema.json -- before Harbor ever
+            # uploaded the task to a trial pod, so any skill depending on a
+            # mocked MCP server failed to connect 100% of the time with no
+            # infra-error signal (see case02.2.txt / case01.1.txt: "No such
+            # file or directory: '/workspace/mcp-servers/lightspeed-mcp/
+            # schema.json'"). --regenerate is still needed for the
+            # tasks_dir-reuse path (no fresh enrichment happened this call),
+            # where stale packages may not match a newly-passed model/image.
+            if not tasks_already_enriched and (self.judge_model or self.model or self.image):
                 cmd.append("--regenerate")
         if jobs_dir:
             cmd.extend(["--jobs-dir", str(jobs_dir)])

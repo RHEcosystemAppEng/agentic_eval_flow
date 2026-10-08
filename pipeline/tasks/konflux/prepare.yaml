@@ -80,7 +80,7 @@ spec:
       description: JSON validation result object
   steps:
     - name: clone-repo
-      image: quay.io/ecosystem-appeng/agent-eval-harness:v1.1.8
+      image: quay.io/ecosystem-appeng/agent-eval-harness:v1.2.2
       env:
         - name: GIT_SSL_NO_VERIFY
           value: "true"
@@ -104,7 +104,7 @@ spec:
         echo "Cloned at $(git rev-parse HEAD)"
 
     - name: generate-tests
-      image: quay.io/ecosystem-appeng/agent-eval-harness:v1.1.8
+      image: quay.io/ecosystem-appeng/agent-eval-harness:v1.2.2
       env:
         - name: LLM_BASE_URL
           value: "$(params.llm-base-url)"
@@ -185,7 +185,7 @@ spec:
         echo "Generated files: $GENERATED"
 
     - name: validate
-      image: quay.io/ecosystem-appeng/agent-eval-harness:v1.1.8
+      image: quay.io/ecosystem-appeng/agent-eval-harness:v1.2.2
       script: |
         #!/usr/bin/env bash
         set -euo pipefail

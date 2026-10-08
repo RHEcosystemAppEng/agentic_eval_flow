@@ -113,7 +113,7 @@ spec:
       description: "AEH evaluation mode: single or pairwise"
     - name: aeh-image
       type: string
-      default: "quay.io/ecosystem-appeng/agent-eval-harness:v1.1.8"
+      default: "quay.io/ecosystem-appeng/agent-eval-harness:v1.2.2"
       description: Container image for AEH trial pods
     - name: aeh-model-override
       type: string
@@ -185,7 +185,7 @@ spec:
         optional: true
   steps:
     - name: run-eval
-      image: quay.io/ecosystem-appeng/agent-eval-harness:v1.1.8
+      image: quay.io/ecosystem-appeng/agent-eval-harness:v1.2.2
       volumeMounts:
         - name: aeh-kubeconfig
           mountPath: /tmp/aeh-kubeconfig

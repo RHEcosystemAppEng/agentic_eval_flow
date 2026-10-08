@@ -5,7 +5,7 @@
 # in a Kubernetes/OpenShift environment.
 #
 # Build (from repo root — COPY requires repo-root context):
-#   podman build -t quay.io/ecosystem-appeng/agent-eval-harness:v1.1.8 \
+#   podman build -t quay.io/ecosystem-appeng/agent-eval-harness:v1.2.2 \
 #     -f containers/agent-eval-harness/Containerfile .
 #
 # AEH_SHA defaults to the current pinned commit (see ARG below) -- only
@@ -47,6 +47,24 @@ FROM registry.access.redhat.com/ubi9/python-312:latest
 # can never silently drift to a moving target.
 ARG AEH_REPO=https://github.com/opendatahub-io/agent-eval-harness.git
 ARG AEH_SHA=2a10e504242b42f508ecbfe813080abe1e16a501
+
+# Mock MCP server (generic-mock-mcp-server), baked in stdio mode -- see
+# agentic-plugins/containers/mock-mcp-server/Containerfile for the HTTP/
+# standalone-image equivalent of this same pinned clone. Baking it
+# directly into THIS image (not templates/Dockerfile.base's "eval-base" --
+# that one is for the unrelated classic-Harbor-A/B/A2A pipeline, never
+# used as this image's docker_image/trial-pod image) means every AEH
+# trial pod -- created directly from this image per upstream
+# agent_eval/harbor/kubernetes.py's `docker_image = self.task_env_config.
+# docker_image`, no build step -- can launch the mock as a local stdio
+# subprocess (its default transport) with zero extra Deployment/Service/
+# network plumbing. See .tekton/tasks/aeh-skill-eval.yaml's swap-mock-mcp
+# step and abevalflow/harbor_extensions/aeh_task_enrichment.py for how
+# per-case schema/fixtures and the mcps.json stdio entry get wired up
+# around this binary.
+ARG MOCK_REPO=https://github.com/nemerna/generic-mock-mcp-server.git
+# Pin to the commit this image was validated against.
+ARG MOCK_SHA=main
 
 LABEL name="agent-eval-harness" \
       vendor="Red Hat Ecosystem App Engineering" \
@@ -94,6 +112,24 @@ RUN git init /opt/agent-eval-harness \
 COPY containers/agent-eval-harness/patch_mcp_config.py /tmp/patch_mcp_config.py
 RUN python3 /tmp/patch_mcp_config.py /opt/agent-eval-harness/agent_eval/harbor/run.py \
     && rm -f /tmp/patch_mcp_config.py
+
+# Validate MOCK_SHA build arg (same convention as AEH_SHA above) -- allow
+# the literal branch name "main" (upstream has no pinned release tag yet)
+# but reject empty/garbage values.
+RUN if [ -z "${MOCK_SHA}" ]; then \
+      echo "ERROR: MOCK_SHA must not be empty" >&2; exit 1; \
+    fi
+
+# Clone generic-mock-mcp-server at pinned SHA. Its deps are folded into
+# the main pip install below. No ENTRYPOINT/port/transport wiring here --
+# it's invoked per-trial as `python3 /opt/mock-mcp/src/server.py
+# --transport stdio ...` from a case's rewritten mcps.json entry
+# (swap-mock-mcp in aeh-skill-eval.yaml), with --schema/--fixtures
+# pointing at files aeh_task_enrichment.py uploads into that specific
+# trial's own /workspace at runtime.
+RUN git clone --depth 1 --branch "${MOCK_SHA}" "${MOCK_REPO}" /opt/mock-mcp || \
+    (git clone "${MOCK_REPO}" /opt/mock-mcp && cd /opt/mock-mcp && git checkout "${MOCK_SHA}") \
+    && rm -rf /opt/mock-mcp/.git
 
 # Copy abevalflow module and pipeline scripts
 # abevalflow: OpenShiftEnvironment, AEH scoring, Harbor extensions
@@ -152,7 +188,8 @@ RUN pip install --no-cache-dir \
     "psycopg[binary]" \
     minio \
     openai \
-    pytest
+    pytest \
+    -r /opt/mock-mcp/requirements.txt
 
 # Install sitecustomize.py into every site-packages dir so it's auto-imported
 # regardless of which one Python resolves first.
@@ -173,8 +210,8 @@ ENV PYTHONPATH=/opt/agent-eval-harness \
 # - /harbor: Harbor uploads skills/tasks here at runtime
 # - /opt/agent-eval-harness: AEH package (needs read access)
 RUN mkdir -p /workspace /logs /tests /solution /harbor \
-    && chgrp -R 0 /workspace /logs /tests /solution /harbor /opt/agent-eval-harness \
-    && chmod -R g=u /workspace /logs /tests /solution /harbor /opt/agent-eval-harness
+    && chgrp -R 0 /workspace /logs /tests /solution /harbor /opt/agent-eval-harness /opt/mock-mcp \
+    && chmod -R g=u /workspace /logs /tests /solution /harbor /opt/agent-eval-harness /opt/mock-mcp
 
 WORKDIR /workspace
 

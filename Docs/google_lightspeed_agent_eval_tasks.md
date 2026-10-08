@@ -23,7 +23,7 @@ Because the Red Hat Insights data returned by the MCP is dynamic and constantly 
 | Property | Value |
 |----------|-------|
 | Server | `insights-mcp` |
-| Version | Pin to specific release (e.g., `v1.2.0`) |
+| Version | Pin to specific release (e.g., `v1.2.1`) |
 | Modules | `inventory_mcp`, `vulnerability_mcp`, `advisor_mcp`, `image_builder_mcp`, `remediations_mcp` |
 
 ### Tool Name Mapping
@@ -33,7 +33,7 @@ The MCP server exposes tools with namespaced names. **Do not hardcode tool names
 ```yaml
 # eval_tool_config.yaml
 mcp_server: insights-mcp
-version: "1.2.0"
+version: "1.2.1"
 
 tools:
   host_lookup:

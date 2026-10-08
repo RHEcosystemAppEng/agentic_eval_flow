@@ -78,7 +78,7 @@ spec:
       description: Overall tests passed (all checks)
   steps:
     - name: setup
-      image: quay.io/ecosystem-appeng/agent-eval-harness:v1.1.8
+      image: quay.io/ecosystem-appeng/agent-eval-harness:v1.2.2
       script: |
         #!/usr/bin/env bash
         set -euo pipefail
@@ -102,7 +102,7 @@ spec:
         echo -n "true" > "$(results.tests-passed.path)"
 
     - name: security-scan
-      image: quay.io/ecosystem-appeng/agent-eval-harness:v1.1.8
+      image: quay.io/ecosystem-appeng/agent-eval-harness:v1.2.2
       env:
         - name: MINIO_ACCESS_KEY
           valueFrom:
@@ -238,7 +238,7 @@ spec:
         fi
 
     - name: quality-review
-      image: quay.io/ecosystem-appeng/agent-eval-harness:v1.1.8
+      image: quay.io/ecosystem-appeng/agent-eval-harness:v1.2.2
       env:
         - name: LLM_API_KEY
           value: "$(params.llm-api-key)"
@@ -285,7 +285,7 @@ spec:
         echo "Quality review: passed=$PASSED"
 
     - name: finalize
-      image: quay.io/ecosystem-appeng/agent-eval-harness:v1.1.8
+      image: quay.io/ecosystem-appeng/agent-eval-harness:v1.2.2
       script: |
         #!/usr/bin/env bash
         set -euo pipefail
