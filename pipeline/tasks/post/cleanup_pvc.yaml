@@ -2,7 +2,6 @@ apiVersion: tekton.dev/v1
 kind: Task
 metadata:
   name: cleanup-pvc
-  namespace: ab-eval-flow
 spec:
   description: >-
     Deletes the workspace PVC after a pipeline run completes.
@@ -13,34 +12,36 @@ spec:
       description: Name of the PipelineRun whose PVCs should be cleaned up
   steps:
     - name: delete-pvc
-      image: registry.redhat.io/openshift4/ose-cli:latest
+      image: image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
+      onError: continue
       script: |
         #!/usr/bin/env bash
-        set -u
+        set -uo pipefail
 
         # Get current namespace from service account
         NAMESPACE=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)
 
         echo "Cleaning up PVCs for PipelineRun $(params.pipelinerun-name) in namespace ${NAMESPACE}..."
-        PVC_LIST=""
-        for attempt in 1 2 3 4 5; do
-          if PVC_LIST=$(oc get pvc -n "${NAMESPACE}" \
-            -o jsonpath="{range .items[?(@.metadata.ownerReferences[0].name=='$(params.pipelinerun-name)')]}{.metadata.name}{'\\n'}{end}" 2>/tmp/cleanup-pvc.err); then
+        pvcs=""
+        for attempt in 1 2 3; do
+          if pvcs=$(oc get pvc -n "${NAMESPACE}" --request-timeout=20s \
+            -o jsonpath='{range .items[?(@.metadata.ownerReferences[0].name=="$(params.pipelinerun-name)")]}{.metadata.name}{"\n"}{end}'); then
             break
           fi
-          echo "WARNING: Kubernetes API unavailable (attempt ${attempt}/5); retrying..." >&2
-          sleep 10
+          echo "WARNING: PVC lookup attempt ${attempt}/3 failed"
+          sleep $((attempt * 5))
         done
-        if [ -z "${PVC_LIST}" ] && [ -s /tmp/cleanup-pvc.err ]; then
-          cat /tmp/cleanup-pvc.err >&2
-          echo "WARNING: PVC cleanup deferred because the Kubernetes API was unreachable" >&2
+
+        if [ -z "$pvcs" ]; then
+          echo "No owned PVCs found, or the API remained unavailable; cleanup is best-effort"
           exit 0
         fi
+
         while read -r pvc; do
-          if [ -n "${pvc}" ]; then
-            echo "Deleting PVC: ${pvc}"
-            oc delete pvc "${pvc}" -n "${NAMESPACE}" --wait=false || \
-              echo "WARNING: failed to delete ${pvc}; it may be retried later" >&2
+          if [ -n "$pvc" ]; then
+            echo "Deleting PVC: $pvc"
+            oc delete pvc "$pvc" -n "${NAMESPACE}" --wait=false --request-timeout=20s \
+              || echo "WARNING: failed to delete PVC $pvc"
           fi
-        done <<< "${PVC_LIST}"
+        done <<< "$pvcs"
         echo "PVC cleanup complete"
