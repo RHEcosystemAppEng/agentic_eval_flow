@@ -373,15 +373,29 @@ judges:
 
   - name: used_catalog_skills
     check: |
-      blob = " " + str(outputs.get("output_content") or "")
+      # A skill name in the response does not prove the file was read.
+      required = {"daily-briefing", "microsoft365"}
+      pending = {}
+      succeeded = set()
       for ev in outputs.get("events") or []:
-        blob += " " + str(ev)
-        for t in ev.get("tools") or []:
-          blob += " " + str(t)
-      blob = blob.lower()
-      return "daily-briefing" in blob and (
-        "microsoft365" in blob or "microsoft 365" in blob
-      )
+        if not isinstance(ev, dict):
+          continue
+        if ev.get("type") == "assistant":
+          for tool in ev.get("tools") or []:
+            if not isinstance(tool, dict) or tool.get("name") != "read":
+              continue
+            path = (tool.get("input") or {}).get("path")
+            for skill in required:
+              if path in (
+                "$WORKSPACE_DIR/skills/" + skill + "/SKILL.md",
+                "/sandbox/skills/" + skill + "/SKILL.md",
+              ) and tool.get("id"):
+                pending[tool["id"]] = skill
+        elif ev.get("type") == "tool_result":
+          skill = pending.pop(ev.get("tool_use_id"), None)
+          if skill and ev.get("tool_name") == "read" and ev.get("is_error") is False:
+            succeeded.add(skill)
+      return required.issubset(succeeded)
     feedback_type: bool
 
   - name: response_received
