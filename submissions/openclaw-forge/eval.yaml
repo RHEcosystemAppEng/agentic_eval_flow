@@ -505,19 +505,155 @@ judges:
     feedback_type: bool
 
   - name: published_brief
-    if: "annotations.get('expected_top_of_mind')"
+    if: "annotations.get('requires_published_brief')"
     check: |
       import json
+      import re
+      from datetime import datetime
+
+      # Required Forge briefing v1 contract from the image publisher:
+      # openclaw-saw-image/.../schemas/briefing-v1.md and
+      # tools/publish-brief.mjs validateBriefCandidate(). The image publisher
+      # owns deeper source/quote and draft-state validation.
       files = outputs.get("files") or {}
-      briefs = [content for path, content in files.items() if path.endswith("brief.json")]
-      if len(briefs) != 1:
+      def artifact(path):
+        # OpenShell nests a downloaded file inside a same-named directory.
+        for key in (path + "/" + path.rsplit("/", 1)[-1], path):
+          content = files.get(key)
+          if isinstance(content, str):
+            try:
+              return json.loads(content)
+            except (TypeError, ValueError):
+              return None
+        return None
+      brief = artifact("brief.json")
+      evidence = artifact(".openclaw/tmp/brief.evidence.json")
+      index = artifact(".openclaw/tmp/brief.index.json")
+      if not all(isinstance(item, dict) for item in (brief, evidence, index)):
+        return False
+
+      def nonempty(value):
+        return isinstance(value, str) and bool(value.strip())
+      def instant(value):
+        if not isinstance(value, str) or not re.fullmatch(
+            r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})", value):
           return False
-      try:
-          brief = json.loads(briefs[0]) if isinstance(briefs[0], str) else briefs[0]
-      except (TypeError, ValueError):
+        try:
+          datetime.fromisoformat(value.replace("Z", "+00:00"))
+          return True
+        except ValueError:
           return False
-      return (isinstance(brief, dict) and bool(brief.get("evidenceId"))
-              and brief.get("scope") == "full")
+      if (type(brief.get("schemaVersion")) is not int
+          or brief["schemaVersion"] != 1
+          or not nonempty(brief.get("evidenceId"))
+          or brief.get("scope") != "full"
+          or "refiningUntil" in brief
+          or not instant(brief.get("generatedAt"))
+          or not nonempty(brief.get("generatedFor"))):
+        return False
+      if (evidence.get("sealed") is not True
+          or brief["evidenceId"] != evidence.get("evidenceId")
+          or brief["evidenceId"] != index.get("evidenceId")):
+        return False
+
+      greeting = brief.get("greeting")
+      if not isinstance(greeting, dict) or any(
+          not nonempty(greeting.get(field)) for field in ("name", "role", "initials", "date")):
+        return False
+      summary = greeting.get("summary")
+      if (not isinstance(summary, dict)
+          or not isinstance(summary.get("lead"), str)
+          or not isinstance(summary.get("tail"), str)
+          or ("highlight" in summary and not isinstance(summary["highlight"], str))):
+        return False
+      highlight = summary.get("highlight", "")
+      if (not (summary["lead"] + highlight + summary["tail"]).strip()
+          or (highlight.strip() and highlight.strip() in (
+              summary["lead"].strip(), summary["tail"].strip()))):
+        return False
+
+      limits = {"notifications": 1, "topOfMind": 3, "fyi": 5, "lookingAhead": 5}
+      for name in (*limits, "coverage"):
+        section = brief.get(name)
+        if not isinstance(section, list):
+          return False
+        if name in limits and len(section) > limits[name]:
+          return False
+        ids = [item.get("id") for item in section if isinstance(item, dict)]
+        if (len(ids) != len(section) or any(not nonempty(item_id) for item_id in ids)
+            or len(set(ids)) != len(ids)):
+          return False
+
+      coverage = brief["coverage"]
+      expected_rows = (("email", "Email"), ("slack", "Slack Messages"),
+                       ("meetings", "Meetings"), ("library", "Library Artifacts"))
+      if (len(coverage) != 4 or any(
+          row.get("id") != source or row.get("label") != label
+          or not isinstance(row.get("value"), str)
+          or not re.fullmatch(r"\d+", row["value"])
+          for row, (source, label) in zip(coverage, expected_rows))
+          or coverage[3]["value"] != "0"
+          or coverage != index.get("coverage")
+          or coverage != evidence.get("coverage")):
+        return False
+
+      def valid_source(item):
+        source = item.get("source")
+        if source not in ("email", "slack", "calendar"):
+          return False
+        if "provider" in item and (source != "email" or item["provider"] not in (
+            "microsoft365", "gmail")):
+          return False
+        if "sourceKey" in item and (source not in ("email", "slack") or
+            not isinstance(item["sourceKey"], str) or not re.fullmatch(
+                r"forge-source:v1:[0-9a-f]{64}", item["sourceKey"])):
+          return False
+        return True
+
+      proposals = 0
+      for item in brief["topOfMind"]:
+        if not valid_source(item) or any(
+            not nonempty(item.get(field)) for field in ("meta", "title", "description")):
+          return False
+        if "quote" in item and not isinstance(item["quote"], str):
+          return False
+        if "draftId" in item or "actions" in item:
+          actions = item.get("actions")
+          if (not nonempty(item.get("draftId")) or not isinstance(actions, list)
+              or len(actions) != 2 or not all(isinstance(a, dict) for a in actions)
+              or actions[0].get("label") != "Review draft"
+              or actions[0].get("isPrimary") is not True
+              or actions[1].get("label") != "Dismiss"
+              or "isPrimary" in actions[1]):
+            return False
+          proposals += 1
+
+      for name in ("fyi", "lookingAhead"):
+        for item in brief[name]:
+          if not valid_source(item) or any(
+              not nonempty(item.get(field)) for field in ("meta", "body")):
+            return False
+          if "title" in item and not nonempty(item["title"]):
+            return False
+          if any(field in item and not isinstance(item[field], str)
+                 for field in ("quote", "timing")):
+            return False
+          if "whenAt" in item and not instant(item["whenAt"]):
+            return False
+          if "highlight" in item and (not isinstance(item["highlight"], str)
+              or item["highlight"] not in item["body"]):
+            return False
+
+      notifications = brief["notifications"]
+      if len(notifications) != (1 if proposals else 0):
+        return False
+      if proposals:
+        notification = notifications[0]
+        label = f"{proposals} draft{' needs' if proposals == 1 else 's need'} review"
+        if (notification.get("id") != "drafts" or notification.get("to") != "/messages"
+            or notification.get("label") != label):
+          return False
+      return True
     feedback_type: bool
 
 thresholds:
