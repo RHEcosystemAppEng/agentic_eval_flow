@@ -1,0 +1,101 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: mcp-phase2-conformance
+  labels:
+    app.kubernetes.io/name: abevalflow
+    app.kubernetes.io/component: konflux
+spec:
+  description: >-
+    MCP evaluation Phase 2 - deterministic contract/conformance (ADR Approach 4).
+    Black-box, no LLM. Probes the deployed, running MCP server over Streamable
+    HTTP for protocol/schema/HTTP conformance and operational limits, and
+    consumes the checks Compass already collects as real facts (tool-name rules,
+    OAuth match). Uses the three-state model
+    (pass / fail / not_evaluated): an unreachable server or a check that cannot
+    produce a meaningful signal is reported not_evaluated, never failed. Assumes
+    the server was already deployed and became ready in a prior pipeline step
+    (reached at <service-name>:8080 by convention).
+  params:
+    - name: mcp-eval-image
+      type: string
+      default: "quay.io/ecosystem-appeng/abevalflow-mcp-eval:0.1"
+      description: >-
+        MCP eval image with the probe dependencies (httpx, pydantic, pyyaml) and
+        the pipeline code (scripts.mcp, abevalflow.mcp) baked in at PYTHONPATH=/opt.
+    - name: server-url
+      type: string
+      description: MCP endpoint URL, e.g. http://<service-name>:8080/mcp
+    - name: submission-name
+      type: string
+      description: Name used for the report directory (reports/<submission-name>/).
+    - name: mode
+      type: string
+      default: "block"
+      description: Gate enforcement mode - block, warn, or disabled.
+    - name: timeout
+      type: string
+      default: "30"
+      description: Per-request HTTP timeout (seconds) for the probe.
+    - name: compass-facts-file
+      type: string
+      default: ""
+      description: >-
+        Workspace-relative path to a Compass facts JSON for the consumed checks.
+        Empty skips the Compass-consume step; those checks then report
+        not_evaluated. (Facts file only; live SoundCheck retrieval is not wired yet.)
+  workspaces:
+    - name: source
+      description: Workspace for the reports directory.
+  results:
+    - name: phase2-passed
+      description: Whether Phase 2 passed (no check FAILED in block mode).
+    - name: report-path
+      description: Workspace-relative path to the Phase 2 reports directory.
+  steps:
+    - name: probe
+      image: $(params.mcp-eval-image)
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        REPORTS_DIR="$(workspaces.source.path)/reports/$(params.submission-name)"
+        mkdir -p "$REPORTS_DIR"
+
+        echo "=== Phase 2 live probe against $(params.server-url) ==="
+        python -m scripts.mcp.phase2_probe \
+          --server-url "$(params.server-url)" \
+          --reports-dir "$REPORTS_DIR" \
+          --timeout "$(params.timeout)"
+
+        FACTS="$(params.compass-facts-file)"
+        if [ -n "$FACTS" ]; then
+          echo "=== Phase 2 Compass consume from $FACTS ==="
+          python -m scripts.mcp.compass_fetch \
+            --facts-file "$(workspaces.source.path)/$FACTS" \
+            --reports-dir "$REPORTS_DIR"
+        else
+          echo "No compass-facts-file given; Compass-consumed checks will report not_evaluated."
+        fi
+
+    - name: gate
+      image: $(params.mcp-eval-image)
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        REPORTS_DIR="$(workspaces.source.path)/reports/$(params.submission-name)"
+        REPORT_REL="reports/$(params.submission-name)"
+
+        # Never abort before writing results: capture the exit code, emit the
+        # Tekton results from the summary, then fail the step if a check failed.
+        set +e
+        python -m scripts.mcp.run_phase2_gates \
+          --reports-dir "$REPORTS_DIR" --mode "$(params.mode)"
+        GATE_EXIT=$?
+        set -e
+
+        SUMMARY="$REPORTS_DIR/phase2-summary.json"
+        python3 -c "import json;print(str(json.load(open('$SUMMARY'))['passed']).lower(),end='')" \
+          > "$(results.phase2-passed.path)"
+        echo -n "$REPORT_REL" > "$(results.report-path.path)"
+
+        exit $GATE_EXIT
