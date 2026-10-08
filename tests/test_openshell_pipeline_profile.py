@@ -87,8 +87,7 @@ class TestOpenshellPipelineProfile:
             if line.startswith("- ") and ": " in line:
                 key, value = line[2:].split(": ", 1)
                 fields[key.lower()] = value.strip()
-        assert all(fields.get(key) and not fields[key].startswith("<")
-                   for key in ("display name", "role", "initials"))
+        assert all(fields.get(key) and not fields[key].startswith("<") for key in ("display name", "role", "initials"))
         scene = _load(REPO / "submissions" / "openclaw-forge" / "scenes" / "monday-acquisition.yaml")
         assert fields["primary email"] == scene["m365"]["user"]
 
