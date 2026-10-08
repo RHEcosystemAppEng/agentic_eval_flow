@@ -21,12 +21,12 @@ spec:
       value: "openclaw-forge"
     - name: eval-engine
       value: "aeh_openshell_openclaw"
-    # Until this branch is merged, pass the feature revision so store/parse scripts match.
-    # After merge to main, omit these (Pipeline defaults are main).
+    # This example targets the merged upstream main for both submission and
+    # Pipeline helper source. Replace either value with a commit SHA to pin a run.
     - name: revision
-      value: "feat/aeh-openshell-openclaw"
+      value: "main"
     - name: pipeline-repo-revision
-      value: "feat/aeh-openshell-openclaw"
+      value: "main"
     # [Optional] Add a harness repository or revision for this run; these replace Pipeline defaults.
     # - name: agent-eval-harness-repo-url
     #   value: "<harness-repo-url>"

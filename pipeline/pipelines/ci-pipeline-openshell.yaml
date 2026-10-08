@@ -105,9 +105,8 @@ spec:
       type: string
       default: "main"
       description: >-
-        Harness revision with agent_eval.openshell. Use a tip that includes the
-        OpenClaw brief-reader/gateway fixes (GuyZivRH/agent-eval-harness#9) until
-        that lands on upstream main.
+        GuyZivRH/agent-eval-harness main includes the OpenClaw brief-reader and
+        gateway fixes merged in #9. Pin a commit SHA for reproducible runs.
     - name: openshell-cli-version
       type: string
       default: "0.0.116"
