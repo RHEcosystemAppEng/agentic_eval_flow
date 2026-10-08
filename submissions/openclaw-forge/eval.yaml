@@ -400,8 +400,34 @@ judges:
 
   - name: response_received
     check: |
-      response = outputs.get("output_content", "") or ""
-      return bool(response.strip()) and "The tool run finished, but no final summary was produced" not in response
+      response = outputs.get("output_content")
+      if not isinstance(response, str):
+        return False
+      response = response.strip()
+      if not response or response == "NO_REPLY" or "The tool run finished, but no final summary was produced" in response:
+        return False
+
+      # A trailing user/status event can follow the final assistant message.
+      final = None
+      for ev in reversed(outputs.get("events") or []):
+        if isinstance(ev, dict) and ev.get("type") == "assistant":
+          final = ev
+          break
+      if not final or final.get("tools") or final.get("parent_tool_use_id"):
+        return False
+      text = final.get("text")
+      if not isinstance(text, str) or not text.strip():
+        return False
+      text = text.strip()
+      if text == "NO_REPLY":
+        return False
+
+      # AEH caps archived event text; compare its recorded prefix if capped.
+      marker = "...<truncated>"
+      if text.endswith(marker):
+        prefix = text[:-len(marker)]
+        return bool(prefix) and response.startswith(prefix)
+      return response == text
     feedback_type: bool
 
   - name: published_brief
