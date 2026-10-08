@@ -87,6 +87,12 @@ outputs:
       response.txt: agent final response (morning briefing or analysis panel)
   - path: brief.json
     schema: Canonical published morning briefing, when produced
+  # Collector artifacts are private M365 data. AEH stages them for scoring;
+  # keep downloaded run artifacts in the ignored private archive, not Git.
+  - path: .openclaw/tmp/brief.index.json
+    schema: Collector index with coverage and evidence ID, when produced
+  - path: .openclaw/tmp/brief.evidence.json
+    schema: Sealed collector evidence, when produced
 
 judges:
   # --- Prioritization judges (morning-briefing case) ---
@@ -349,26 +355,94 @@ judges:
     score_range: [1, 5]
     feedback_type: int
 
-  # --- Generic judges (both cases) ---
+  # --- Non-LLM checks (case-scoped where specified) ---
   - name: used_m365_tools
+    # The analysis-panel case has no collector artifact contract yet.
+    if: "annotations.get('expected_top_of_mind')"
+    arguments:
+      expected_account: tbx-demo2@dev.mscloud.ibm.com  # scenes/monday-acquisition.yaml
     check: |
-      blob = ""
-      names = set()
-      for t in outputs.get("tool_calls") or []:
-        n = str(t.get("name") or t.get("tool") or "").lower()
-        names.add(n)
-        blob += " " + n + " " + str(t.get("arguments") or t.get("input") or "")
+      import json
+
+      # Match the collector command to its successful result by tool ID.
+      pending = set()
+      completed = False
       for ev in outputs.get("events") or []:
-        for t in ev.get("tools") or []:
-          n = str(t.get("name") or "").lower()
-          names.add(n)
-          blob += " " + n
-        blob += " " + str(ev)
-      blob += " " + str(outputs.get("output_content") or "")
-      blob = blob.lower()
-      return any(k in blob for k in (
-        "graph.microsoft", "m365", "outlook", "/me/messages", "/me/events",
-        "calendarview", "login.microsoftonline", "mail.read", "calendars.read"))
+        if not isinstance(ev, dict):
+          continue
+        if ev.get("type") == "assistant":
+          for tool in ev.get("tools") or []:
+            if not isinstance(tool, dict) or tool.get("name") != "exec":
+              continue
+            command = (tool.get("input") or {}).get("command")
+            if (isinstance(command, str)
+                and command.strip() == "node tools/collect-brief-evidence.mjs"
+                and tool.get("id")):
+              pending.add(tool["id"])
+        elif (ev.get("type") == "tool_result"
+              and ev.get("tool_use_id") in pending
+              and ev.get("tool_name") == "exec"
+              and ev.get("is_error") is False):
+          completed = True
+      if not completed:
+        return False
+
+      # OpenShell downloads individual files into a same-named directory.
+      # Also accept flat paths from locally archived diagnostic runs.
+      def artifact(filename):
+        prefix = ".openclaw/tmp/" + filename
+        files = outputs.get("files") or {}
+        for path in (prefix + "/" + filename, prefix):
+          content = files.get(path)
+          if isinstance(content, str):
+            try:
+              return json.loads(content)
+            except (TypeError, ValueError):
+              return None
+        return None
+
+      evidence = artifact("brief.evidence.json")
+      index = artifact("brief.index.json")
+      if not isinstance(evidence, dict) or not isinstance(index, dict):
+        return False
+      if evidence.get("sealed") is not True:
+        return False
+      if "microsoft365" not in (evidence.get("requestedSources") or []):
+        return False
+      if "microsoft365" in (evidence.get("unavailable") or []):
+        return False
+      evidence_id = evidence.get("evidenceId")
+      if not evidence_id or index.get("evidenceId") != evidence_id:
+        return False
+      m365 = evidence.get("microsoft365") or {}
+      if (m365.get("account") or {}).get("mail") != arguments["expected_account"]:
+        return False
+      messages, meetings = m365.get("messages"), m365.get("events")
+      if not isinstance(messages, list) or not isinstance(meetings, list):
+        return False
+      def unique_count(records):
+        ids = [item.get("id") for item in records if isinstance(item, dict)]
+        if len(ids) != len(records) or any(not ident for ident in ids):
+          return None
+        return len(set(ids))
+      email_count, meeting_count = unique_count(messages), unique_count(meetings)
+      if email_count is None or meeting_count is None:
+        return False
+      if email_count + meeting_count == 0:
+        return False  # Completed collection, but no M365 evidence retrieved.
+      def coverage(manifest, source):
+        for row in manifest.get("coverage") or []:
+          if isinstance(row, dict) and row.get("id") == source:
+            try:
+              return int(row.get("value"))
+            except (TypeError, ValueError):
+              return None
+        return None
+      for manifest in (evidence, index):
+        if (coverage(manifest, "email") != email_count
+            or coverage(manifest, "meetings") != meeting_count):
+          return False
+      return True
     feedback_type: bool
 
   - name: used_catalog_skills
