@@ -1,5 +1,10 @@
 # OpenShell OpenClaw profile — prepare → evaluate → analyze → store (no test cube).
-# Apply the Pipeline first: oc apply -f pipeline/pipelines/ci-pipeline-openshell.yaml
+#
+#   oc apply  -n <namespace> -f pipeline/pipelines/ci-pipeline-openshell.yaml
+#   oc create -n <namespace> -f pipeline/runs/openshell-openclaw-pipelinerun.yaml
+#
+# Service endpoints below use short names, which resolve inside the namespace
+# the run is created in, so this file is namespace-agnostic.
 # Do not put M365 tokens in this file; use Secret openshell-credentials in the namespace.
 apiVersion: tekton.dev/v1
 kind: PipelineRun
@@ -33,12 +38,13 @@ spec:
     # - name: agent-eval-harness-repo-revision
     #   value: "<harness-commit-or-branch>"
     - name: openshell-gateway-endpoint
-      # Certificate-valid hostname, resolved to this namespace's Service below.
-      value: "https://host.containers.internal:17670"
+      # Stable, certificate-valid alias installed by
+      # config/forge-saw/openshell-eval-alias.yaml in the run namespace.
+      value: "https://openshell:17670"
     - name: openshell-mtls-secret
-      value: "openshell-gateway-mtls"
+      value: "openshell-mtls"
     - name: openshell-ai-gateway-ca-secret
-      value: "forge-agent-upstream-tls"
+      value: "forge-ai-gateway-ca"
     # To use another sandbox image, replace the value below with <image@sha256:digest>.
     - name: openshell-sandbox-image
       value: "ghcr.io/rh-forge/openclaw-saw-agent@sha256:b47b92a6b3fd03327c1f2093a5c28aba0fdf3cb620e9154335688900191fe2b9"
@@ -47,28 +53,25 @@ spec:
     - name: aeh-openshell-image
       value: "registry.access.redhat.com/ubi9/python-311:9.6"
     - name: llm-model
-      value: "rits/zai-org/glm-5-3"
+      value: "rits/zai-org/GLM-5-3-Flash"
     - name: llm-api-base
-      value: "http://litellm.gz-forge-eval.svc.cluster.local:4000"
+      value: "http://litellm:4000"
     - name: llm-api-key
       value: "mock"
     - name: aeh-model-override
-      value: "inference/rits/zai-org/glm-5-3"
+      value: "inference/rits/zai-org/GLM-5-3-Flash"
     - name: aeh-judge-model-override
-      value: "rits/zai-org/glm-5-3"
+      value: "judge-glm-5-3"
     - name: enable-mlflow
       value: "true"
     - name: mlflow-tracking-uri
-      value: "http://abevalflow-mlflow.gz-forge-eval.svc.cluster.local:5000"
+      value: "http://abevalflow-mlflow:5000"
   taskRunTemplate:
     serviceAccountName: pipeline
-    podTemplate:
-      hostAliases:
-        - ip: "172.30.183.80"
-          hostnames: ["host.containers.internal"]
   timeouts:
-    pipeline: 2h0m0s
-    tasks: 1h30m0s
+    pipeline: 3h0m0s
+    tasks: 2h30m0s
+    finally: 15m0s
   workspaces:
     - name: shared-workspace
       volumeClaimTemplate:
