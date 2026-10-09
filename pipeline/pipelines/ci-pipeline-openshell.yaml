@@ -5,6 +5,7 @@ metadata:
   namespace: ab-eval-flow
   labels:
     app.kubernetes.io/name: abevalflow
+    app.kubernetes.io/part-of: abevalflow
     app.kubernetes.io/version: "2.0"
     app.kubernetes.io/profile: aeh-openshell-openclaw
 spec:
@@ -102,8 +103,10 @@ spec:
       default: "https://github.com/GuyZivRH/agent-eval-harness.git"
     - name: agent-eval-harness-repo-revision
       type: string
-      default: "feat/aeh-openshell-openclaw"
-      description: Harness revision with agent_eval.openshell (feature-branch pin)
+      default: "8d58e500d0eb55a3106819ccacf26da6bf7ea166"
+      description: >-
+        Verified GuyZivRH/agent-eval-harness commit containing the OpenClaw
+        fixes merged in #9. Override with main only for development runs.
     - name: openshell-cli-version
       type: string
       default: "0.0.116"
@@ -112,10 +115,16 @@ spec:
       default: "https://openshell.openshell.svc.cluster.local:17670"
     - name: openshell-sandbox-image
       type: string
-      default: "ghcr.io/rh-forge/openclaw-saw-agent@sha256:bcc55e9b7a36d5f65e8ffc75962496f8b3617762a4cdb37fd1cf54611b72d41a"
+      default: "ghcr.io/rh-forge/openclaw-saw-agent@sha256:b47b92a6b3fd03327c1f2093a5c28aba0fdf3cb620e9154335688900191fe2b9"
     - name: openshell-provider
       type: string
       default: "forge-ai-gateway,m365-read-intervm,slack-read-proxy,drafts-service-agent"
+    - name: openshell-user-fixture
+      type: string
+      default: "fixtures/USER.md"
+      description: >-
+        OpenClaw Forge installation fixture relative to the submission directory.
+        Override with an empty value for submissions without this fixture.
     - name: openshell-mtls-secret
       type: string
       default: "openshell-mtls"
@@ -279,6 +288,8 @@ spec:
           value: $(params.openshell-sandbox-image)
         - name: openshell-provider
           value: $(params.openshell-provider)
+        - name: openshell-user-fixture
+          value: $(params.openshell-user-fixture)
         - name: openshell-mtls-secret
           value: $(params.openshell-mtls-secret)
         - name: openshell-ai-gateway-ca-secret

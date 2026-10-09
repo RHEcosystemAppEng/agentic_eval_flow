@@ -1,6 +1,10 @@
 # Allow evaluate Task pods to reach the OpenShell gateway on :17670.
 # bootstrap.sh rewrites namespace / from-namespace (SAW_NS, EVAL_NS).
 # Apply in the SAW namespace, not from the evaluate PipelineRun.
+#
+# Match evaluate Task pods in the canonical Pipeline. A bare
+# podSelector: {} from the whole EVAL_NS is broader than needed when SAW
+# and eval share a Forge workspace namespace — see networkpolicy-ci-openshell.yaml.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -20,7 +24,10 @@ spec:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: guy-ziv-evalflow
-        - podSelector: {}
+          podSelector:
+            matchLabels:
+              tekton.dev/pipeline: abevalflow-pipeline-openshell
+              tekton.dev/task: evaluate
       ports:
         - protocol: TCP
           port: 17670

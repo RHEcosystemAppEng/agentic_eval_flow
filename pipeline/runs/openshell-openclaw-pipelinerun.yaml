@@ -16,12 +16,12 @@ spec:
       value: "openclaw-forge"
     - name: eval-engine
       value: "aeh_openshell_openclaw"
-    # Until this branch is merged, pass the feature revision so store/parse scripts match.
-    # After merge to main, omit these (Pipeline defaults are main).
+    # This example targets the merged upstream main for both submission and
+    # Pipeline helper source. Replace either value with a commit SHA to pin a run.
     - name: revision
-      value: "feat/aeh-openshell-openclaw"
+      value: "main"
     - name: pipeline-repo-revision
-      value: "feat/aeh-openshell-openclaw"
+      value: "main"
     # [Optional] Add a harness repository or revision for this run; these replace Pipeline defaults.
     # - name: agent-eval-harness-repo-url
     #   value: "<harness-repo-url>"
@@ -36,9 +36,11 @@ spec:
       value: "forge-agent-upstream-tls"
     # To use another sandbox image, replace the value below with <image@sha256:digest>.
     - name: openshell-sandbox-image
-      value: "ghcr.io/rh-forge/openclaw-saw-agent@sha256:bcc55e9b7a36d5f65e8ffc75962496f8b3617762a4cdb37fd1cf54611b72d41a"
+      value: "ghcr.io/rh-forge/openclaw-saw-agent@sha256:b47b92a6b3fd03327c1f2093a5c28aba0fdf3cb620e9154335688900191fe2b9"
     - name: openshell-provider
       value: "forge-ai-gateway,m365-read-intervm,slack-read-proxy,drafts-service-agent"
+    - name: openshell-user-fixture
+      value: "fixtures/USER.md"
     - name: aeh-openshell-image
       value: "registry.access.redhat.com/ubi9/python-311:9.6"
     - name: llm-model
