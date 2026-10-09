@@ -23,9 +23,7 @@ def test_gateway_and_egress_select_only_evaluate_task_pods():
     policies = list(yaml.safe_load_all((REPO / "config/forge-saw/networkpolicy-ci-openshell.yaml").read_text()))
     assert len(policies) == 3
     ingress_selectors = [
-        rule["podSelector"]["matchLabels"]
-        for policy in policies[:2]
-        for rule in policy["spec"]["ingress"][0]["from"]
+        rule["podSelector"]["matchLabels"] for policy in policies[:2] for rule in policy["spec"]["ingress"][0]["from"]
     ]
     egress_selector = policies[2]["spec"]["podSelector"]["matchLabels"]
     remote_gateway = yaml.safe_load((REPO / "config/forge-saw/networkpolicy-gateway-from-abeval.yaml").read_text())

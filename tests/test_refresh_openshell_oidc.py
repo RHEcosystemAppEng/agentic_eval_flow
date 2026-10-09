@@ -61,7 +61,7 @@ def test_evaluate_uses_one_helper_for_initial_and_periodic_refresh():
     step = next(item for item in task["spec"]["steps"] if item["name"] == "aeh-openshell-eval")
     script = step["script"]
     assert script.count('python3 "$OIDC_REFRESH_HELPER" --cache "$OIDC_TOKEN_CACHE"') == 2
-    assert '--interval 120 &' in script
+    assert "--interval 120 &" in script
     assert script.index('python3 "$OIDC_REFRESH_HELPER" --cache "$OIDC_TOKEN_CACHE"') < script.index(
         'python "$PIPELINE_DIR/scripts/run_aeh.py"'
     )
