@@ -42,13 +42,59 @@ class TestOpenshellPipelineProfile:
         assert defaults["aeh-runner"] == "openshell"
         assert defaults["aeh-openshell-image"] == "registry.access.redhat.com/ubi9/python-311:9.6"
         assert defaults["openshell-sandbox-image"] == (
-            "ghcr.io/rh-forge/openclaw-saw-agent@sha256:bcc55e9b7a36d5f65e8ffc75962496f8b3617762a4cdb37fd1cf54611b72d41a"
+            "ghcr.io/rh-forge/openclaw-saw-agent@sha256:b47b92a6b3fd03327c1f2093a5c28aba0fdf3cb620e9154335688900191fe2b9"
         )
+        assert defaults["llm-model"] == "rits/zai-org/GLM-5-3-Flash"
+        assert defaults["llm-generation-model"] == "rits/zai-org/GLM-5-3-Flash"
+        assert defaults["aeh-model-override"] == "inference/rits/zai-org/GLM-5-3-Flash"
+        # A plain openai/ judge model 403s on /v1/messages; the judge-glm-5-3
+        # hosted_vllm route in config/litellm/configmap.yaml stays on
+        # /chat/completions. See that file for the full rationale.
+        assert defaults["aeh-judge-model-override"] == "judge-glm-5-3"
+        # Alias Service from config/forge-saw/openshell-eval-alias.yaml; keeps
+        # the default namespace-agnostic.
+        assert defaults["openshell-gateway-endpoint"] == "https://openshell:17670"
         assert defaults["enable-mlflow"] == "true"
-        assert defaults["mlflow-tracking-uri"] == ("http://abevalflow-mlflow.gz-forge-eval.svc.cluster.local:5000")
         analyze = next(t for t in _load(PIPELINE)["spec"]["tasks"] if t["name"] == "analyze")
         scan = next(p for p in analyze["params"] if p["name"] == "security-scan-mode")
         assert scan["value"] == "disabled"
+
+    def test_litellm_configmap_has_flash_and_judge_routes(self):
+        config = _load(REPO / "config" / "litellm" / "configmap.yaml")
+        models = yaml.safe_load(config["data"]["config.yaml"])["model_list"]
+        names = {entry["model_name"] for entry in models}
+        assert "rits/zai-org/GLM-5-3-Flash" in names
+        assert "judge-glm-5-3" in names
+        judge = next(e for e in models if e["model_name"] == "judge-glm-5-3")
+        assert judge["litellm_params"]["model"].startswith("hosted_vllm/")
+
+    def test_gateway_alias_service_selects_agent_vmi(self):
+        alias = _load(REPO / "config" / "forge-saw" / "openshell-eval-alias.yaml")
+        assert alias["spec"]["selector"] == {
+            "app.kubernetes.io/name": "openshell-saw-agent",
+            "vm.kubevirt.io/name": "openshell-saw-agent",
+        }
+        ports = alias["spec"]["ports"]
+        assert ports == [{"name": "gateway", "port": 17670, "protocol": "TCP", "targetPort": 17670}]
+
+    def test_example_run_is_namespace_agnostic(self):
+        run = _load(REPO / "pipeline" / "runs" / "openshell-openclaw-pipelinerun.yaml")
+        params = {p["name"]: p["value"] for p in run["spec"]["params"]}
+        for name in ("openshell-gateway-endpoint", "llm-api-base", "mlflow-tracking-uri"):
+            value = params[name]
+            assert ".svc.cluster.local" not in value, f"{name} pins a namespace: {value}"
+        pod_template = run["spec"]["taskRunTemplate"].get("podTemplate", {})
+        assert "hostAliases" not in pod_template
+        timeouts = run["spec"]["timeouts"]
+        assert timeouts["pipeline"] == "3h0m0s"
+        assert timeouts["tasks"] == "2h30m0s"
+
+    def test_cleanup_task_is_best_effort(self):
+        task = _load(REPO / "pipeline" / "tasks" / "post" / "cleanup_pvc.yaml")
+        step = task["spec"]["steps"][0]
+        assert step.get("onError") == "continue"
+        assert "--request-timeout=20s" in step["script"]
+        assert step["image"].startswith("image-registry.openshift-image-registry.svc:5000/")
 
     def test_evaluate_openshell_step_logs_mlflow(self):
         evaluate = (REPO / "pipeline" / "tasks" / "phases" / "evaluate.yaml").read_text()
@@ -79,6 +125,23 @@ class TestOpenshellPipelineProfile:
             env = next(item for item in openshell["env"] if item["name"] == name)
             assert env["value"] == "$(params.llm-api-key)"
             assert "valueFrom" not in env
+
+    def test_forge_briefing_has_installation_user_fixture(self):
+        fixture = REPO / "submissions" / "openclaw-forge" / "fixtures" / "USER.md"
+        fields = {}
+        for line in fixture.read_text().splitlines():
+            if line.startswith("- ") and ": " in line:
+                key, value = line[2:].split(": ", 1)
+                fields[key.lower()] = value.strip()
+        assert all(fields.get(key) and not fields[key].startswith("<") for key in ("display name", "role", "initials"))
+        scene = _load(REPO / "submissions" / "openclaw-forge" / "scenes" / "monday-acquisition.yaml")
+        assert fields["primary email"] == scene["m365"]["user"]
+
+        task = _load(REPO / "pipeline" / "tasks" / "phases" / "evaluate.yaml")
+        step = next(s for s in task["spec"]["steps"] if s["name"] == "aeh-openshell-eval")
+        script = step["script"]
+        assert 'AGENT_EVAL_FORGE_USER_FILE="$SUBMISSION_DIR/fixtures/USER.md"' in script
+        assert script.index('[ -f "$SUBMISSION_DIR/fixtures/USER.md" ]') < script.index("scripts/run_aeh.py")
 
     def test_harbor_profiles_still_include_test(self):
         for path in (CI, CI_DEV):

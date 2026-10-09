@@ -2,9 +2,9 @@ apiVersion: tekton.dev/v1
 kind: Pipeline
 metadata:
   name: abevalflow-pipeline-openshell
-  namespace: ab-eval-flow
   labels:
     app.kubernetes.io/name: abevalflow
+    app.kubernetes.io/part-of: abevalflow
     app.kubernetes.io/version: "2.0"
     app.kubernetes.io/profile: aeh-openshell-openclaw
 spec:
@@ -38,7 +38,7 @@ spec:
       description: Must stay aeh_openshell_openclaw for this profile
     - name: llm-model
       type: string
-      default: "rits/zai-org/glm-5-3"
+      default: "rits/zai-org/GLM-5-3-Flash"
     - name: llm-api-base
       type: string
       default: "http://litellm.gz-forge-eval.svc:4000"
@@ -50,7 +50,7 @@ spec:
       default: "http://litellm.ab-eval-flow.svc:4000/v1"
     - name: llm-generation-model
       type: string
-      default: "rits/zai-org/glm-5-3"
+      default: "rits/zai-org/GLM-5-3-Flash"
     - name: enable-ai-generation
       type: string
       default: "false"
@@ -73,10 +73,13 @@ spec:
       default: "-1.0"
     - name: aeh-model-override
       type: string
-      default: ""
+      default: "inference/rits/zai-org/GLM-5-3-Flash"
     - name: aeh-judge-model-override
       type: string
-      default: ""
+      # Judges call /v1/messages (Anthropic dialect); see the judge-glm-5-3
+      # entry in config/litellm/configmap.yaml for why a plain openai/ model
+      # 403s there and hosted_vllm does not.
+      default: "judge-glm-5-3"
     - name: aeh-mode
       type: string
       default: "single"
@@ -102,17 +105,20 @@ spec:
       default: "https://github.com/GuyZivRH/agent-eval-harness.git"
     - name: agent-eval-harness-repo-revision
       type: string
-      default: "feat/aeh-openshell-openclaw"
-      description: Harness revision with agent_eval.openshell (feature-branch pin)
+      default: "main"
+      description: >-
+        GuyZivRH/agent-eval-harness main includes the OpenClaw brief-reader and
+        gateway fixes merged in #9. Pin a commit SHA for reproducible runs.
     - name: openshell-cli-version
       type: string
       default: "0.0.116"
     - name: openshell-gateway-endpoint
       type: string
-      default: "https://openshell.openshell.svc.cluster.local:17670"
+      # Installed by config/forge-saw/openshell-eval-alias.yaml in the run namespace.
+      default: "https://openshell:17670"
     - name: openshell-sandbox-image
       type: string
-      default: "ghcr.io/rh-forge/openclaw-saw-agent@sha256:bcc55e9b7a36d5f65e8ffc75962496f8b3617762a4cdb37fd1cf54611b72d41a"
+      default: "ghcr.io/rh-forge/openclaw-saw-agent@sha256:b47b92a6b3fd03327c1f2093a5c28aba0fdf3cb620e9154335688900191fe2b9"
     - name: openshell-provider
       type: string
       default: "forge-ai-gateway,m365-read-intervm,slack-read-proxy,drafts-service-agent"
