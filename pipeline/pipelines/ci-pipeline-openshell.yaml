@@ -103,10 +103,10 @@ spec:
       default: "https://github.com/GuyZivRH/agent-eval-harness.git"
     - name: agent-eval-harness-repo-revision
       type: string
-      default: "main"
+      default: "8d58e500d0eb55a3106819ccacf26da6bf7ea166"
       description: >-
-        GuyZivRH/agent-eval-harness main includes the OpenClaw brief-reader and
-        gateway fixes merged in #9. Pin a commit SHA for reproducible runs.
+        Verified GuyZivRH/agent-eval-harness commit containing the OpenClaw
+        fixes merged in #9. Override with main only for development runs.
     - name: openshell-cli-version
       type: string
       default: "0.0.116"
@@ -119,6 +119,12 @@ spec:
     - name: openshell-provider
       type: string
       default: "forge-ai-gateway,m365-read-intervm,slack-read-proxy,drafts-service-agent"
+    - name: openshell-user-fixture
+      type: string
+      default: "fixtures/USER.md"
+      description: >-
+        OpenClaw Forge installation fixture relative to the submission directory.
+        Override with an empty value for submissions without this fixture.
     - name: openshell-mtls-secret
       type: string
       default: "openshell-mtls"
@@ -282,6 +288,8 @@ spec:
           value: $(params.openshell-sandbox-image)
         - name: openshell-provider
           value: $(params.openshell-provider)
+        - name: openshell-user-fixture
+          value: $(params.openshell-user-fixture)
         - name: openshell-mtls-secret
           value: $(params.openshell-mtls-secret)
         - name: openshell-ai-gateway-ca-secret

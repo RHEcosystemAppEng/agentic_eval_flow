@@ -1,16 +1,16 @@
 # NetworkPolicies for OpenShell OpenClaw evals when SAW VMs and the Tekton
 # pipeline share one namespace (Forge workspace style).
 #
-# Select evaluate pods by either:
-#   - tekton.dev/pipeline=abevalflow-pipeline-openshell  (canonical Pipeline name)
-#   - app.kubernetes.io/part-of=abevalflow               (set on PipelineRun labels)
+# Select the evaluate Task pods in the canonical OpenShell Pipeline by the
+# injected tekton.dev/pipeline and tekton.dev/task labels.
 #
-# Do NOT rename/copy the Pipeline to an ad-hoc name without also labeling the
-# PipelineRun with app.kubernetes.io/part-of=abevalflow — otherwise default-deny
-# blocks TCP to the gateway on :17670 and evaluate fails preflight.
+# Renamed copies of the Pipeline need a matching policy selector or gateway
+# preflight will be blocked by default-deny.
 #
-# Apply after substituting NAMESPACE (and AGENT_VM / INTEG_VM if different):
-#   sed "s/NAMESPACE/forge-nommen/g" networkpolicy-ci-openshell.yaml | oc apply -f -
+# Apply after substituting NAMESPACE for the SAW/evaluate namespace. LiteLLM,
+# MLflow and MinIO may also run in gz-forge-eval (the example PipelineRun).
+# Public HTTPS is needed for CLI downloads, Python packages and public OIDC
+# issuers. Private OIDC issuers need an additional deployment-specific rule.
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -31,9 +31,7 @@ spec:
         - podSelector:
             matchLabels:
               tekton.dev/pipeline: abevalflow-pipeline-openshell
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/part-of: abevalflow
+              tekton.dev/task: evaluate
       ports:
         - protocol: TCP
           port: 17670
@@ -57,9 +55,7 @@ spec:
         - podSelector:
             matchLabels:
               tekton.dev/pipeline: abevalflow-pipeline-openshell
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/part-of: abevalflow
+              tekton.dev/task: evaluate
       ports:
         - protocol: TCP
           port: 17670
@@ -78,6 +74,7 @@ spec:
   podSelector:
     matchLabels:
       tekton.dev/pipeline: abevalflow-pipeline-openshell
+      tekton.dev/task: evaluate
   policyTypes: [Egress]
   egress:
     - to:
@@ -106,77 +103,10 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: litellm
-      ports:
-        - protocol: TCP
-          port: 4000
-    - to:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: mlflow
-              app.kubernetes.io/part-of: abevalflow
-      ports:
-        - protocol: TCP
-          port: 5000
-    - to:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: minio
-              app.kubernetes.io/part-of: abevalflow
-      ports:
-        - protocol: TCP
-          port: 9000
-    - to:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: openshift-dns
-      ports:
-        - protocol: UDP
-          port: 53
-        - protocol: TCP
-          port: 53
-        - protocol: UDP
-          port: 5353
-        - protocol: TCP
-          port: 5353
----
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: abevalflow-allow-ci-egress-by-part-of
-  namespace: NAMESPACE
-  labels:
-    app.kubernetes.io/part-of: abevalflow
-    app.kubernetes.io/component: forge-saw
-spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/part-of: abevalflow
-  policyTypes: [Egress]
-  egress:
-    - to:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: openshell-saw-agent
-              vm.kubevirt.io/name: openshell-saw-agent
-      ports:
-        - protocol: TCP
-          port: 17670
-        - protocol: TCP
-          port: 8443
-    - to:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: openshell-saw-integ
-              vm.kubevirt.io/name: openshell-saw-integ
-      ports:
-        - protocol: TCP
-          port: 17670
-        - protocol: TCP
-          port: 18082
-        - protocol: TCP
-          port: 8443
-    - to:
-        - podSelector:
+              kubernetes.io/metadata.name: gz-forge-eval
+          podSelector:
             matchLabels:
               app.kubernetes.io/name: litellm
       ports:
@@ -187,11 +117,25 @@ spec:
             matchLabels:
               app.kubernetes.io/name: mlflow
               app.kubernetes.io/part-of: abevalflow
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gz-forge-eval
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mlflow
+              app.kubernetes.io/part-of: abevalflow
       ports:
         - protocol: TCP
           port: 5000
     - to:
         - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: minio
+              app.kubernetes.io/part-of: abevalflow
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gz-forge-eval
+          podSelector:
             matchLabels:
               app.kubernetes.io/name: minio
               app.kubernetes.io/part-of: abevalflow
@@ -211,3 +155,16 @@ spec:
           port: 5353
         - protocol: TCP
           port: 5353
+    # Setup and runtime HTTPS: OpenShell release download, PyPI packages,
+    # and a public OIDC issuer when client credentials are configured.
+    # NetworkPolicy cannot restrict this rule to DNS names.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443

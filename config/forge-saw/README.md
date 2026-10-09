@@ -152,8 +152,18 @@ If SAW is down the **run fails**. That step does not install SAW.
 
 When SAW VMs and Tekton share a namespace with default-deny policies, evaluate
 pods must be allowed to reach the agent gateway on `:17670`. Use the canonical
-Pipeline name `abevalflow-pipeline-openshell` (so `tekton.dev/pipeline` matches)
-and label PipelineRuns with `app.kubernetes.io/part-of: abevalflow`.
+Pipeline name `abevalflow-pipeline-openshell` and its referenced Task name
+`evaluate` so the injected `tekton.dev/pipeline` and `tekton.dev/task` pod
+labels match.
+
+The egress policy permits SAW gateways in the evaluate namespace, LiteLLM,
+MLflow and MinIO either there or in `gz-forge-eval`, DNS, and public TCP/443
+for the Task's OpenShell download, Python package installs and public OIDC
+issuer. Kubernetes NetworkPolicy cannot limit the HTTPS rule to GitHub or
+PyPI hostnames. If the OIDC issuer is private, add an allow rule for its actual
+namespace and pod labels or route before enabling that mode. The shared Task
+also installs packages at runtime; an image with those dependencies baked in
+would allow a narrower deployment policy.
 
 Same-namespace template:
 
@@ -162,12 +172,27 @@ sed "s/NAMESPACE/${EVAL_NS}/g" config/forge-saw/networkpolicy-ci-openshell.yaml 
   | oc apply -f -
 ```
 
-Do not create ad-hoc copies of the Pipeline under a different name unless those
-PipelineRuns also carry the `part-of=abevalflow` label and the NetworkPolicies
-above are applied — otherwise gateway preflight times out.
+If the earlier two-selector template was applied, remove its old egress policy
+after applying this one; `oc apply` does not delete objects omitted from a file:
+
+```bash
+oc delete networkpolicy abevalflow-allow-ci-egress-by-part-of \
+  -n "$EVAL_NS" --ignore-not-found
+```
+
+Copies of the Pipeline or Evaluate Task under another name need matching
+NetworkPolicy selectors; otherwise gateway preflight times out.
 
 ## Image
 
 Stock `agent-eval-harness:v1.0.x` cannot import `agent_eval.openshell`. Point
 `aeh-openshell-image` at an orchestrator image built from GuyZivRH
-`agent-eval-harness` **main** that also includes the `openshell` CLI.
+`agent-eval-harness` at the pinned OpenShell Pipeline revision that also
+includes the `openshell` CLI. Use `main` only as an explicit development
+override.
+
+The OpenShell Pipeline profile explicitly sets `openshell-user-fixture` to
+`fixtures/USER.md` for the Forge submission. The shared Evaluate Task defaults
+this parameter to empty. Set it to an empty value for a submission without an
+installation fixture, or provide another path relative to its submission
+directory. A configured path must exist when Evaluate runs.

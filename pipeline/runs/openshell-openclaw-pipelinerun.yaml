@@ -5,11 +5,6 @@ apiVersion: tekton.dev/v1
 kind: PipelineRun
 metadata:
   generateName: aeh-openshell-openclaw-
-  labels:
-    # Required when NetworkPolicies select on part-of (and recommended always).
-    # Keep pipelineRef.name=abevalflow-pipeline-openshell so tekton.dev/pipeline
-    # also matches the canonical CI NetworkPolicies.
-    app.kubernetes.io/part-of: abevalflow
 spec:
   pipelineRef:
     name: abevalflow-pipeline-openshell
@@ -44,6 +39,8 @@ spec:
       value: "ghcr.io/rh-forge/openclaw-saw-agent@sha256:b47b92a6b3fd03327c1f2093a5c28aba0fdf3cb620e9154335688900191fe2b9"
     - name: openshell-provider
       value: "forge-ai-gateway,m365-read-intervm,slack-read-proxy,drafts-service-agent"
+    - name: openshell-user-fixture
+      value: "fixtures/USER.md"
     - name: aeh-openshell-image
       value: "registry.access.redhat.com/ubi9/python-311:9.6"
     - name: llm-model
