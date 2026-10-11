@@ -26,7 +26,9 @@ from abevalflow.mcp.phase1 import (
     run_phase1,
 )
 from abevalflow.schemas import GateMode, GatePolicy
-from scripts.mcp import license_scan, no_user_code_scan, secrets_scan
+from scripts.mcp import run_license_scan as license_scan
+from scripts.mcp import run_no_user_code_scan as no_user_code_scan
+from scripts.mcp import run_secrets_scan as secrets_scan
 
 BLOCK = GatePolicy(default_mode=GateMode.BLOCK)
 

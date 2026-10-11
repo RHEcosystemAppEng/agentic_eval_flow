@@ -7,10 +7,10 @@ three-state result file per check for the Phase 2 gates to read.
 
 Checks that Compass already collects as real automated facts (tool-name rules,
 OAuth match) or as metadata (schema present, documentation) are NOT probed here -
-they are consumed via ``scripts/mcp/compass_fetch.py`` instead.
+they are consumed via ``scripts/mcp/run_compass_fetch.py`` instead.
 
 Usage:
-    python -m scripts.mcp.phase2_probe --server-url http://<service>:8080/mcp \
+    python -m scripts.mcp.run_phase2_probe --server-url http://<service>:8080/mcp \
         --reports-dir <dir> [--timeout 30]
 """
 

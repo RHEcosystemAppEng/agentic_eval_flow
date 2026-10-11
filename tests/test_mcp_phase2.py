@@ -17,7 +17,9 @@ from abevalflow.gates.base import GateMode
 from abevalflow.mcp.phase2 import PHASE2_CHECKS, run_phase2
 from abevalflow.mcp.phase2.base import Phase2Gate
 from abevalflow.schemas import GatePolicy
-from scripts.mcp import compass_fetch, phase2_probe, run_phase2_gates
+from scripts.mcp import run_compass_fetch as compass_fetch
+from scripts.mcp import run_phase2_gates
+from scripts.mcp import run_phase2_probe as phase2_probe
 from scripts.mcp._mcp_client import RpcResponse, _parse_sse_messages, _select_response
 from scripts.mcp._phase2 import STATUS_FAIL, STATUS_NOT_EVALUATED, STATUS_PASS, CheckOutcome, write_check_result
 

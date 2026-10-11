@@ -1,6 +1,6 @@
 """Phase 1 secrets-management gate.
 
-Reads secrets-scan.json produced by scripts/mcp/secrets_scan.py (a normalized
+Reads secrets-scan.json produced by scripts/mcp/run_secrets_scan.py (a normalized
 gitleaks run) and converts it into a standardized GateResult. Fails in block
 mode when any HIGH/CRITICAL hardcoded-credential finding is present.
 

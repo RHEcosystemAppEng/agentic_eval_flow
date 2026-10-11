@@ -14,7 +14,7 @@ still honors a committed ``.semgrepignore``, so its mere presence is flagged as 
 high-severity finding - which fails a blocking gate - rather than being trusted.
 
 Usage:
-    python -m scripts.mcp.no_user_code_scan <target_dir> --reports-dir <dir>
+    python -m scripts.mcp.run_no_user_code_scan <target_dir> --reports-dir <dir>
 """
 
 from __future__ import annotations

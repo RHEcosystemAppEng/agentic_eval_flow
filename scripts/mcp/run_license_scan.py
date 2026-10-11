@@ -7,7 +7,7 @@ allow-list. Emits license-scan.json for LicenseGate. Transitive/dependency
 license scanning is out of scope (ADR Phase 1).
 
 Usage:
-    python -m scripts.mcp.license_scan <target_dir> --reports-dir <dir> \
+    python -m scripts.mcp.run_license_scan <target_dir> --reports-dir <dir> \
         [--allow apache-2.0 --allow mit ...]
 """
 

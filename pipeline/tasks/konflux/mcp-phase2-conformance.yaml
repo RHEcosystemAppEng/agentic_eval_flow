@@ -62,7 +62,7 @@ spec:
         mkdir -p "$REPORTS_DIR"
 
         echo "=== Phase 2 live probe against $(params.server-url) ==="
-        python -m scripts.mcp.phase2_probe \
+        python -m scripts.mcp.run_phase2_probe \
           --server-url "$(params.server-url)" \
           --reports-dir "$REPORTS_DIR" \
           --timeout "$(params.timeout)"
@@ -70,7 +70,7 @@ spec:
         FACTS="$(params.compass-facts-file)"
         if [ -n "$FACTS" ]; then
           echo "=== Phase 2 Compass consume from $FACTS ==="
-          python -m scripts.mcp.compass_fetch \
+          python -m scripts.mcp.run_compass_fetch \
             --facts-file "$(workspaces.source.path)/$FACTS" \
             --reports-dir "$REPORTS_DIR"
         else

@@ -64,10 +64,10 @@ spec:
         done
 
         echo "=== Phase 1 scanners on $SOURCE_DIR ==="
-        python -m scripts.mcp.secrets_scan "$SOURCE_DIR" --reports-dir "$REPORTS_DIR"
-        python -m scripts.mcp.no_user_code_scan "$SOURCE_DIR" --reports-dir "$REPORTS_DIR"
+        python -m scripts.mcp.run_secrets_scan "$SOURCE_DIR" --reports-dir "$REPORTS_DIR"
+        python -m scripts.mcp.run_no_user_code_scan "$SOURCE_DIR" --reports-dir "$REPORTS_DIR"
         # shellcheck disable=SC2086
-        python -m scripts.mcp.license_scan "$SOURCE_DIR" --reports-dir "$REPORTS_DIR" $LICENSE_ARGS
+        python -m scripts.mcp.run_license_scan "$SOURCE_DIR" --reports-dir "$REPORTS_DIR" $LICENSE_ARGS
 
     - name: gate
       image: $(params.mcp-eval-image)

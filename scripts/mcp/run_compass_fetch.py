@@ -22,7 +22,7 @@ yet: the read endpoint and access permissions are still being settled with the
 Compass team, so ``--facts-file`` is the only path until then.
 
 Usage:
-    python -m scripts.mcp.compass_fetch --facts-file facts.json --reports-dir <dir>
+    python -m scripts.mcp.run_compass_fetch --facts-file facts.json --reports-dir <dir>
 """
 
 from __future__ import annotations

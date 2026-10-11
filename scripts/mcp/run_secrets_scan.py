@@ -5,7 +5,7 @@ Runs gitleaks over an MCP server repository (static working-tree scan, no live
 verification) and normalizes its output into secrets-scan.json for SecretsGate.
 
 Usage:
-    python -m scripts.mcp.secrets_scan <target_dir> --reports-dir <dir>
+    python -m scripts.mcp.run_secrets_scan <target_dir> --reports-dir <dir>
 """
 
 from __future__ import annotations

@@ -5,11 +5,11 @@ Approach 4). It is deterministic and uses NO LLM. Results follow the three-state
 model (pass / fail / not_evaluated).
 
 Two sources feed the same set of gates:
-* **Live probes** (scripts/mcp/phase2_probe.py) - checks that need a running
+* **Live probes** (scripts/mcp/run_phase2_probe.py) - checks that need a running
   server: protocol compliance, schema conformance, tool annotations, HTTP
   support, rate limiting, response-size limit, mandatory timeouts, OpenAPI
   conformance.
-* **Compass-consumed** (scripts/mcp/compass_fetch.py) - the Compass tier-1
+* **Compass-consumed** (scripts/mcp/run_compass_fetch.py) - the Compass tier-1
   automated facts consumed rather than re-probed: tool-name rules and
   OAuth-matches-catalog.
 

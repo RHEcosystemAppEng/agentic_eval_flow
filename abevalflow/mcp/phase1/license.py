@@ -1,6 +1,6 @@
 """Phase 1 license-compliance gate.
 
-Reads license-scan.json produced by scripts/mcp/license_scan.py (a licensee run
+Reads license-scan.json produced by scripts/mcp/run_license_scan.py (a licensee run
 compared against the approved-license allow-list) and converts it into a
 standardized GateResult. Fails in block mode when the top-level declared license
 is missing or not in the allow-list (emitted as a HIGH finding by the scanner).
@@ -21,7 +21,7 @@ from abevalflow.observability.decorators import timed_gate
 from abevalflow.schemas import GatePolicy
 
 # Approved SPDX license identifiers for the top-level declared license.
-# Compared case-insensitively (see license_scan.py::evaluate_licenses).
+# Compared case-insensitively (see run_license_scan.py::evaluate_licenses).
 DEFAULT_ALLOWED_LICENSES: tuple[str, ...] = (
     "apache-2.0",
     "mit",
