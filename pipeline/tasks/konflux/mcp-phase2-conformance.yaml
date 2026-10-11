@@ -55,19 +55,31 @@ spec:
   steps:
     - name: probe
       image: $(params.mcp-eval-image)
+      # User-controlled params are bound to env vars (Tekton substitutes them as
+      # literal strings) instead of inlined into the script, so a value containing
+      # shell metacharacters cannot execute in the task pod.
+      env:
+        - name: SERVER_URL
+          value: $(params.server-url)
+        - name: SUBMISSION_NAME
+          value: $(params.submission-name)
+        - name: TIMEOUT
+          value: $(params.timeout)
+        - name: COMPASS_FACTS_FILE
+          value: $(params.compass-facts-file)
       script: |
         #!/usr/bin/env bash
         set -euo pipefail
-        REPORTS_DIR="$(workspaces.source.path)/reports/$(params.submission-name)"
+        REPORTS_DIR="$(workspaces.source.path)/reports/$SUBMISSION_NAME"
         mkdir -p "$REPORTS_DIR"
 
-        echo "=== Phase 2 live probe against $(params.server-url) ==="
+        echo "=== Phase 2 live probe against $SERVER_URL ==="
         python -m scripts.mcp.run_phase2_probe \
-          --server-url "$(params.server-url)" \
+          --server-url "$SERVER_URL" \
           --reports-dir "$REPORTS_DIR" \
-          --timeout "$(params.timeout)"
+          --timeout "$TIMEOUT"
 
-        FACTS="$(params.compass-facts-file)"
+        FACTS="$COMPASS_FACTS_FILE"
         if [ -n "$FACTS" ]; then
           echo "=== Phase 2 Compass consume from $FACTS ==="
           python -m scripts.mcp.run_compass_fetch \
@@ -79,18 +91,23 @@ spec:
 
     - name: gate
       image: $(params.mcp-eval-image)
+      env:
+        - name: SUBMISSION_NAME
+          value: $(params.submission-name)
+        - name: MODE
+          value: $(params.mode)
       script: |
         #!/usr/bin/env bash
         set -euo pipefail
-        REPORTS_DIR="$(workspaces.source.path)/reports/$(params.submission-name)"
+        REPORTS_DIR="$(workspaces.source.path)/reports/$SUBMISSION_NAME"
 
         # Shared gate wrapper (baked in the image): runs the gate module, emits the
         # Tekton results from the summary, and propagates the gate's exit code.
         bash /opt/scripts/mcp/run_gate.sh \
           scripts.mcp.run_phase2_gates \
           "$REPORTS_DIR" \
-          "$(params.mode)" \
+          "$MODE" \
           "$REPORTS_DIR/phase2-summary.json" \
           "$(results.phase2-passed.path)" \
-          "reports/$(params.submission-name)" \
+          "reports/$SUBMISSION_NAME" \
           "$(results.report-path.path)"

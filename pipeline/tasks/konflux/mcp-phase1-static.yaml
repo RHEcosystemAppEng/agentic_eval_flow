@@ -51,15 +51,26 @@ spec:
   steps:
     - name: scan
       image: $(params.mcp-eval-image)
+      # User-controlled params are bound to env vars (Tekton substitutes them as
+      # literal strings) instead of inlined into the script, so a value containing
+      # shell metacharacters cannot execute in the task pod.
+      env:
+        - name: SOURCE_SUBDIR
+          value: $(params.source-subdir)
+        - name: SUBMISSION_NAME
+          value: $(params.submission-name)
+        - name: ALLOWED_LICENSES
+          value: $(params.allowed-licenses)
       script: |
         #!/usr/bin/env bash
         set -euo pipefail
-        SOURCE_DIR="$(workspaces.source.path)/$(params.source-subdir)"
-        REPORTS_DIR="$(workspaces.source.path)/reports/$(params.submission-name)"
+        SOURCE_DIR="$(workspaces.source.path)/$SOURCE_SUBDIR"
+        REPORTS_DIR="$(workspaces.source.path)/reports/$SUBMISSION_NAME"
         mkdir -p "$REPORTS_DIR"
 
         LICENSE_ARGS=""
-        for spdx in $(params.allowed-licenses); do
+        # shellcheck disable=SC2086
+        for spdx in $ALLOWED_LICENSES; do
           LICENSE_ARGS="$LICENSE_ARGS --allow $spdx"
         done
 
@@ -71,18 +82,23 @@ spec:
 
     - name: gate
       image: $(params.mcp-eval-image)
+      env:
+        - name: SUBMISSION_NAME
+          value: $(params.submission-name)
+        - name: MODE
+          value: $(params.mode)
       script: |
         #!/usr/bin/env bash
         set -euo pipefail
-        REPORTS_DIR="$(workspaces.source.path)/reports/$(params.submission-name)"
+        REPORTS_DIR="$(workspaces.source.path)/reports/$SUBMISSION_NAME"
 
         # Shared gate wrapper (baked in the image): runs the gate module, emits the
         # Tekton results from the summary, and propagates the gate's exit code.
         bash /opt/scripts/mcp/run_gate.sh \
           scripts.mcp.run_phase1_gates \
           "$REPORTS_DIR" \
-          "$(params.mode)" \
+          "$MODE" \
           "$REPORTS_DIR/phase1-summary.json" \
           "$(results.phase1-passed.path)" \
-          "reports/$(params.submission-name)" \
+          "reports/$SUBMISSION_NAME" \
           "$(results.report-path.path)"
