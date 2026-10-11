@@ -98,14 +98,19 @@ def main() -> int:
     scan_path = args.reports_dir / SCAN_FILENAME
 
     result = run_tool(["licensee", "detect", "--json", str(args.target_dir)])
-    if result.returncode != 0:
-        logger.error("licensee failed (exit %d): %s", result.returncode, result.stderr.strip())
-        return 1
 
+    # licensee exits non-zero when it finds no license - that is a valid result we
+    # must still evaluate (-> a "license-missing" finding + gate decision), not a
+    # tool failure. It still emits JSON in that case, so a non-zero exit with NO
+    # output (or unparseable output) is a genuine tool error, not "no license".
+    stdout = (result.stdout or "").strip()
+    if not stdout and result.returncode != 0:
+        logger.error("licensee failed (exit %d): %s", result.returncode, (result.stderr or "").strip())
+        return 1
     try:
-        data = json.loads(result.stdout or "{}")
+        data = json.loads(stdout or "{}")
     except json.JSONDecodeError as exc:
-        logger.error("Could not parse licensee JSON: %s", exc)
+        logger.error("licensee failed (exit %d): %s", result.returncode, (result.stderr or stdout or str(exc)).strip())
         return 1
 
     findings = evaluate_licenses(

@@ -8,5 +8,5 @@ server as a black box across three sequenced phases:
 - Phase 2 - deterministic contract/conformance testing (live, no LLM).
 - Phase 3 - behavioral testing (mcpchecker, conditional on a task suite).
 
-Only Phase 1 is implemented here so far.
+Phases 1 and 2 are implemented here; Phase 3 is out of scope for now.
 """

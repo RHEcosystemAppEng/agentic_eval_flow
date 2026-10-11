@@ -23,6 +23,7 @@ FROM registry.access.redhat.com/ubi9/python-312:latest
 # e.g. an unpinned pydantic v3 would break the schemas the eval code relies on).
 ARG GITLEAKS_VERSION=8.30.0
 ARG SEMGREP_VERSION=1.179.0
+ARG LICENSEE_VERSION=9.18.0
 ARG PYDANTIC_VERSION=2.13.5
 ARG PYYAML_VERSION=6.0.3
 ARG HTTPX_VERSION=0.28.1
@@ -53,7 +54,7 @@ RUN curl -LsSf \
       "pyyaml==${PYYAML_VERSION}" \
       "httpx==${HTTPX_VERSION}" \
  && dnf install -y ruby ruby-devel gcc gcc-c++ make cmake pkgconf-pkg-config openssl-devel \
- && gem install licensee \
+ && gem install licensee -v "${LICENSEE_VERSION}" \
  && dnf remove -y ruby-devel gcc gcc-c++ make cmake pkgconf-pkg-config openssl-devel \
  && dnf clean all
 

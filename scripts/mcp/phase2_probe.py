@@ -112,6 +112,16 @@ def check_protocol_compliance(client: MCPClient, init: RpcResponse) -> CheckOutc
                     rule_id="error-unknown-method",
                 )
             )
+        elif not isinstance(err, dict):
+            # A non-object "error" (e.g. a bare string) is itself a JSON-RPC
+            # violation - and calling .get() on it would crash the probe.
+            findings.append(
+                make_finding(
+                    severity="medium",
+                    message=f"unknown method returned a non-object error ({type(err).__name__}): {err!r}",
+                    rule_id="error-not-object",
+                )
+            )
         elif err.get("code") != -32601:
             findings.append(
                 make_finding(
@@ -157,8 +167,32 @@ def _tools_from(tools_resp: RpcResponse) -> list[dict]:
 
 
 def _schema_is_object(schema: object) -> bool:
-    """A JSON-Schema-ish object: declares ``type: object`` or carries ``properties``."""
-    return isinstance(schema, dict) and (schema.get("type") == "object" or "properties" in schema)
+    """A well-formed JSON-Schema object node.
+
+    Requires the declared ``type`` to permit ``object`` (JSON Schema allows a type
+    array like ``["object", "null"]``, so that is accepted; a conflicting type like
+    ``{"type": "array", "properties": {}}`` is rejected), or, when no type is
+    declared, at least one object keyword. Object keywords, when present, must have
+    the right shape - ``properties`` / ``patternProperties`` must be mappings - so
+    ``{"type": "object", "properties": []}`` is rejected too.
+    """
+    if not isinstance(schema, dict):
+        return False
+    declared_type = schema.get("type")
+    # type may be a string or, per JSON Schema, a list of allowed types.
+    type_permits_object = declared_type is None or "object" in (
+        declared_type if isinstance(declared_type, list) else [declared_type]
+    )
+    if declared_type is not None and not type_permits_object:
+        return False
+    object_keywords = ("properties", "patternProperties", "additionalProperties")
+    if declared_type is None and not any(k in schema for k in object_keywords):
+        return False
+    for mapping_keyword in ("properties", "patternProperties"):
+        value = schema.get(mapping_keyword)
+        if value is not None and not isinstance(value, dict):
+            return False
+    return True
 
 
 def check_schema_conformance(client: MCPClient, tools_resp: RpcResponse) -> CheckOutcome:
@@ -330,7 +364,17 @@ def probe_all(server_url: str, *, timeout: float = 30.0) -> list[CheckOutcome]:
         try:
             init = client.initialize()
             client.send_initialized()
-            tools_resp = client.list_tools()
+            # Aggregate every tools/list page (follows nextCursor) so schema and
+            # annotation checks see tools beyond page one. Wrap the full set in a
+            # synthetic response so the per-check helpers keep one interface.
+            all_tools = client.list_all_tools()
+            tools_resp = RpcResponse(
+                status_code=200,
+                headers={},
+                content_type="application/json",
+                message={"jsonrpc": "2.0", "id": 2, "result": {"tools": all_tools}},
+                raw_text="",
+            )
         except MCPConnectionError as exc:
             reason = f"Server unreachable at {server_url}: {exc}"
             logger.warning(reason)

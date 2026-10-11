@@ -127,6 +127,81 @@ def test_run_phase1_one_dirty_fails_that_gate(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Scanner main() behavior with a faked tool (no real binary)
+# ---------------------------------------------------------------------------
+
+
+def _fake_result(returncode=0, stdout="", stderr=""):
+    import types
+
+    return types.SimpleNamespace(returncode=returncode, stdout=stdout, stderr=stderr)
+
+
+def test_license_scan_treats_nonzero_exit_with_json_as_valid(tmp_path, monkeypatch):
+    # licensee exits non-zero when no license is found; that JSON must still be
+    # parsed into a license-missing finding, not treated as a tool failure.
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    monkeypatch.setattr(
+        license_scan,
+        "run_tool",
+        lambda *a, **k: _fake_result(returncode=1, stdout='{"licenses": [], "matched_files": []}'),
+    )
+    rc = _run_scanner(license_scan, [str(repo), "--reports-dir", str(reports)])
+    assert rc == 0
+    data = json.loads((reports / "license-scan.json").read_text())
+    assert [f["rule_id"] for f in data["findings"]] == ["license-missing"]
+
+
+def test_license_scan_fails_only_on_unparseable_output(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    monkeypatch.setattr(
+        license_scan,
+        "run_tool",
+        lambda *a, **k: _fake_result(returncode=1, stdout="not json", stderr="boom"),
+    )
+    assert _run_scanner(license_scan, [str(repo), "--reports-dir", str(reports)]) == 1
+
+
+def test_license_scan_nonzero_exit_with_no_output_is_tool_error(tmp_path, monkeypatch):
+    # A genuine licensee crash (non-zero exit, empty stdout) must be a tool error,
+    # not silently reclassified as "license-missing".
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    monkeypatch.setattr(
+        license_scan,
+        "run_tool",
+        lambda *a, **k: _fake_result(returncode=2, stdout="", stderr="segfault"),
+    )
+    assert _run_scanner(license_scan, [str(repo), "--reports-dir", str(reports)]) == 1
+    assert not (reports / "license-scan.json").exists()
+
+
+def test_no_user_code_scan_flags_committed_semgrepignore(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".semgrepignore").write_text("secrets/\n")
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    monkeypatch.setattr(
+        no_user_code_scan,
+        "run_tool",
+        lambda *a, **k: _fake_result(returncode=0, stdout='{"results": [], "paths": {"scanned": []}}'),
+    )
+    rc = _run_scanner(no_user_code_scan, [str(repo), "--reports-dir", str(reports)])
+    assert rc == 0
+    data = json.loads((reports / "no-user-code-scan.json").read_text())
+    assert "semgrep-ignore-present" in {f["rule_id"] for f in data["findings"]}
+
+
+# ---------------------------------------------------------------------------
 # Integration tests (real tools, skipped when absent)
 # ---------------------------------------------------------------------------
 

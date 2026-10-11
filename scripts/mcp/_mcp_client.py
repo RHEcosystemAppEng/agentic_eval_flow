@@ -41,9 +41,9 @@ CLIENT_INFO = {"name": "mcp-phase2-probe", "version": "0.1"}
 class RpcResponse:
     """Raw result of a single POST to the MCP endpoint.
 
-    ``message`` is the parsed JSON-RPC object (from a plain JSON body or scraped
-    from the first SSE ``data:`` frame), or ``None`` when the body is empty (e.g.
-    a 202 to a notification) or unparseable.
+    ``message`` is the parsed JSON-RPC object (from a plain JSON body, or the SSE
+    ``data:`` frame whose id matches the request), or ``None`` when the body is
+    empty (e.g. a 202 to a notification) or unparseable.
     """
 
     status_code: int
@@ -57,18 +57,39 @@ class RpcResponse:
         return "text/event-stream" in self.content_type
 
 
-def _parse_sse(text: str) -> dict[str, Any] | list[Any] | None:
-    """Extract the first JSON-RPC message from an SSE stream body."""
+def _parse_sse_messages(text: str) -> list[dict[str, Any] | list[Any]]:
+    """Extract every JSON-RPC message from an SSE stream body, in order."""
+    messages: list[dict[str, Any] | list[Any]] = []
     for line in text.splitlines():
         if line.startswith("data:"):
             payload = line[len("data:") :].strip()
             if not payload:
                 continue
             try:
-                return json.loads(payload)
+                messages.append(json.loads(payload))
             except json.JSONDecodeError:
                 continue
-    return None
+    return messages
+
+
+def _select_response(messages: list[dict[str, Any] | list[Any]], request_id: Any) -> dict[str, Any] | list[Any] | None:
+    """Pick the JSON-RPC response matching ``request_id``.
+
+    A server may interleave notifications (no/other id) ahead of the response on
+    the stream, so selecting the first frame can mis-read a valid response as a
+    protocol violation. Matching is tried exactly first, then by string value (a
+    server that echoes the id as "2" rather than 2 still matches). When
+    ``request_id`` is None (e.g. a notification or a raw malformed frame) or no
+    frame matches, fall back to the first message.
+    """
+    if request_id is not None:
+        for msg in messages:
+            if isinstance(msg, dict) and msg.get("id") == request_id:
+                return msg
+        for msg in messages:
+            if isinstance(msg, dict) and "id" in msg and str(msg.get("id")) == str(request_id):
+                return msg
+    return messages[0] if messages else None
 
 
 class MCPConnectionError(RuntimeError):
@@ -126,6 +147,7 @@ class MCPClient:
             headers.update(extra_headers)
 
         content = body if raw else json.dumps(body)
+        request_id = body.get("id") if isinstance(body, dict) else None
         try:
             resp = self._client.post(self.endpoint_url, content=content, headers=headers)
         except httpx.HTTPError as exc:
@@ -134,7 +156,7 @@ class MCPClient:
         text = resp.text
         content_type = resp.headers.get("content-type", "")
         if "text/event-stream" in content_type:
-            message = _parse_sse(text)
+            message = _select_response(_parse_sse_messages(text), request_id)
         elif text.strip():
             try:
                 message = json.loads(text)
@@ -183,8 +205,33 @@ class MCPClient:
         """Send the ``notifications/initialized`` notification (expects 202, empty body)."""
         return self.post({"jsonrpc": "2.0", "method": "notifications/initialized"})
 
-    def list_tools(self, *, request_id: Any = 2) -> RpcResponse:
-        return self.post({"jsonrpc": "2.0", "id": request_id, "method": "tools/list", "params": {}})
+    def list_tools(self, *, request_id: Any = 2, cursor: str | None = None) -> RpcResponse:
+        params: dict[str, Any] = {"cursor": cursor} if cursor else {}
+        return self.post({"jsonrpc": "2.0", "id": request_id, "method": "tools/list", "params": params})
+
+    def list_all_tools(self, *, max_pages: int = 50) -> list[dict[str, Any]]:
+        """Return every tool across all ``tools/list`` pages, following ``nextCursor``.
+
+        Paginating matters for conformance: a server can place a malformed tool on
+        a later page, so validating only page one would miss it. ``max_pages``
+        bounds a server that returns an endless or self-repeating cursor.
+        """
+        tools: list[dict[str, Any]] = []
+        cursor: str | None = None
+        seen_cursors: set[str] = set()
+        for page in range(max_pages):
+            resp = self.list_tools(request_id=2 + page, cursor=cursor)
+            result = resp.message.get("result") if isinstance(resp.message, dict) else None
+            if not isinstance(result, dict):
+                break
+            page_tools = result.get("tools", [])
+            if isinstance(page_tools, list):
+                tools.extend(t for t in page_tools if isinstance(t, dict))
+            cursor = result.get("nextCursor")
+            if not cursor or not isinstance(cursor, str) or cursor in seen_cursors:
+                break
+            seen_cursors.add(cursor)
+        return tools
 
     def call_tool(self, name: str, arguments: dict[str, Any] | None = None, *, request_id: Any = 3) -> RpcResponse:
         return self.post(

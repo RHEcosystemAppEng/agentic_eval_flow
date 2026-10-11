@@ -83,19 +83,14 @@ spec:
         #!/usr/bin/env bash
         set -euo pipefail
         REPORTS_DIR="$(workspaces.source.path)/reports/$(params.submission-name)"
-        REPORT_REL="reports/$(params.submission-name)"
 
-        # Never abort before writing results: capture the exit code, emit the
-        # Tekton results from the summary, then fail the step if a check failed.
-        set +e
-        python -m scripts.mcp.run_phase2_gates \
-          --reports-dir "$REPORTS_DIR" --mode "$(params.mode)"
-        GATE_EXIT=$?
-        set -e
-
-        SUMMARY="$REPORTS_DIR/phase2-summary.json"
-        python3 -c "import json;print(str(json.load(open('$SUMMARY'))['passed']).lower(),end='')" \
-          > "$(results.phase2-passed.path)"
-        echo -n "$REPORT_REL" > "$(results.report-path.path)"
-
-        exit $GATE_EXIT
+        # Shared gate wrapper (baked in the image): runs the gate module, emits the
+        # Tekton results from the summary, and propagates the gate's exit code.
+        bash /opt/scripts/mcp/run_gate.sh \
+          scripts.mcp.run_phase2_gates \
+          "$REPORTS_DIR" \
+          "$(params.mode)" \
+          "$REPORTS_DIR/phase2-summary.json" \
+          "$(results.phase2-passed.path)" \
+          "reports/$(params.submission-name)" \
+          "$(results.report-path.path)"

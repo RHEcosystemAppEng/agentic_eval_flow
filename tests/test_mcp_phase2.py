@@ -18,7 +18,7 @@ from abevalflow.mcp.phase2 import PHASE2_CHECKS, run_phase2
 from abevalflow.mcp.phase2.base import Phase2Gate
 from abevalflow.schemas import GatePolicy
 from scripts.mcp import compass_fetch, phase2_probe, run_phase2_gates
-from scripts.mcp._mcp_client import RpcResponse, _parse_sse
+from scripts.mcp._mcp_client import RpcResponse, _parse_sse_messages, _select_response
 from scripts.mcp._phase2 import STATUS_FAIL, STATUS_NOT_EVALUATED, STATUS_PASS, CheckOutcome, write_check_result
 
 # ---------------------------------------------------------------------------
@@ -49,7 +49,7 @@ class FakeClient:
             return _rpc({"jsonrpc": "2.0", "id": body.get("id"), "error": {"code": -32601, "message": "not found"}})
         return resp
 
-    def list_tools(self, request_id=2):
+    def list_tools(self, request_id=2, cursor=None):
         return self._by_method["tools/list"]
 
 
@@ -60,12 +60,74 @@ class FakeClient:
 
 def test_parse_sse_extracts_json_rpc():
     body = 'event: message\ndata: {"jsonrpc": "2.0", "id": 1, "result": {}}\n\n'
-    parsed = _parse_sse(body)
-    assert parsed == {"jsonrpc": "2.0", "id": 1, "result": {}}
+    messages = _parse_sse_messages(body)
+    assert messages == [{"jsonrpc": "2.0", "id": 1, "result": {}}]
+    assert _select_response(messages, 1) == {"jsonrpc": "2.0", "id": 1, "result": {}}
 
 
-def test_parse_sse_returns_none_without_data():
-    assert _parse_sse("event: ping\n\n") is None
+def test_parse_sse_returns_empty_without_data():
+    assert _parse_sse_messages("event: ping\n\n") == []
+    assert _select_response([], 1) is None
+
+
+def test_select_response_skips_interleaved_notification():
+    # A notification (no id) is streamed before the id-matched response; the
+    # matching frame must be chosen, not the first.
+    body = (
+        'data: {"jsonrpc": "2.0", "method": "notifications/progress"}\n\n'
+        'data: {"jsonrpc": "2.0", "id": 7, "result": {"ok": true}}\n\n'
+    )
+    messages = _parse_sse_messages(body)
+    assert _select_response(messages, 7) == {"jsonrpc": "2.0", "id": 7, "result": {"ok": True}}
+
+
+def test_select_response_falls_back_to_first_when_no_match():
+    messages = [{"jsonrpc": "2.0", "method": "notifications/progress"}]
+    assert _select_response(messages, 99) == messages[0]
+    assert _select_response(messages, None) == messages[0]
+
+
+def test_select_response_matches_string_id_against_int_request():
+    # A server that echoes the id as "2" still matches an int request id 2,
+    # rather than falling through to an interleaved notification frame.
+    messages = [
+        {"jsonrpc": "2.0", "method": "notifications/progress"},
+        {"jsonrpc": "2.0", "id": "2", "result": {"tools": []}},
+    ]
+    assert _select_response(messages, 2) == {"jsonrpc": "2.0", "id": "2", "result": {"tools": []}}
+
+
+def test_list_all_tools_follows_pagination():
+    from scripts.mcp._mcp_client import MCPClient
+
+    pages = {
+        None: {"tools": [{"name": "a"}], "nextCursor": "c1"},
+        "c1": {"tools": [{"name": "b"}], "nextCursor": "c2"},
+        "c2": {"tools": [{"name": "c"}]},  # no nextCursor -> last page
+    }
+    client = MCPClient.__new__(MCPClient)  # skip __init__ (no real socket)
+
+    def fake_list_tools(*, request_id=2, cursor=None):
+        return _rpc({"jsonrpc": "2.0", "id": request_id, "result": pages[cursor]})
+
+    client.list_tools = fake_list_tools
+    names = [t["name"] for t in client.list_all_tools()]
+    assert names == ["a", "b", "c"]
+
+
+def test_list_all_tools_breaks_on_repeating_cursor():
+    from scripts.mcp._mcp_client import MCPClient
+
+    client = MCPClient.__new__(MCPClient)
+
+    def fake_list_tools(*, request_id=2, cursor=None):
+        # Always returns the same cursor -> would loop forever without dedup.
+        return _rpc({"jsonrpc": "2.0", "id": request_id, "result": {"tools": [{"name": "x"}], "nextCursor": "same"}})
+
+    client.list_tools = fake_list_tools
+    tools = client.list_all_tools(max_pages=100)
+    # Two pages consumed (initial None cursor, then "same"), then dedup breaks it.
+    assert len(tools) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -145,6 +207,36 @@ def test_schema_conformance_output_schema_when_present():
     # No output schema at all -> not a violation (optional in the MCP spec).
     no_out = _rpc({"result": {"tools": [{"name": "c", "inputSchema": {"type": "object"}}]}})
     assert phase2_probe.check_schema_conformance(None, no_out).status == STATUS_PASS
+
+
+def test_schema_is_object_rejects_conflicting_type_and_bad_properties():
+    # Declared type conflicts with object -> not an object schema.
+    assert phase2_probe._schema_is_object({"type": "array", "properties": {}}) is False
+    # type object but properties is not a mapping -> malformed.
+    assert phase2_probe._schema_is_object({"type": "object", "properties": []}) is False
+    # No type but an object keyword present -> accepted.
+    assert phase2_probe._schema_is_object({"properties": {}}) is True
+    # No type and no object keyword -> not an object schema.
+    assert phase2_probe._schema_is_object({"description": "x"}) is False
+    # Not a dict at all.
+    assert phase2_probe._schema_is_object("nope") is False
+    # JSON Schema allows a type array; one that permits "object" is accepted.
+    assert phase2_probe._schema_is_object({"type": ["object", "null"], "properties": {}}) is True
+    # A type array that does NOT include "object" is rejected.
+    assert phase2_probe._schema_is_object({"type": ["array", "null"]}) is False
+
+
+def test_protocol_compliance_flags_non_object_error():
+    # A bare-string "error" is a JSON-RPC violation and must not crash the probe.
+    client = FakeClient(
+        {
+            "no/such/method": _rpc({"jsonrpc": "2.0", "id": 90, "error": "boom"}),
+            "tools/list": _rpc({"jsonrpc": "2.0", "id": 91, "error": {"code": -32600}}),
+        }
+    )
+    out = phase2_probe.check_protocol_compliance(client, _init_ok())
+    assert out.status == STATUS_FAIL
+    assert "error-not-object" in {f["rule_id"] for f in out.findings}
 
 
 def test_tool_annotations_absent_is_not_evaluated():

@@ -8,6 +8,11 @@ language is not scanned, so the scan records a ``coverage`` block and warns when
 zero files were scanned (a zero-finding pass then means "nothing to scan", not
 "clean"). Keep the ruleset offline - do not use ``--config auto`` (network).
 
+Submissions must not be able to quietly suppress their own findings: inline
+``# nosem`` / ``# nosemgrep`` comments are disabled (``--disable-nosem``). semgrep
+still honors a committed ``.semgrepignore``, so its mere presence is flagged as a
+high-severity finding - which fails a blocking gate - rather than being trusted.
+
 Usage:
     python -m scripts.mcp.no_user_code_scan <target_dir> --reports-dir <dir>
 """
@@ -104,6 +109,26 @@ def main() -> int:
 
     scan_path = args.reports_dir / SCAN_FILENAME
 
+    # semgrep honors a committed .semgrepignore, which could silently drop files
+    # from the scan. We cannot disable that per-file, so flag its presence as a
+    # high-severity finding (a blocking gate then fails rather than over-passing on
+    # a scan the submission narrowed).
+    findings: list[dict] = []
+    for ignore in sorted(args.target_dir.rglob(".semgrepignore")):
+        if ignore.is_file():
+            rel = ignore.relative_to(args.target_dir)
+            findings.append(
+                make_finding(
+                    severity="high",
+                    message=(
+                        f"Submission contains a .semgrepignore ({rel}); semgrep honors it and may "
+                        "exclude files from the scan, so its presence fails this gate."
+                    ),
+                    rule_id="semgrep-ignore-present",
+                    file_path=str(rel),
+                )
+            )
+
     result = run_tool(
         [
             "semgrep",
@@ -113,6 +138,8 @@ def main() -> int:
             "--json",
             "--quiet",
             "--metrics=off",  # stay fully offline (no telemetry call)
+            "--disable-version-check",  # no phone-home version check (stay offline)
+            "--disable-nosem",  # ignore submission `# nosem` / `# nosemgrep` suppression comments
             "--no-git-ignore",  # scan every file in the artifact, not just tracked
             str(args.target_dir),
         ]
@@ -129,7 +156,7 @@ def main() -> int:
         logger.error("Could not parse semgrep JSON: %s", exc)
         return 1
 
-    findings = normalize(data.get("results", []))
+    findings += normalize(data.get("results", []))
     coverage = coverage_summary(args.target_dir, data.get("paths", {}).get("scanned", []))
     write_scan(scan_path, SCANNER, args.target_dir, findings, extra={"coverage": coverage})
     if coverage["files_scanned"] == 0:
