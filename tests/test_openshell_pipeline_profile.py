@@ -47,11 +47,188 @@ class TestOpenshellPipelineProfile:
         assert defaults["openshell-sandbox-image"] == (
             "ghcr.io/rh-forge/openclaw-saw-agent@sha256:b47b92a6b3fd03327c1f2093a5c28aba0fdf3cb620e9154335688900191fe2b9"
         )
+        assert defaults["llm-model"] == "rits/zai-org/GLM-5-3-Flash"
+        assert defaults["llm-generation-model"] == "rits/zai-org/GLM-5-3-Flash"
+        assert defaults["aeh-model-override"] == "inference/rits/zai-org/GLM-5-3-Flash"
+        # A plain openai/ judge model 403s on /v1/messages; the judge-glm-5-3
+        # hosted_vllm route in config/litellm/configmap.yaml stays on
+        # /chat/completions. See that file for the full rationale.
+        assert defaults["aeh-judge-model-override"] == "judge-glm-5-3"
+        # Alias Service from config/forge-saw/openshell-eval-alias.yaml; keeps
+        # the default namespace-agnostic.
+        assert defaults["openshell-gateway-endpoint"] == "https://openshell:17670"
         assert defaults["enable-mlflow"] == "true"
-        assert defaults["mlflow-tracking-uri"] == ("http://abevalflow-mlflow.gz-forge-eval.svc.cluster.local:5000")
         analyze = next(t for t in _load(PIPELINE)["spec"]["tasks"] if t["name"] == "analyze")
         scan = next(p for p in analyze["params"] if p["name"] == "security-scan-mode")
         assert scan["value"] == "disabled"
+
+    def test_litellm_configmap_has_flash_and_judge_routes(self):
+        config = _load(REPO / "config" / "litellm" / "configmap.yaml")
+        models = yaml.safe_load(config["data"]["config.yaml"])["model_list"]
+        names = {entry["model_name"] for entry in models}
+        assert "rits/zai-org/GLM-5-3-Flash" in names
+        assert "judge-glm-5-3" in names
+        judge = next(e for e in models if e["model_name"] == "judge-glm-5-3")
+        assert judge["litellm_params"]["model"].startswith("hosted_vllm/")
+
+    def test_gateway_alias_service_selects_agent_vmi(self):
+        alias = _load(REPO / "config" / "forge-saw" / "openshell-eval-alias.yaml")
+        assert alias["spec"]["selector"] == {
+            "app.kubernetes.io/name": "openshell-saw-agent",
+            "vm.kubevirt.io/name": "openshell-saw-agent",
+        }
+        ports = alias["spec"]["ports"]
+        assert ports == [{"name": "gateway", "port": 17670, "protocol": "TCP", "targetPort": 17670}]
+
+    def test_pipeline_defaults_are_namespace_agnostic(self):
+        defaults = _param_defaults(_load(PIPELINE)["spec"])
+        for name in ("llm-api-base", "llm-base-url", "mlflow-tracking-uri", "openshell-gateway-endpoint"):
+            value = defaults[name]
+            assert ".svc" not in value, f"{name} pins a namespace: {value}"
+        assert defaults["llm-api-base"] == "http://litellm:4000"
+        assert defaults["llm-base-url"] == "http://litellm:4000/v1"
+        assert defaults["mlflow-tracking-uri"] == "http://abevalflow-mlflow:5000"
+        # Single source of truth: the example run must not duplicate the
+        # endpoint defaults the Pipeline already provides.
+        run = _load(REPO / "pipeline" / "runs" / "openshell-openclaw-pipelinerun.yaml")
+        example_params = {p["name"] for p in run["spec"]["params"]}
+        for name in ("llm-api-base", "llm-base-url", "mlflow-tracking-uri", "openshell-gateway-endpoint"):
+            assert name not in example_params, f"example run duplicates Pipeline default {name}"
+
+    def test_example_run_is_namespace_agnostic(self):
+        run = _load(REPO / "pipeline" / "runs" / "openshell-openclaw-pipelinerun.yaml")
+        params = {p["name"]: p["value"] for p in run["spec"]["params"]}
+        # Endpoint defaults live in the Pipeline and are namespace-local
+        # short names; the example must not reintroduce namespace pins.
+        for name, value in params.items():
+            assert ".svc.cluster.local" not in value, f"{name} pins a namespace: {value}"
+        pod_template = run["spec"]["taskRunTemplate"].get("podTemplate", {})
+        assert "hostAliases" not in pod_template
+        timeouts = run["spec"]["timeouts"]
+        assert timeouts["pipeline"] == "3h0m0s"
+        assert timeouts["tasks"] == "2h30m0s"
+
+    def test_cleanup_task_is_best_effort(self):
+        task = _load(REPO / "pipeline" / "tasks" / "post" / "cleanup_pvc.yaml")
+        step = task["spec"]["steps"][0]
+        assert step.get("onError") == "continue"
+        assert "--request-timeout=20s" in step["script"]
+        assert step["image"].startswith("image-registry.openshift-image-registry.svc:5000/")
+
+    def test_cleanup_failures_are_operator_visible(self):
+        task = _load(REPO / "pipeline" / "tasks" / "post" / "cleanup_pvc.yaml")
+        assert "cleanup-status" in {r["name"] for r in task["spec"]["results"]}
+        script = task["spec"]["steps"][0]["script"]
+        assert "$(results.cleanup-status.path)" in script
+        for outcome in ("api-unavailable", "none", "failed", "deleted"):
+            assert f'echo "{outcome}" > "$RESULT_PATH"' in script
+        # A failed delete labels the leaked PVC instead of failing the run.
+        assert "abevalflow.io/cleanup-failed=true" in script
+        pipeline = _load(PIPELINE)
+        result = next(r for r in pipeline["spec"]["results"] if r["name"] == "cleanup-status")
+        assert result["value"] == "$(finally.cleanup.results.cleanup-status)"
+        # Labelling the PVC needs patch on persistentvolumeclaims.
+        rbac = list(yaml.safe_load_all((REPO / "config" / "rbac.yaml").read_text()))
+        role = next(o for o in rbac if o and o["kind"] == "Role" and o["metadata"]["name"] == "pipeline-trial-manager")
+        pvc_rule = next(r for r in role["rules"] if "persistentvolumeclaims" in r["resources"])
+        assert "patch" in pvc_rule["verbs"]
+
+    def test_rbac_applies_into_any_namespace(self):
+        # metadata.namespace would make `oc apply -n X` fail, and a subject
+        # namespace would bind another namespace's ServiceAccount; subjects
+        # without a namespace default to the RoleBinding's own namespace.
+        rbac = list(yaml.safe_load_all((REPO / "config" / "rbac.yaml").read_text()))
+        for obj in rbac:
+            assert obj is not None
+            assert "namespace" not in obj["metadata"], obj["metadata"]["name"]
+            if obj["kind"] == "RoleBinding":
+                for subject in obj["subjects"]:
+                    assert "namespace" not in subject
+
+    def test_explicit_auth_mode_selects_gateway_path(self):
+        # The default alias endpoint must select the mTLS path through an
+        # explicit parameter, never through endpoint hostname shape.
+        pipeline_defaults = _param_defaults(_load(PIPELINE)["spec"])
+        assert pipeline_defaults["openshell-auth-mode"] == "mtls"
+        assert pipeline_defaults["openshell-gateway-endpoint"] == "https://openshell:17670"
+        evaluate = next(t for t in _load(PIPELINE)["spec"]["tasks"] if t["name"] == "evaluate")
+        forwarded = {p["name"]: p["value"] for p in evaluate["params"]}
+        assert forwarded["openshell-auth-mode"] == "$(params.openshell-auth-mode)"
+
+        task = _load(REPO / "pipeline" / "tasks" / "phases" / "evaluate.yaml")
+        assert _param_defaults(task["spec"])["openshell-auth-mode"] == "mtls"
+        step = next(s for s in task["spec"]["steps"] if s["name"] == "aeh-openshell-eval")
+        env = next(e for e in step["env"] if e["name"] == "OPENSHELL_AUTH_MODE")
+        assert env["value"] == "$(params.openshell-auth-mode)"
+        script = step["script"]
+        case_head = 'case "${OPENSHELL_AUTH_MODE:-mtls}" in'
+        assert case_head in script
+        mtls_branch = script.split(case_head, 1)[1].split("oidc)", 1)[0]
+        assert "unset OPENSHELL_GATEWAY_INSECURE" in mtls_branch
+        assert "--local" in mtls_branch
+        oidc_branch = script.split("oidc)", 1)[1].split("*)", 1)[0]
+        assert "openshell-auth-mode=oidc requires" in oidc_branch
+        assert "OPENSHELL_OIDC_ISSUER" in oidc_branch
+        # The endpoint-shape sniffing that used to pick the path is gone.
+        assert '*".svc.cluster.local:"*' not in script
+        assert '"https://host.containers.internal:"*' not in script
+
+    def test_mtls_staging_is_scoped_to_mtls_branch(self):
+        # The mTLS client certificate is an mTLS-only requirement: staging it
+        # and its required-file check must live inside the mtls branch, so an
+        # OIDC-only deployment (no openshell-mtls Secret) reaches the oidc
+        # branch without failing on it.
+        task = _load(REPO / "pipeline" / "tasks" / "phases" / "evaluate.yaml")
+        step = next(s for s in task["spec"]["steps"] if s["name"] == "aeh-openshell-eval")
+        script = step["script"]
+        case_head = 'case "${OPENSHELL_AUTH_MODE:-mtls}" in'
+        before_case = script.split(case_head, 1)[0]
+        mtls_branch = script.split(case_head, 1)[1].split("oidc)", 1)[0]
+        oidc_branch = script.split("oidc)", 1)[1].split("*)", 1)[0]
+        for token in ("MTLS_SRC", "MTLS_DST", "openshell-mtls client certificate is missing"):
+            assert token not in before_case, token
+            assert token in mtls_branch, token
+            assert token not in oidc_branch, token
+        # The oidc branch depends only on the OIDC Secret's own fields.
+        for token in ("OPENSHELL_OIDC_ISSUER", "OPENSHELL_OIDC_CLIENT_ID", "OPENSHELL_OIDC_CLIENT_SECRET"):
+            assert token in oidc_branch
+        # Post-case diagnostics run under set -u with MTLS_DST unset in oidc
+        # mode, so they must guard the variable instead of referencing it.
+        assert '[ -n "${MTLS_DST:-}" ]' in script
+
+    def test_probe_targets_pipeline_gateway_contract(self):
+        probe = _load(REPO / "pipeline" / "tasks" / "eval-stack-probe.yaml")
+        pipeline_defaults = _param_defaults(_load(PIPELINE)["spec"])
+        probe_default = _param_defaults(probe["spec"])["openshell-gateway-endpoint"]
+        # The probe must test the same endpoint the Pipeline uses.
+        assert probe_default == pipeline_defaults["openshell-gateway-endpoint"]
+        step = probe["spec"]["steps"][0]
+        script = step["script"]
+        assert 'gateway_probe "openshell agent" "$(params.openshell-gateway-endpoint)"' in script
+        # The VMI's raw service name is not the Pipeline's contract.
+        assert "openshell-saw-agent-gateway" not in script
+        # Three layers: TCP reachability, TLS handshake/validation, HTTP.
+        assert "/dev/tcp/" in script
+        assert "openssl s_client" in script
+        assert "subjectAltName" in script
+        assert "curl -sS" in script
+        # A failed TLS handshake or certificate validation must fail the TLS
+        # layer: openssl s_client is piped into openssl x509, so pipefail must
+        # propagate the client's failure status — without it, x509 parsing
+        # the still-emitted certificate would pass the check.
+        assert "set -uo pipefail" in script
+        # TLS chain validation is enabled only when the CA bundle exists, and
+        # it must be the CA that signed the gateway's serving certificate:
+        # openshell-ca ships in the openshell-mtls bundle, while the forge
+        # service CA can never validate the gateway chain (a mismatch the
+        # pre-pipefail false-pass used to mask).
+        ca = next(e for e in step["env"] if e["name"] == "GATEWAY_CA_CERT")
+        ref = ca["valueFrom"]["secretKeyRef"]
+        assert ref["name"] == "openshell-mtls"
+        assert ref["key"] == "ca.crt"
+        assert ref["optional"] is True
+        # An HTTP answer is not service health: 5xx responses fail the probe.
+        assert "(server error)" in script
 
     def test_evaluate_openshell_step_logs_mlflow(self):
         evaluate = (REPO / "pipeline" / "tasks" / "phases" / "evaluate.yaml").read_text()

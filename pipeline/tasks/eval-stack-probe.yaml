@@ -1,0 +1,124 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: eval-stack-probe
+  # A baseline connectivity probe: it runs as an ordinary Tekton pod, without
+  # the pipeline's network identity (the canonical NetworkPolicies select the
+  # evaluate Task's pods, e.g. by tekton.dev/task=evaluate), so it verifies
+  # the stack's baseline reachability rather than the exact allowances the
+  # pipeline runs under. Diagnose pipeline-path connectivity from the evaluate
+  # Task's own logs; use this probe before/after infra changes.
+spec:
+  description: >-
+    Probes every dependency an ABEvalFlow pipeline pod needs. Run it before and
+    after NetworkPolicy changes to see exactly which paths are blocked. The
+    agent-gateway probe targets the same openshell alias endpoint the Pipeline
+    uses, in three layers: TCP reachability, TLS handshake/validation, and
+    HTTP response.
+  params:
+    - name: openshell-gateway-endpoint
+      type: string
+      # Keep in sync with the abevalflow-pipeline-openshell default: the probe
+      # must test the endpoint the Pipeline actually uses (the openshell alias
+      # Service), not the VMI's raw service name. tests assert the two
+      # defaults stay identical.
+      default: "https://openshell:17670"
+  steps:
+    - name: probe
+      image: registry.access.redhat.com/ubi9/python-311:9.6
+      env:
+        # When present, TLS validation and the HTTP probe verify the gateway
+        # certificate chain; without it, the TLS layer reports handshake +
+        # SANs only. The chain must be checked against the CA that signed the
+        # gateway's serving certificate (openshell-ca, shipped in the
+        # openshell-mtls bundle) — the forge service CA cannot validate it.
+        # Optional so the probe still runs in namespaces without the bundle.
+        - name: GATEWAY_CA_CERT
+          valueFrom:
+            secretKeyRef:
+              name: openshell-mtls
+              key: ca.crt
+              optional: true
+      script: |
+        #!/usr/bin/env bash
+        # pipefail: the TLS check pipes openssl s_client into openssl x509 —
+        # without it, a failed handshake or certificate validation whose
+        # certificate is still emitted would pass on x509's exit status. No
+        # -e: every probe must run and the script exits with the aggregate
+        # $fail below.
+        set -uo pipefail
+        NS="$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace 2>/dev/null || echo current)"
+        fail=0
+        probe() { # name url
+          if curl -sS --max-time 8 -o /dev/null -w "%{http_code}" $2 >/tmp/code 2>/tmp/err; then
+            code="$(cat /tmp/code)"
+            # Reachability is not service health: a 5xx means the dependency
+            # answered but is not serving. 4xx can be a valid answer for a
+            # bare endpoint (e.g. 404 on a CDN root), so only server errors
+            # fail the probe.
+            if [ "${code:-0}" -ge 500 ] 2>/dev/null; then
+              echo "  FAIL  $1  -> HTTP $code (server error)"; fail=1
+            else
+              echo "  PASS  $1  (HTTP $code)"
+            fi
+          else
+            echo "  FAIL  $1  -> $(tr -d '\n' </tmp/err | cut -c1-110)"; fail=1
+          fi
+        }
+        tcp_probe() { # name host port
+          if timeout 8 bash -c ": < /dev/tcp/$2/$3" 2>/tmp/tcp-err; then
+            echo "  PASS  $1  (TCP $2:$3)"
+          else
+            echo "  FAIL  $1  -> $(tr -d '\n' </tmp/tcp-err | cut -c1-110)"; fail=1
+          fi
+        }
+        gateway_probe() { # name endpoint — TCP, then TLS, then HTTP layers
+          local name="$1" endpoint="$2" host port curl_ca="" tls_extra="" tls_note="handshake only, gateway CA Secret not found"
+          host="$(printf '%s' "$endpoint" | sed -E 's#^[a-z]+://([^/:]+).*#\1#')"
+          port="$(printf '%s' "$endpoint" | sed -E 's#^[a-z]+://[^/:]+:([0-9]+).*#\1#')"
+          port="${port:-443}"
+          if timeout 8 bash -c ": < /dev/tcp/$host/$port" 2>/dev/null; then
+            echo "  PASS  $name tcp  ($host:$port)"
+          else
+            echo "  FAIL  $name tcp  -> $host:$port not reachable (missing Service or blocked egress)"; fail=1; return
+          fi
+          if [ -n "${GATEWAY_CA_CERT:-}" ]; then
+            printf '%s\n' "$GATEWAY_CA_CERT" >/tmp/gateway-ca.pem
+            tls_extra="-CAfile /tmp/gateway-ca.pem -verify_return_error"
+            curl_ca="--cacert /tmp/gateway-ca.pem"
+            tls_note="chain validated against the mounted gateway CA"
+          fi
+          if echo | timeout 12 openssl s_client -connect "$host:$port" -servername "$host" $tls_extra 2>/dev/null \
+              | openssl x509 -noout -ext subjectAltName >/tmp/gateway-san 2>/dev/null; then
+            echo "  PASS  $name tls  ($tls_note; $(sed -n '2p' /tmp/gateway-san | cut -c1-120))"
+          else
+            echo "  FAIL  $name tls  -> handshake or certificate validation failed for $host:$port"; fail=1; return
+          fi
+          local code
+          if code=$(curl -sS --max-time 10 -o /dev/null -w "%{http_code}" $curl_ca "$endpoint" 2>/tmp/gw-err); then
+            if [ "${code:-0}" -ge 500 ] 2>/dev/null; then
+              echo "  FAIL  $name http -> HTTP $code (server error)"; fail=1
+            else
+              echo "  PASS  $name http (HTTP $code)"
+            fi
+          else
+            echo "  FAIL  $name http -> $(tr -d '\n' </tmp/gw-err | cut -c1-110)"; fail=1
+          fi
+        }
+        echo "=== eval stack probe from a Tekton pod in $NS ==="
+        probe "mlflow   api"   "http://abevalflow-mlflow.$NS.svc.cluster.local:5000/api/2.0/mlflow/experiments/search?max_results=1"
+        probe "litellm  health" "http://litellm.$NS.svc.cluster.local:4000/health/liveliness"
+        probe "minio    health" "http://minio.$NS.svc.cluster.local:9000/minio/health/live"
+        probe "k8s api"         "--cacert /var/run/secrets/kubernetes.io/serviceaccount/ca.crt https://kubernetes.default.svc/version"
+        probe "github (clone)"  "https://github.com"
+        probe "pypi index"      "https://pypi.org/simple/pyyaml/"
+        probe "python wheels"   "https://files.pythonhosted.org"
+        probe "github releases" "https://release-assets.githubusercontent.com"
+        probe "github raw"      "https://raw.githubusercontent.com"
+        # The Pipeline's gateway contract: the openshell alias Service, probed
+        # at the TCP, TLS and HTTP layers (see the param note above).
+        gateway_probe "openshell agent" "$(params.openshell-gateway-endpoint)"
+        tcp_probe "openshell integ" "openshell-saw-integ-gateway.$NS.svc.cluster.local" 17670
+        tcp_probe "postgres" "postgres.$NS.svc.cluster.local" 5432
+        echo "=== $( [ $fail -eq 0 ] && echo 'ALL PASSED' || echo 'FAILURES PRESENT' ) ==="
+        exit $fail

@@ -2,7 +2,6 @@ apiVersion: tekton.dev/v1
 kind: Task
 metadata:
   name: evaluate
-  namespace: ab-eval-flow
   labels:
     app.kubernetes.io/name: abevalflow
     app.kubernetes.io/component: phase
@@ -194,6 +193,15 @@ spec:
       description: >-
         In-cluster NVIDIA OpenShell gateway (namespace openshell, gRPC :8080).
         Override only if using a different gateway (e.g. forge-saw :17670).
+    - name: openshell-auth-mode
+      type: string
+      default: "mtls"
+      description: >-
+        Explicit gateway authentication path, replacing endpoint-shape
+        sniffing. mtls registers the gateway with the staged client
+        certificate and requires a server-name-valid HTTPS endpoint (such as
+        the openshell alias Service, https://openshell:17670). oidc registers
+        with client-credentials OIDC from the openshell OIDC Secret.
     - name: openshell-sandbox-image
       type: string
       default: "ghcr.io/rh-forge/openclaw-saw-agent@sha256:b47b92a6b3fd03327c1f2093a5c28aba0fdf3cb620e9154335688900191fe2b9"
@@ -1677,6 +1685,8 @@ spec:
           value: $(workspaces.source.path)/reports
         - name: OPENSHELL_GATEWAY_ENDPOINT
           value: "$(params.openshell-gateway-endpoint)"
+        - name: OPENSHELL_AUTH_MODE
+          value: "$(params.openshell-auth-mode)"
         - name: OPENSHELL_GATEWAY_NAME
           value: "ci-gateway"
         - name: AGENT_EVAL_OPENSHELL_WORKSPACE
@@ -1749,83 +1759,101 @@ spec:
           export PATH="/tmp/bin:$PATH"
         fi
 
-        # Materialize the CI client certificate before registering the gateway.
-        # gateway add inspects this directory when selecting mTLS transport.
+        # Gateway profile shared by both auth modes; mode-specific credentials
+        # are staged inside their case branches below.
         export XDG_CONFIG_HOME="${HOME}/.config"
         GW_NAME="${OPENSHELL_GATEWAY_NAME:-ci-gateway}"
-        MTLS_SRC="/tmp/.config/openshell"
-        MTLS_DST="${XDG_CONFIG_HOME}/openshell/gateways/${GW_NAME}/mtls"
         mkdir -p "${XDG_CONFIG_HOME}/openshell"
-        if [ -f "$MTLS_SRC/tls.crt" ] && [ -f "$MTLS_SRC/tls.key" ]; then
-          mkdir -p "$MTLS_DST"
-          cp -f "$MTLS_SRC/ca.crt" "$MTLS_DST/" 2>/dev/null || true
-          cp -f "$MTLS_SRC/tls.crt" "$MTLS_DST/"
-          cp -f "$MTLS_SRC/tls.key" "$MTLS_DST/"
-          chmod 600 "$MTLS_DST"/* 2>/dev/null || true
-          echo "OpenShell mTLS material staged before gateway registration"
-        else
-          echo "ERROR: openshell-mtls client certificate is missing" >&2
-          exit 1
-        fi
 
-        # Native mTLS requires server-name verification AND a client identity.
-        # --gateway-insecure in this CLI drops client authentication.
-        if [[ "${OPENSHELL_GATEWAY_ENDPOINT}" == *".svc.cluster.local:"* ]] \
-          || [[ "${OPENSHELL_GATEWAY_ENDPOINT}" == "https://host.containers.internal:"* ]]; then
-          unset OPENSHELL_GATEWAY_INSECURE
-          CLI_GATEWAY_ENDPOINT="$OPENSHELL_GATEWAY_ENDPOINT"
-          # Use the CLI's supported local/mTLS registration path. This lets
-          # the installed CLI create metadata in the exact shape it expects
-          # and associate the staged client bundle with the gateway profile.
-          openshell gateway add "$CLI_GATEWAY_ENDPOINT" \
-            --local \
-            --name "$GW_NAME" \
-            >/tmp/openshell-gateway-add.log 2>&1 || {
-              grep -vE 'client_secret|token|secret' /tmp/openshell-gateway-add.log || true
+        # The authentication path is selected by the explicit openshell-auth-mode
+        # parameter, never by the endpoint's hostname shape. Native mTLS requires
+        # server-name verification AND a client identity; --gateway-insecure in
+        # this CLI drops client authentication.
+        case "${OPENSHELL_AUTH_MODE:-mtls}" in
+          mtls)
+            # Materialize the CI client certificate before registering the
+            # gateway: gateway add inspects this directory when selecting mTLS
+            # transport. Scoped to this branch on purpose — the client
+            # certificate is an mTLS-only requirement, and an OIDC-only
+            # deployment has no openshell-mtls Secret to stage here.
+            MTLS_SRC="/tmp/.config/openshell"
+            MTLS_DST="${XDG_CONFIG_HOME}/openshell/gateways/${GW_NAME}/mtls"
+            if [ -f "$MTLS_SRC/tls.crt" ] && [ -f "$MTLS_SRC/tls.key" ]; then
+              mkdir -p "$MTLS_DST"
+              cp -f "$MTLS_SRC/ca.crt" "$MTLS_DST/" 2>/dev/null || true
+              cp -f "$MTLS_SRC/tls.crt" "$MTLS_DST/"
+              cp -f "$MTLS_SRC/tls.key" "$MTLS_DST/"
+              chmod 600 "$MTLS_DST"/* 2>/dev/null || true
+              echo "OpenShell mTLS material staged before gateway registration"
+            else
+              echo "ERROR: openshell-mtls client certificate is missing" >&2
               exit 1
-            }
-          POST_ADD_MTLS_DST="${XDG_CONFIG_HOME}/openshell/gateways/${GW_NAME}/mtls"
-          mkdir -p "$POST_ADD_MTLS_DST"
-          cp -f "$MTLS_SRC/ca.crt" "$POST_ADD_MTLS_DST/"
-          cp -f "$MTLS_SRC/tls.crt" "$POST_ADD_MTLS_DST/"
-          cp -f "$MTLS_SRC/tls.key" "$POST_ADD_MTLS_DST/"
-          chmod 600 "$POST_ADD_MTLS_DST"/*
-          echo "OpenShell mTLS material restaged after gateway registration"
-          export OPENSHELL_GATEWAY="$GW_NAME"
-          export OPENSHELL_GATEWAY_NAME="$GW_NAME"
-          export OPENSHELL_GATEWAY_ENDPOINT="$CLI_GATEWAY_ENDPOINT"
-          echo "OpenShell mTLS gateway configured: ${GW_NAME}"
-        elif [ -n "${OPENSHELL_OIDC_CLIENT_SECRET:-}" ] && [ -n "${OPENSHELL_OIDC_CLIENT_ID:-}" ] \
-          && [ -n "${OPENSHELL_OIDC_ISSUER:-}" ]; then
-          openshell gateway add "$OPENSHELL_GATEWAY_ENDPOINT" \
-            --name "$GW_NAME" \
-            --oidc-issuer "$OPENSHELL_OIDC_ISSUER" \
-            --oidc-client-id "$OPENSHELL_OIDC_CLIENT_ID" \
-            --oidc-audience "${OPENSHELL_OIDC_AUDIENCE:-openshell-cli}" \
-            >/tmp/openshell-gateway-add.log 2>&1 || {
-              grep -vE 'client.secret|secret|token' /tmp/openshell-gateway-add.log || true
+            fi
+            unset OPENSHELL_GATEWAY_INSECURE
+            CLI_GATEWAY_ENDPOINT="$OPENSHELL_GATEWAY_ENDPOINT"
+            # Use the CLI's supported local/mTLS registration path. This lets
+            # the installed CLI create metadata in the exact shape it expects
+            # and associate the staged client bundle with the gateway profile.
+            openshell gateway add "$CLI_GATEWAY_ENDPOINT" \
+              --local \
+              --name "$GW_NAME" \
+              >/tmp/openshell-gateway-add.log 2>&1 || {
+                grep -vE 'client_secret|token|secret' /tmp/openshell-gateway-add.log || true
+                exit 1
+              }
+            POST_ADD_MTLS_DST="${XDG_CONFIG_HOME}/openshell/gateways/${GW_NAME}/mtls"
+            mkdir -p "$POST_ADD_MTLS_DST"
+            cp -f "$MTLS_SRC/ca.crt" "$POST_ADD_MTLS_DST/"
+            cp -f "$MTLS_SRC/tls.crt" "$POST_ADD_MTLS_DST/"
+            cp -f "$MTLS_SRC/tls.key" "$POST_ADD_MTLS_DST/"
+            chmod 600 "$POST_ADD_MTLS_DST"/*
+            echo "OpenShell mTLS material restaged after gateway registration"
+            export OPENSHELL_GATEWAY="$GW_NAME"
+            export OPENSHELL_GATEWAY_NAME="$GW_NAME"
+            export OPENSHELL_GATEWAY_ENDPOINT="$CLI_GATEWAY_ENDPOINT"
+            echo "OpenShell mTLS gateway configured: ${GW_NAME}"
+            ;;
+          oidc)
+            if [ -z "${OPENSHELL_OIDC_CLIENT_SECRET:-}" ] || [ -z "${OPENSHELL_OIDC_CLIENT_ID:-}" ] \
+              || [ -z "${OPENSHELL_OIDC_ISSUER:-}" ]; then
+              echo "ERROR: openshell-auth-mode=oidc requires the openshell OIDC Secret (issuer, client-id, client-secret)" >&2
               exit 1
-            }
-          OIDC_TOKEN_CACHE="$HOME/.config/openshell/gateways/$GW_NAME/oidc_token.json"
-          OIDC_REFRESH_HELPER="$(workspaces.source.path)/_pipeline/scripts/refresh_openshell_oidc.py"
-          python3 "$OIDC_REFRESH_HELPER" --cache "$OIDC_TOKEN_CACHE"
-          echo "OpenShell OIDC token cache populated via client credentials"
-          # A case can run for 15 minutes, while the client-credentials token
-          # expires after roughly five. Refresh the CLI cache throughout this
-          # step so later artifact downloads and sandbox creation stay authorized.
-          python3 "$OIDC_REFRESH_HELPER" --cache "$OIDC_TOKEN_CACHE" --interval 120 &
-          OIDC_REFRESH_PID=$!
-          trap 'kill "$OIDC_REFRESH_PID" 2>/dev/null || true' EXIT
-          echo "OpenShell OIDC token refresher started"
-          export OPENSHELL_GATEWAY="$GW_NAME"
-          echo "OpenShell OIDC gateway configured: ${GW_NAME}"
-        else
-          echo "OpenShell OIDC Secret not configured; using existing gateway auth"
-        fi
+            fi
+            openshell gateway add "$OPENSHELL_GATEWAY_ENDPOINT" \
+              --name "$GW_NAME" \
+              --oidc-issuer "$OPENSHELL_OIDC_ISSUER" \
+              --oidc-client-id "$OPENSHELL_OIDC_CLIENT_ID" \
+              --oidc-audience "${OPENSHELL_OIDC_AUDIENCE:-openshell-cli}" \
+              >/tmp/openshell-gateway-add.log 2>&1 || {
+                grep -vE 'client.secret|secret|token' /tmp/openshell-gateway-add.log || true
+                exit 1
+              }
+            OIDC_TOKEN_CACHE="$HOME/.config/openshell/gateways/$GW_NAME/oidc_token.json"
+            OIDC_REFRESH_HELPER="$(workspaces.source.path)/_pipeline/scripts/refresh_openshell_oidc.py"
+            python3 "$OIDC_REFRESH_HELPER" --cache "$OIDC_TOKEN_CACHE"
+            echo "OpenShell OIDC token cache populated via client credentials"
+            # A case can run for 15 minutes, while the client-credentials token
+            # expires after roughly five. Refresh the CLI cache throughout this
+            # step so later artifact downloads and sandbox creation stay authorized.
+            python3 "$OIDC_REFRESH_HELPER" --cache "$OIDC_TOKEN_CACHE" --interval 120 &
+            OIDC_REFRESH_PID=$!
+            trap 'kill "$OIDC_REFRESH_PID" 2>/dev/null || true' EXIT
+            echo "OpenShell OIDC token refresher started"
+            export OPENSHELL_GATEWAY="$GW_NAME"
+            echo "OpenShell OIDC gateway configured: ${GW_NAME}"
+            ;;
+          *)
+            echo "ERROR: openshell-auth-mode must be 'mtls' or 'oidc' (got '${OPENSHELL_AUTH_MODE}')" >&2
+            exit 1
+            ;;
+        esac
 
         # Secret mounts flat at $HOME/.config/openshell. OpenShell CLI expects
-        # gateways/<sandbox>/mtls/{ca.crt,tls.crt,tls.key}.
-        if [ -f "$MTLS_DST/tls.crt" ] && [ -f "$MTLS_DST/tls.key" ]; then
+        # gateways/<sandbox>/mtls/{ca.crt,tls.crt,tls.key}. MTLS_DST is set
+        # only by the mtls branch (and this step runs under set -u), and the
+        # oidc branch already logs its token-cache state, so this diagnostic
+        # block is mTLS-only.
+        if [ -n "${MTLS_DST:-}" ] && [ -f "$MTLS_DST/tls.crt" ] && [ -f "$MTLS_DST/tls.key" ]; then
           echo "OpenShell mTLS profile files:"
           find "$HOME/.config/openshell/gateways/$GW_NAME" -maxdepth 3 -type f -printf '%p %s bytes\n' 2>/dev/null || true
           openssl x509 -in "$MTLS_DST/tls.crt" -noout -subject -issuer -fingerprint -sha256 2>/dev/null || true

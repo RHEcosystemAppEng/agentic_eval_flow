@@ -1,0 +1,20 @@
+# Stable, namespace-local endpoint for evaluation jobs.  Selecting the agent
+# VMI directly avoids baking a deployment namespace into Pipeline defaults.
+# The gateway server leaf must include "openshell" as a DNS SAN before the
+# evaluation task can disable OPENSHELL_GATEWAY_INSECURE.
+apiVersion: v1
+kind: Service
+metadata:
+  name: openshell
+  labels:
+    app.kubernetes.io/name: openshell-eval-alias
+    app.kubernetes.io/part-of: abevalflow
+spec:
+  selector:
+    app.kubernetes.io/name: openshell-saw-agent
+    vm.kubevirt.io/name: openshell-saw-agent
+  ports:
+    - name: gateway
+      port: 17670
+      protocol: TCP
+      targetPort: 17670
