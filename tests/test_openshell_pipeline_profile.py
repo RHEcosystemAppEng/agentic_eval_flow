@@ -80,11 +80,27 @@ class TestOpenshellPipelineProfile:
         ports = alias["spec"]["ports"]
         assert ports == [{"name": "gateway", "port": 17670, "protocol": "TCP", "targetPort": 17670}]
 
+    def test_pipeline_defaults_are_namespace_agnostic(self):
+        defaults = _param_defaults(_load(PIPELINE)["spec"])
+        for name in ("llm-api-base", "llm-base-url", "mlflow-tracking-uri", "openshell-gateway-endpoint"):
+            value = defaults[name]
+            assert ".svc" not in value, f"{name} pins a namespace: {value}"
+        assert defaults["llm-api-base"] == "http://litellm:4000"
+        assert defaults["llm-base-url"] == "http://litellm:4000/v1"
+        assert defaults["mlflow-tracking-uri"] == "http://abevalflow-mlflow:5000"
+        # Single source of truth: the example run must not duplicate the
+        # endpoint defaults the Pipeline already provides.
+        run = _load(REPO / "pipeline" / "runs" / "openshell-openclaw-pipelinerun.yaml")
+        example_params = {p["name"] for p in run["spec"]["params"]}
+        for name in ("llm-api-base", "llm-base-url", "mlflow-tracking-uri", "openshell-gateway-endpoint"):
+            assert name not in example_params, f"example run duplicates Pipeline default {name}"
+
     def test_example_run_is_namespace_agnostic(self):
         run = _load(REPO / "pipeline" / "runs" / "openshell-openclaw-pipelinerun.yaml")
         params = {p["name"]: p["value"] for p in run["spec"]["params"]}
-        for name in ("openshell-gateway-endpoint", "llm-api-base", "mlflow-tracking-uri"):
-            value = params[name]
+        # Endpoint defaults live in the Pipeline and are namespace-local
+        # short names; the example must not reintroduce namespace pins.
+        for name, value in params.items():
             assert ".svc.cluster.local" not in value, f"{name} pins a namespace: {value}"
         pod_template = run["spec"]["taskRunTemplate"].get("podTemplate", {})
         assert "hostAliases" not in pod_template

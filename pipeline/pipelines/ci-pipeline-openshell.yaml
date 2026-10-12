@@ -41,13 +41,16 @@ spec:
       default: "rits/zai-org/GLM-5-3-Flash"
     - name: llm-api-base
       type: string
-      default: "http://litellm.gz-forge-eval.svc:4000"
+      # Short service name: resolves inside whatever namespace the run is
+      # created in (the stack's own LiteLLM from config/litellm/).
+      default: "http://litellm:4000"
     - name: llm-api-key
       type: string
       default: "mock"
     - name: llm-base-url
       type: string
-      default: "http://litellm.ab-eval-flow.svc:4000/v1"
+      # Short service name; used only when AI generation is enabled.
+      default: "http://litellm:4000/v1"
     - name: llm-generation-model
       type: string
       default: "rits/zai-org/GLM-5-3-Flash"
@@ -146,7 +149,9 @@ spec:
       description: Export MLFLOW_TRACKING_URI for AEH and run log_aeh_mlflow.py after evaluate
     - name: mlflow-tracking-uri
       type: string
-      default: "http://abevalflow-mlflow.gz-forge-eval.svc.cluster.local:5000"
+      # Short service name: the MLflow deployment from config/mlflow/ in the
+      # run's own namespace.
+      default: "http://abevalflow-mlflow:5000"
       description: In-cluster MLflow tracking URI
     - name: enable-aeh-regression-check
       type: string

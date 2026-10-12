@@ -3,8 +3,10 @@
 #   oc apply  -n <namespace> -f pipeline/pipelines/ci-pipeline-openshell.yaml
 #   oc create -n <namespace> -f pipeline/runs/openshell-openclaw-pipelinerun.yaml
 #
-# Service endpoints below use short names, which resolve inside the namespace
-# the run is created in, so this file is namespace-agnostic.
+# Service endpoints default to namespace-local short names (litellm,
+# abevalflow-mlflow, openshell) in the Pipeline, so they resolve inside
+# whatever namespace the run is created in; this file is namespace-agnostic
+# and does not override them.
 # Do not put M365 tokens in this file; use Secret openshell-credentials in the namespace.
 apiVersion: tekton.dev/v1
 kind: PipelineRun
@@ -32,10 +34,11 @@ spec:
     #   value: "<harness-repo-url>"
     # - name: agent-eval-harness-repo-revision
     #   value: "<harness-commit-or-branch>"
-    - name: openshell-gateway-endpoint
-      # Stable, certificate-valid alias installed by
-      # config/forge-saw/openshell-eval-alias.yaml in the run namespace.
-      value: "https://openshell:17670"
+    # Service endpoints (openshell gateway, litellm, mlflow) are not set here:
+    # their Pipeline defaults are namespace-local short names that resolve in
+    # this run's namespace. Override only for a non-default gateway.
+    # - name: openshell-gateway-endpoint
+    #   value: "https://openshell:17670"
     - name: openshell-mtls-secret
       value: "openshell-mtls"
     - name: openshell-ai-gateway-ca-secret
@@ -51,8 +54,9 @@ spec:
       value: "registry.access.redhat.com/ubi9/python-311:9.6"
     - name: llm-model
       value: "rits/zai-org/GLM-5-3-Flash"
-    - name: llm-api-base
-      value: "http://litellm:4000"
+    # The llm-api-key default is "mock" for LiteLLM deployments that accept
+    # it; put the real key in a Secret-referencing param override instead of
+    # committing it here.
     - name: llm-api-key
       value: "mock"
     - name: aeh-model-override
@@ -61,8 +65,6 @@ spec:
       value: "judge-glm-5-3"
     - name: enable-mlflow
       value: "true"
-    - name: mlflow-tracking-uri
-      value: "http://abevalflow-mlflow:5000"
   taskRunTemplate:
     serviceAccountName: pipeline
   timeouts:
