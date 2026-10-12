@@ -39,6 +39,12 @@ spec:
               optional: true
       script: |
         #!/usr/bin/env bash
+        # pipefail: the TLS check pipes openssl s_client into openssl x509 —
+        # without it, a failed handshake or certificate validation whose
+        # certificate is still emitted would pass on x509's exit status. No
+        # -e: every probe must run and the script exits with the aggregate
+        # $fail below.
+        set -uo pipefail
         NS="$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace 2>/dev/null || echo current)"
         fail=0
         probe() { # name url
