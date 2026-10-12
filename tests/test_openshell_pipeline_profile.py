@@ -8,6 +8,7 @@ import yaml
 
 REPO = Path(__file__).resolve().parents[1]
 PIPELINE = REPO / "pipeline" / "pipelines" / "ci-pipeline-openshell.yaml"
+HARNESS_PIN = "8d58e500d0eb55a3106819ccacf26da6bf7ea166"
 CI = REPO / "pipeline" / "pipelines" / "ci-pipeline.yaml"
 CI_DEV = REPO / "pipeline" / "pipelines" / "ci-pipeline-dev.yaml"
 
@@ -41,8 +42,10 @@ class TestOpenshellPipelineProfile:
         assert defaults["enable-ai-generation"] == "false"
         assert defaults["aeh-runner"] == "openshell"
         assert defaults["aeh-openshell-image"] == "registry.access.redhat.com/ubi9/python-311:9.6"
+        assert defaults["agent-eval-harness-repo-revision"] == HARNESS_PIN
+        assert defaults["openshell-user-fixture"] == "fixtures/USER.md"
         assert defaults["openshell-sandbox-image"] == (
-            "ghcr.io/rh-forge/openclaw-saw-agent@sha256:bcc55e9b7a36d5f65e8ffc75962496f8b3617762a4cdb37fd1cf54611b72d41a"
+            "ghcr.io/rh-forge/openclaw-saw-agent@sha256:b47b92a6b3fd03327c1f2093a5c28aba0fdf3cb620e9154335688900191fe2b9"
         )
         assert defaults["enable-mlflow"] == "true"
         assert defaults["mlflow-tracking-uri"] == ("http://abevalflow-mlflow.gz-forge-eval.svc.cluster.local:5000")
@@ -63,6 +66,8 @@ class TestOpenshellPipelineProfile:
 
     def test_openshell_eval_uses_llm_param_instead_of_inference_secret(self):
         task = _load(REPO / "pipeline" / "tasks" / "phases" / "evaluate.yaml")
+        assert _param_defaults(task["spec"])["openshell-user-fixture"] == ""
+        assert _param_defaults(task["spec"])["agent-eval-harness-repo-revision"] == HARNESS_PIN
         openshell = next(step for step in task["spec"]["steps"] if step["name"] == "aeh-openshell-eval")
 
         env_from_secret_names = {
@@ -79,6 +84,36 @@ class TestOpenshellPipelineProfile:
             env = next(item for item in openshell["env"] if item["name"] == name)
             assert env["value"] == "$(params.llm-api-key)"
             assert "valueFrom" not in env
+
+    def test_forge_briefing_has_installation_user_fixture(self):
+        fixture = REPO / "submissions" / "openclaw-forge" / "fixtures" / "USER.md"
+        fields = {}
+        for line in fixture.read_text().splitlines():
+            if line.startswith("- ") and ": " in line:
+                key, value = line[2:].split(": ", 1)
+                fields[key.lower()] = value.strip()
+        assert all(fields.get(key) and not fields[key].startswith("<") for key in ("display name", "role", "initials"))
+        scene = _load(REPO / "submissions" / "openclaw-forge" / "scenes" / "monday-acquisition.yaml")
+        assert fields["primary email"] == scene["m365"]["user"]
+
+        pipeline = _load(PIPELINE)
+        evaluate = next(item for item in pipeline["spec"]["tasks"] if item["name"] == "evaluate")
+        forwarded = {item["name"]: item["value"] for item in evaluate["params"]}
+        assert forwarded["openshell-user-fixture"] == "$(params.openshell-user-fixture)"
+        example = _load(REPO / "pipeline" / "runs" / "openshell-openclaw-pipelinerun.yaml")
+        example_params = {item["name"]: item["value"] for item in example["spec"]["params"]}
+        assert example_params["openshell-user-fixture"] == "fixtures/USER.md"
+
+        task = _load(REPO / "pipeline" / "tasks" / "phases" / "evaluate.yaml")
+        step = next(s for s in task["spec"]["steps"] if s["name"] == "aeh-openshell-eval")
+        assert next(env for env in step["env"] if env["name"] == "OPENSHELL_USER_FIXTURE")["value"] == (
+            "$(params.openshell-user-fixture)"
+        )
+        script = step["script"]
+        assert 'FIXTURE_FILE="$SUBMISSION_DIR/$OPENSHELL_USER_FIXTURE"' in script
+        assert "Using configured installation profile fixture" in script
+        assert "fixtures/USER.md" not in script
+        assert script.index('export AGENT_EVAL_FORGE_USER_FILE="$FIXTURE_FILE"') < script.index("scripts/run_aeh.py")
 
     def test_harbor_profiles_still_include_test(self):
         for path in (CI, CI_DEV):

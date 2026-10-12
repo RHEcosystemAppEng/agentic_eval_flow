@@ -184,10 +184,10 @@ spec:
       default: "https://github.com/GuyZivRH/agent-eval-harness.git"
     - name: agent-eval-harness-repo-revision
       type: string
-      default: "feat/aeh-openshell-openclaw"
+      default: "8d58e500d0eb55a3106819ccacf26da6bf7ea166"
       description: >-
-        Branch or tag of GuyZivRH/agent-eval-harness to clone. Must include the
-        OpenShell create keep-alive fix (`--detach` + `sleep infinity`).
+        Commit SHA of GuyZivRH/agent-eval-harness with the OpenShell fixes.
+        Branches and tags are accepted as explicit overrides.
     - name: openshell-gateway-endpoint
       type: string
       default: "http://openshell.openshell.svc.cluster.local:8080"
@@ -196,7 +196,7 @@ spec:
         Override only if using a different gateway (e.g. forge-saw :17670).
     - name: openshell-sandbox-image
       type: string
-      default: "ghcr.io/rh-forge/openclaw-saw-agent@sha256:bcc55e9b7a36d5f65e8ffc75962496f8b3617762a4cdb37fd1cf54611b72d41a"
+      default: "ghcr.io/rh-forge/openclaw-saw-agent@sha256:b47b92a6b3fd03327c1f2093a5c28aba0fdf3cb620e9154335688900191fe2b9"
       description: >-
         Immutable SAW Chief-of-Staff image with the daily-briefing skill and
         governed M365/Slack tools.
@@ -209,6 +209,10 @@ spec:
       type: string
       default: "forge-ai-gateway,m365-read-intervm,slack-read-proxy,drafts-service-agent"
       description: SAW provider explicitly attached to each evaluation sandbox
+    - name: openshell-user-fixture
+      type: string
+      default: ""
+      description: Optional installation fixture path relative to the submission directory
     - name: openshell-mtls-secret
       type: string
       default: "openshell-mtls"
@@ -276,14 +280,15 @@ spec:
         # Clone/update agent-eval-harness repo (required for latest OpenShell logic)
         HARNESS_DIR="$(workspaces.source.path)/_harness"
         echo "=== Cloning harness repo: $(params.agent-eval-harness-repo-url) @ $(params.agent-eval-harness-repo-revision) ==="
-        if [ -d "$HARNESS_DIR/.git" ]; then
-          cd "$HARNESS_DIR"
-          git fetch origin "$(params.agent-eval-harness-repo-revision)" --depth 1
-          git reset --hard FETCH_HEAD
+        if [ ! -d "$HARNESS_DIR/.git" ]; then
+          mkdir -p "$HARNESS_DIR"
+          git -C "$HARNESS_DIR" init -q
+          git -C "$HARNESS_DIR" remote add origin "$(params.agent-eval-harness-repo-url)"
         else
-          git clone --depth 1 --branch "$(params.agent-eval-harness-repo-revision)" \
-            "$(params.agent-eval-harness-repo-url)" "$HARNESS_DIR"
+          git -C "$HARNESS_DIR" remote set-url origin "$(params.agent-eval-harness-repo-url)"
         fi
+        git -C "$HARNESS_DIR" fetch --depth 1 origin "$(params.agent-eval-harness-repo-revision)"
+        git -C "$HARNESS_DIR" checkout --detach -f FETCH_HEAD
         echo "Harness repo ready at $(git -C "$HARNESS_DIR" rev-parse --short HEAD)"
 
         # Create results directories
@@ -1680,6 +1685,8 @@ spec:
           value: "$(params.openshell-sandbox-image)"
         - name: AGENT_EVAL_OPENSHELL_PROVIDER
           value: "$(params.openshell-provider)"
+        - name: OPENSHELL_USER_FIXTURE
+          value: "$(params.openshell-user-fixture)"
         - name: AGENT_EVAL_FORGE_AI_GATEWAY_CA_FILE
           value: "/tmp/forge-ai-gateway-ca/ca.crt"
         - name: FORGE_SAW_PROFILE
@@ -1799,24 +1806,17 @@ spec:
               grep -vE 'client.secret|secret|token' /tmp/openshell-gateway-add.log || true
               exit 1
             }
-          OIDC_TOKEN_JSON=/tmp/openshell-oidc-token.json
-          curl -ksSf --max-time 20 \
-            -u "${OPENSHELL_OIDC_CLIENT_ID}:${OPENSHELL_OIDC_CLIENT_SECRET}" \
-            -d grant_type=client_credentials \
-            "${OPENSHELL_OIDC_ISSUER%/}/protocol/openid-connect/token" \
-            >"$OIDC_TOKEN_JSON"
-          python3 - "$OIDC_TOKEN_JSON" "$HOME/.config/openshell/gateways/$GW_NAME/oidc_token.json" \
-            "$OPENSHELL_OIDC_ISSUER" "$OPENSHELL_OIDC_CLIENT_ID" <<'PY'
-        import json, sys, time
-        src, dst, issuer, client_id = sys.argv[1:]
-        payload = json.load(open(src, encoding="utf-8"))
-        token = payload["access_token"]
-        expires_at = int(time.time()) + int(payload.get("expires_in", 300))
-        json.dump({"access_token": token, "expires_at": expires_at,
-                   "issuer": issuer, "client_id": client_id}, open(dst, "w", encoding="utf-8"))
-        PY
-          chmod 600 "$HOME/.config/openshell/gateways/$GW_NAME/oidc_token.json"
+          OIDC_TOKEN_CACHE="$HOME/.config/openshell/gateways/$GW_NAME/oidc_token.json"
+          OIDC_REFRESH_HELPER="$(workspaces.source.path)/_pipeline/scripts/refresh_openshell_oidc.py"
+          python3 "$OIDC_REFRESH_HELPER" --cache "$OIDC_TOKEN_CACHE"
           echo "OpenShell OIDC token cache populated via client credentials"
+          # A case can run for 15 minutes, while the client-credentials token
+          # expires after roughly five. Refresh the CLI cache throughout this
+          # step so later artifact downloads and sandbox creation stay authorized.
+          python3 "$OIDC_REFRESH_HELPER" --cache "$OIDC_TOKEN_CACHE" --interval 120 &
+          OIDC_REFRESH_PID=$!
+          trap 'kill "$OIDC_REFRESH_PID" 2>/dev/null || true' EXIT
+          echo "OpenShell OIDC token refresher started"
           export OPENSHELL_GATEWAY="$GW_NAME"
           echo "OpenShell OIDC gateway configured: ${GW_NAME}"
         else
@@ -2061,6 +2061,19 @@ spec:
         echo "Model: $MODEL"
 
         export AGENT_EVAL_HARNESS_ROOT="$HARNESS_DIR"
+        # Only submissions that explicitly configure a fixture stage one.
+        if [ -n "$OPENSHELL_USER_FIXTURE" ] && [ -z "${AGENT_EVAL_FORGE_USER_FILE:-}" ]; then
+          case "$OPENSHELL_USER_FIXTURE" in
+            /*|..|../*|*/../*|*/..) echo "ERROR: installation fixture must be submission-relative" >&2; exit 1 ;;
+          esac
+          FIXTURE_FILE="$SUBMISSION_DIR/$OPENSHELL_USER_FIXTURE"
+          if [ ! -f "$FIXTURE_FILE" ]; then
+            echo "ERROR: configured installation fixture is missing: $FIXTURE_FILE" >&2
+            exit 1
+          fi
+          export AGENT_EVAL_FORGE_USER_FILE="$FIXTURE_FILE"
+          echo "Using configured installation profile fixture"
+        fi
         if [ "$(params.enable-mlflow)" = "true" ] && [ -n "$(params.mlflow-tracking-uri)" ]; then
           export MLFLOW_TRACKING_URI="$(params.mlflow-tracking-uri)"
           echo "MLFLOW_TRACKING_URI set for AEH harness + CI logger"
