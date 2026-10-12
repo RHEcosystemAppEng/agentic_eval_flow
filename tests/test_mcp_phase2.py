@@ -293,19 +293,38 @@ def test_openapi_fail_when_absent_and_no_tools_resp():
     assert out.findings[0]["rule_id"] == "openapi-missing"
 
 
-def test_openapi_fail_when_unparseable():
+def test_openapi_skips_unparseable_well_known_path():
+    # An unparseable doc at a well-known path is skipped (could be a reverse-proxy page);
+    # with no other candidates and no tools_resp, falls through to openapi-missing.
     client = _OpenApiClient(
         "http://srv:8080/mcp", {"http://srv:8080/openapi.json": (200, "application/json", "{ not json")}
     )
     out = phase2_probe.check_openapi_conformance(client, None)
     assert out.status == STATUS_FAIL
+    assert out.findings[0]["rule_id"] == "openapi-missing"
+
+
+def test_openapi_explicit_url_fails_when_unparseable():
+    # An explicit --openapi-url that is unparseable is a real FAIL (the operator pointed at it).
+    client = _OpenApiClient("http://srv:8080/mcp", {"http://host/api.json": (200, "application/json", "{ not json")})
+    out = phase2_probe.check_openapi_conformance(client, None, openapi_url="http://host/api.json")
+    assert out.status == STATUS_FAIL
     assert out.findings[0]["rule_id"] == "openapi-unparseable"
 
 
-def test_openapi_fail_when_not_openapi3():
-    doc = json.dumps({"swagger": "2.0", "info": {}, "paths": {}})  # OpenAPI 2, missing openapi 3.x
+def test_openapi_skips_non_openapi3_well_known_path():
+    # A Swagger 2.0 doc at a well-known path is skipped; falls through to missing.
+    doc = json.dumps({"swagger": "2.0", "info": {}, "paths": {}})
     client = _OpenApiClient("http://srv:8080/mcp", {"http://srv:8080/openapi.json": (200, "application/json", doc)})
     out = phase2_probe.check_openapi_conformance(client, None)
+    assert out.status == STATUS_FAIL
+    assert out.findings[0]["rule_id"] == "openapi-missing"
+
+
+def test_openapi_explicit_url_fails_when_not_openapi3():
+    doc = json.dumps({"swagger": "2.0", "info": {}, "paths": {}})
+    client = _OpenApiClient("http://srv:8080/mcp", {"http://host/api.json": (200, "application/json", doc)})
+    out = phase2_probe.check_openapi_conformance(client, None, openapi_url="http://host/api.json")
     assert out.status == STATUS_FAIL
     assert out.findings[0]["rule_id"] == "openapi-invalid"
 
@@ -447,6 +466,43 @@ def test_map_facts_oauth_explicit_false_fails_only_for_false():
     out = {o.check: o for o in compass_fetch.map_facts(facts)}["oauth-catalog-match"]
     assert out.status == STATUS_FAIL
     assert {f["rule_id"] for f in out.findings} == {"oauth-server-match"}
+
+
+# ---------------------------------------------------------------------------
+# Compass consume — live mode (map_results)
+# ---------------------------------------------------------------------------
+
+
+def test_map_results_pass_and_fail():
+    from abevalflow.mcp.phase2.compass import map_results
+
+    results = [
+        {"checkId": "mcp-tool-schema-check", "state": "passed", "details": {"notes": {"data": "All names valid"}}},
+        {"checkId": "mcp-oauth-scope-match", "state": "failed", "details": {"notes": {"data": "Scope mismatch"}}},
+    ]
+    by_check = {o.check: o for o in map_results(results)}
+    assert by_check["tool-name-rules"].status == STATUS_PASS
+    assert by_check["oauth-catalog-match"].status == STATUS_FAIL
+    assert by_check["oauth-catalog-match"].findings[0]["rule_id"] == "oauth-catalog-match"
+
+
+def test_map_results_missing_check_is_not_evaluated():
+    from abevalflow.mcp.phase2.compass import map_results
+
+    # Empty results — entity not registered yet
+    by_check = {o.check: o for o in map_results([])}
+    assert by_check["tool-name-rules"].status == STATUS_NOT_EVALUATED
+    assert by_check["oauth-catalog-match"].status == STATUS_NOT_EVALUATED
+
+
+def test_map_results_error_state_is_not_evaluated():
+    from abevalflow.mcp.phase2.compass import map_results
+
+    results = [
+        {"checkId": "mcp-tool-schema-check", "state": "ERROR", "details": {}},
+    ]
+    by_check = {o.check: o for o in map_results(results)}
+    assert by_check["tool-name-rules"].status == STATUS_NOT_EVALUATED
 
 
 def test_missing_facts_file_degrades_to_not_evaluated(monkeypatch, tmp_path):

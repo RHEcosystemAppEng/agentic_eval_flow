@@ -285,6 +285,14 @@ def check_tool_annotations(client: MCPClient, tools_resp: RpcResponse) -> CheckO
     field present with a non-boolean value) is a real fail. Honesty of the hints
     is behavioral and is left to Phase 3.
     """
+    err = _tools_list_error(tools_resp)
+    if err:
+        return CheckOutcome(
+            "tool-annotations",
+            STATUS_FAIL,
+            err,
+            findings=[make_finding(severity="high", message=err, rule_id="tools-list-malformed")],
+        )
     tools = _tools_from(tools_resp)
     if not tools:
         return CheckOutcome("tool-annotations", STATUS_NOT_EVALUATED, "tools/list returned no tools to inspect.")
@@ -448,31 +456,38 @@ def check_openapi_conformance(
             continue
         doc = _parse_openapi(text)
         if doc is None:
-            return CheckOutcome(
-                "openapi-conformance",
-                STATUS_FAIL,
-                f"Contract at {url} did not parse as JSON or YAML.",
-                findings=[
-                    make_finding(
-                        severity="high",
-                        message=f"OpenAPI contract at {url} is not parseable JSON/YAML",
-                        rule_id="openapi-unparseable",
-                    )
-                ],
-            )
+            if openapi_url:
+                # Explicit URL given by the operator — fail, don't silently skip.
+                return CheckOutcome(
+                    "openapi-conformance",
+                    STATUS_FAIL,
+                    f"Contract at {url} did not parse as JSON or YAML.",
+                    findings=[
+                        make_finding(
+                            severity="high",
+                            message=f"OpenAPI contract at {url} is not parseable",
+                            rule_id="openapi-unparseable",
+                        )
+                    ],
+                )
+            # Well-known probe: could be a reverse-proxy health page or unrelated
+            # content. Continue to the next candidate.
+            continue
         if not _is_openapi3(doc):
-            return CheckOutcome(
-                "openapi-conformance",
-                STATUS_FAIL,
-                f"Document at {url} is not a valid OpenAPI 3.x contract.",
-                findings=[
-                    make_finding(
-                        severity="high",
-                        message=f"Document at {url} is missing openapi 3.x / info / paths",
-                        rule_id="openapi-invalid",
-                    )
-                ],
-            )
+            if openapi_url:
+                return CheckOutcome(
+                    "openapi-conformance",
+                    STATUS_FAIL,
+                    f"Document at {url} is not a valid OpenAPI 3.x contract.",
+                    findings=[
+                        make_finding(
+                            severity="high",
+                            message=f"Document at {url} is missing openapi 3.x / info / paths",
+                            rule_id="openapi-invalid",
+                        )
+                    ],
+                )
+            continue
         return CheckOutcome(
             "openapi-conformance",
             STATUS_PASS,
@@ -536,14 +551,21 @@ def probe_all(server_url: str, *, timeout: float = 30.0, openapi_url: str | None
             # fails instead of a synthetic empty wrapper reading as not_evaluated.
             first_page = client.list_tools()
             if _tools_list_error(first_page) is None:
-                all_tools = client.list_all_tools()
-                tools_resp = RpcResponse(
-                    status_code=200,
-                    headers={},
-                    content_type="application/json",
-                    message={"jsonrpc": "2.0", "id": 2, "result": {"tools": all_tools}},
-                    raw_text="",
-                )
+                # Check if the first page has a nextCursor indicating more pages.
+                # If not, use the first page directly (avoids a redundant re-fetch).
+                result = first_page.message.get("result", {}) if isinstance(first_page.message, dict) else {}
+                next_cursor = result.get("nextCursor") if isinstance(result, dict) else None
+                if next_cursor and isinstance(next_cursor, str):
+                    all_tools = client.list_all_tools()
+                    tools_resp = RpcResponse(
+                        status_code=200,
+                        headers={},
+                        content_type="application/json",
+                        message={"jsonrpc": "2.0", "id": 2, "result": {"tools": all_tools}},
+                        raw_text="",
+                    )
+                else:
+                    tools_resp = first_page
             else:
                 tools_resp = first_page
         except MCPConnectionError as exc:

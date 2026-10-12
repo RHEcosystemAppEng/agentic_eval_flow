@@ -48,9 +48,21 @@ spec:
       type: string
       default: ""
       description: >-
-        Workspace-relative path to a Compass facts JSON for the consumed checks.
-        Empty skips the Compass-consume step; those checks then report
-        not_evaluated. (Facts file only; live SoundCheck retrieval is not wired yet.)
+        Workspace-relative path to a Compass facts JSON for the consumed checks
+        (file mode). Ignored when compass-url + compass-entity-ref are set.
+    - name: compass-url
+      type: string
+      default: ""
+      description: >-
+        SoundCheck API base URL for live Compass result consumption, e.g.
+        https://compass.stage.redhat.com/api/soundcheck. Requires
+        compass-entity-ref and COMPASS_API_KEY in the pod environment.
+    - name: compass-entity-ref
+      type: string
+      default: ""
+      description: >-
+        Compass entity ref for the MCP server being evaluated, e.g.
+        mcpserver:redhat/my-server. Used with compass-url for live mode.
   workspaces:
     - name: source
       description: Workspace for the reports directory.
@@ -76,6 +88,10 @@ spec:
           value: $(params.openapi-url)
         - name: COMPASS_FACTS_FILE
           value: $(params.compass-facts-file)
+        - name: COMPASS_URL
+          value: $(params.compass-url)
+        - name: COMPASS_ENTITY_REF
+          value: $(params.compass-entity-ref)
       script: |
         #!/usr/bin/env bash
         set -euo pipefail
@@ -89,14 +105,22 @@ spec:
           --timeout "$TIMEOUT" \
           --openapi-url "$OPENAPI_URL"
 
-        FACTS="$COMPASS_FACTS_FILE"
-        if [ -n "$FACTS" ]; then
-          echo "=== Phase 2 Compass consume from $FACTS ==="
+        # Compass-consumed checks: live mode (API) takes precedence over file mode.
+        if [ -n "$COMPASS_URL" ] && [ -n "$COMPASS_ENTITY_REF" ]; then
+          echo "=== Phase 2 Compass consume (live) for $COMPASS_ENTITY_REF ==="
           python -m scripts.mcp.run_compass_fetch \
-            --facts-file "$(workspaces.source.path)/$FACTS" \
+            --compass-url "$COMPASS_URL" \
+            --entity-ref "$COMPASS_ENTITY_REF" \
+            --reports-dir "$REPORTS_DIR"
+        elif [ -n "$COMPASS_FACTS_FILE" ]; then
+          echo "=== Phase 2 Compass consume (file) from $COMPASS_FACTS_FILE ==="
+          python -m scripts.mcp.run_compass_fetch \
+            --facts-file "$(workspaces.source.path)/$COMPASS_FACTS_FILE" \
             --reports-dir "$REPORTS_DIR"
         else
-          echo "No compass-facts-file given; Compass-consumed checks will report not_evaluated."
+          echo "No Compass source given; consumed checks will report not_evaluated."
+          python -m scripts.mcp.run_compass_fetch \
+            --reports-dir "$REPORTS_DIR"
         fi
 
     - name: gate

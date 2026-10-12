@@ -25,14 +25,11 @@ import logging
 from pathlib import Path
 
 from abevalflow.gates.base import Finding, GateMode, GateResult, GateType, Severity
+from abevalflow.mcp.types import STATUS_FAIL, STATUS_NOT_EVALUATED, STATUS_PASS
 from abevalflow.observability.decorators import timed_gate
 from abevalflow.schemas import GatePolicy
 
 logger = logging.getLogger(__name__)
-
-STATUS_PASS = "pass"
-STATUS_FAIL = "fail"
-STATUS_NOT_EVALUATED = "not_evaluated"
 
 _SEVERITY_WEIGHT = {
     Severity.CRITICAL: 0.0,
