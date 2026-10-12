@@ -26,7 +26,8 @@ import logging
 import sys
 from pathlib import Path
 
-from scripts.mcp._common import make_finding, run_tool, write_scan
+from abevalflow.mcp.types import make_finding
+from scripts.mcp._common import run_tool, write_scan
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)

@@ -37,6 +37,13 @@ spec:
       type: string
       default: "30"
       description: Per-request HTTP timeout (seconds) for the probe.
+    - name: openapi-url
+      type: string
+      default: ""
+      description: >-
+        Explicit OpenAPI contract URL for the openapi-conformance check. Empty
+        probes well-known paths on the server root; a server publishing no
+        reachable contract fails the check (ADR baseline requirement).
     - name: compass-facts-file
       type: string
       default: ""
@@ -65,6 +72,8 @@ spec:
           value: $(params.submission-name)
         - name: TIMEOUT
           value: $(params.timeout)
+        - name: OPENAPI_URL
+          value: $(params.openapi-url)
         - name: COMPASS_FACTS_FILE
           value: $(params.compass-facts-file)
       script: |
@@ -77,7 +86,8 @@ spec:
         python -m scripts.mcp.run_phase2_probe \
           --server-url "$SERVER_URL" \
           --reports-dir "$REPORTS_DIR" \
-          --timeout "$TIMEOUT"
+          --timeout "$TIMEOUT" \
+          --openapi-url "$OPENAPI_URL"
 
         FACTS="$COMPASS_FACTS_FILE"
         if [ -n "$FACTS" ]; then

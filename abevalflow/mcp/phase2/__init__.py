@@ -5,11 +5,13 @@ Approach 4). It is deterministic and uses NO LLM. Results follow the three-state
 model (pass / fail / not_evaluated).
 
 Two sources feed the same set of gates:
-* **Live probes** (scripts/mcp/run_phase2_probe.py) - checks that need a running
+* **Live probes** (check logic in ``abevalflow.mcp.phase2.checks``, CLI entry
+  point in ``scripts/mcp/run_phase2_probe.py``) - checks that need a running
   server: protocol compliance, schema conformance, tool annotations, HTTP
   support, rate limiting, response-size limit, mandatory timeouts, OpenAPI
   conformance.
-* **Compass-consumed** (scripts/mcp/run_compass_fetch.py) - the Compass tier-1
+* **Compass-consumed** (mapping logic in ``abevalflow.mcp.phase2.compass``, CLI
+  entry point in ``scripts/mcp/run_compass_fetch.py``) - the Compass tier-1
   automated facts consumed rather than re-probed: tool-name rules and
   OAuth-matches-catalog.
 
@@ -23,7 +25,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from abevalflow.gates.base import GateResult
-from abevalflow.mcp.phase2.base import Phase2Gate
+from abevalflow.mcp.phase2.gate import Phase2Gate
 from abevalflow.schemas import GatePolicy
 
 # Live probe checks (need a running server).

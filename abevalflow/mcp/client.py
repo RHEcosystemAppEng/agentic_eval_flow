@@ -173,6 +173,24 @@ class MCPClient:
             raw_text=text,
         )
 
+    # -- plain GET (non-JSON-RPC, e.g. fetching an OpenAPI contract) ---------
+    def get(self, url: str, *, extra_headers: dict[str, str] | None = None) -> tuple[int, str, str]:
+        """GET ``url`` and return ``(status_code, content_type, text)``.
+
+        A plain HTTP GET, not a JSON-RPC call - used to fetch side artifacts such
+        as an OpenAPI contract. Raises :class:`MCPConnectionError` when the host
+        cannot be reached at all; a non-2xx status is returned normally so the
+        caller can decide what it means.
+        """
+        headers = {"Accept": "application/json, application/yaml, text/yaml, */*"}
+        if extra_headers:
+            headers.update(extra_headers)
+        try:
+            resp = self._client.get(url, headers=headers, follow_redirects=True)
+        except httpx.HTTPError as exc:
+            raise MCPConnectionError(str(exc)) from exc
+        return resp.status_code, resp.headers.get("content-type", ""), resp.text
+
     # -- MCP protocol helpers ----------------------------------------------
     def initialize(self, *, request_id: Any = 1, params: dict[str, Any] | None = None) -> RpcResponse:
         """Send the ``initialize`` request and capture session id + negotiated version."""

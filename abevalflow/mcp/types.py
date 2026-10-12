@@ -1,12 +1,18 @@
-"""Shared helpers for MCP Phase 2 (deterministic contract/conformance).
+"""Shared types and helpers for the MCP evaluation pipeline.
 
-Phase 2 uses a THREE-STATE model (pass / fail / not_evaluated) - unlike Phase 1,
-which is always pass/fail. ``not_evaluated`` is used when a check cannot produce a
+Defines the data shapes both phases use:
+
+- **Phase 1** findings: ``make_finding()`` builds the dicts that scanners write
+  and Phase 1 gates read.
+- **Phase 2** check outcomes: ``CheckOutcome`` carries a three-state result
+  (pass / fail / not_evaluated) that the Phase 2 gate reads.
+
+Phase 2 uses the three-state model because a check that cannot produce a
 meaningful signal (server unreachable, no OpenAPI contract, a capability the
-server does not expose), so a server is never penalized for something it was not
-actually subjected to (ADR: three-state reporting).
+server does not expose) must report ``not_evaluated`` rather than a false pass
+or fail (ADR: three-state reporting).
 
-Every Phase 2 check - whether a live probe or a value consumed from Compass -
+Every Phase 2 check — whether a live probe or a value consumed from Compass —
 writes the same JSON shape so the Phase 2 gates can read them uniformly::
 
     {
@@ -27,6 +33,44 @@ from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Severity helpers (used by Phase 1 scanners and Phase 2 checks)
+# ---------------------------------------------------------------------------
+
+VALID_SEVERITIES = ("critical", "high", "medium", "low", "info")
+
+
+def normalize_severity(value: str | None, default: str = "info") -> str:
+    """Coerce an arbitrary severity string into a known severity level."""
+    if not value:
+        return default
+    sev = value.strip().lower()
+    return sev if sev in VALID_SEVERITIES else default
+
+
+def make_finding(
+    *,
+    severity: str,
+    message: str,
+    rule_id: str,
+    file_path: str | None = None,
+    **extra: Any,
+) -> dict[str, Any]:
+    """Build a single normalized finding dict."""
+    finding: dict[str, Any] = {
+        "severity": normalize_severity(severity),
+        "message": message,
+        "rule_id": rule_id,
+        "file_path": file_path,
+    }
+    finding.update(extra)
+    return finding
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 three-state model
+# ---------------------------------------------------------------------------
 
 STATUS_PASS = "pass"
 STATUS_FAIL = "fail"

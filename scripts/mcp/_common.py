@@ -1,4 +1,8 @@
-"""Shared helpers for MCP Phase 1 scanner scripts.
+"""Scanner I/O helpers for MCP Phase 1.
+
+Provides ``run_tool`` (shell out to a scanner CLI) and ``write_scan`` (write
+normalized scan JSON). Finding construction (``make_finding``) lives in
+``abevalflow.mcp.types`` — scanners import it from there.
 
 All Phase 1 scanners emit the same JSON shape so the Phase 1 gates (which reuse
 ``SecurityGate.evaluate_scan_json``) can read them uniformly::
@@ -11,9 +15,6 @@ All Phase 1 scanners emit the same JSON shape so the Phase 1 gates (which reuse
         ...
       ]
     }
-
-``severity`` must be one of the values understood by ``abevalflow.gates.base``:
-critical / high / medium / low / info.
 """
 
 from __future__ import annotations
@@ -25,35 +26,6 @@ from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
-
-VALID_SEVERITIES = ("critical", "high", "medium", "low", "info")
-
-
-def normalize_severity(value: str | None, default: str = "info") -> str:
-    """Coerce an arbitrary severity string into a known severity level."""
-    if not value:
-        return default
-    sev = value.strip().lower()
-    return sev if sev in VALID_SEVERITIES else default
-
-
-def make_finding(
-    *,
-    severity: str,
-    message: str,
-    rule_id: str,
-    file_path: str | None = None,
-    **extra: Any,
-) -> dict[str, Any]:
-    """Build a single normalized finding dict."""
-    finding: dict[str, Any] = {
-        "severity": normalize_severity(severity),
-        "message": message,
-        "rule_id": rule_id,
-        "file_path": file_path,
-    }
-    finding.update(extra)
-    return finding
 
 
 def write_scan(

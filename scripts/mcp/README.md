@@ -1,46 +1,48 @@
-# `scripts/mcp/` — MCP evaluation execution layer
+# `scripts/mcp/` — MCP evaluation pipeline runners
 
-This package is the **execution / I/O layer** for the MCP-server evaluation
-pipeline. These modules shell out to external tools (gitleaks, semgrep,
-licensee), probe the live MCP server over HTTP, and read/write report JSON. The
-pure pass/fail evaluation logic they feed lives in `abevalflow.mcp`.
+Thin CLI entry points for the MCP-server evaluation pipeline. These are the
+**public API of the eval container image**: each is invoked by a Tekton task
+step as `python -m scripts.mcp.<name>`. They shell out to external tools,
+create an MCP client, read files, and write result JSON. All substantial
+evaluation logic lives in `abevalflow.mcp`.
 
-## Naming convention
+## Two-package split
 
-Role is encoded in the filename prefix:
+| Package | Role | Contains |
+|---------|------|----------|
+| `abevalflow/mcp/` | **What** to decide | Gates, checks, types, client, Compass mapping — no I/O to external tools |
+| `scripts/mcp/` (here) | **How** to collect data | CLI entry points that shell out to tools, invoke the logic, write results |
 
-| Prefix | Role | Example |
-|--------|------|---------|
-| `run_` | Entry point — invoked by a Tekton task as `python -m scripts.mcp.<name>` (or via `run_gate.sh`). | `run_secrets_scan.py` |
-| `_`    | Helper — imported by the entry points, never run directly. | `_common.py` |
+The contract between them: **JSON files on disk.** Scanners/probe write them.
+Gates read them.
 
 ## Entry points
 
-| Module | Phase | Invoked by | Emits |
-|--------|-------|------------|-------|
-| `run_secrets_scan.py`       | 1 | phase1 task | `secrets-scan.json` (gitleaks) |
-| `run_no_user_code_scan.py`  | 1 | phase1 task | `no-user-code-scan.json` (semgrep, bundled offline ruleset) |
-| `run_license_scan.py`       | 1 | phase1 task | `license-scan.json` (licensee, top-level license only) |
-| `run_phase1_gates.py`       | 1 | phase1 task (via `run_gate.sh`) | `phase1-summary.json` + gate exit code |
-| `run_phase2_probe.py`       | 2 | phase2 task | per-check result files (live conformance probe) |
-| `run_compass_fetch.py`      | 2 | phase2 task | per-check result files (Compass tier-1 facts) |
-| `run_phase2_gates.py`       | 2 | phase2 task (via `run_gate.sh`) | `phase2-summary.json` + gate exit code |
+| Module | Phase | What it does | Emits |
+|--------|-------|-------------|-------|
+| `run_secrets_scan.py`       | 1 | Shells out to gitleaks | `secrets-scan.json` |
+| `run_no_user_code_scan.py`  | 1 | Shells out to semgrep (bundled offline ruleset) | `no-user-code-scan.json` |
+| `run_license_scan.py`       | 1 | Shells out to licensee (top-level license only) | `license-scan.json` |
+| `run_phase1_gates.py`       | 1 | Calls `abevalflow.mcp.phase1.run_phase1()` | `phase1-summary.json` + gate exit code |
+| `run_phase2_probe.py`       | 2 | Creates MCPClient, calls `probe_all()` | per-check `<name>-check.json` files |
+| `run_compass_fetch.py`      | 2 | Reads Compass facts file, calls `map_facts()` | per-check `<name>-check.json` files |
+| `run_phase2_gates.py`       | 2 | Calls `abevalflow.mcp.phase2.run_phase2()` | `phase2-summary.json` + gate exit code |
 
-`run_gate.sh` is the shared gate wrapper baked into the eval image: both phase
-tasks call it to run the phase's gate module, emit the Tekton results
-(`passed` flag + report path) from the summary JSON, and propagate the gate's
-exit code.
+`run_gate.sh` is the shared bash gate wrapper baked into the eval image.
 
 ## Helpers
 
-| Module | Used by |
-|--------|---------|
-| `_common.py`     | Phase 1 scanners — findings, tool runner, report writer |
-| `_phase2.py`     | Phase 2 probe + Compass fetch — check result shapes |
-| `_mcp_client.py` | Phase 2 probe — minimal MCP client over Streamable HTTP |
+| Module | What it provides |
+|--------|-----------------|
+| `_common.py` | `run_tool()` (subprocess runner), `write_scan()` (scan JSON writer) — scanner I/O only |
 
-## Layout
+## Naming convention
 
-The package is intentionally flat, matching the repo-wide `scripts/`
-convention. The `run_`/`_` prefixes keep entry points and helpers legible
-without subpackages.
+- `run_` prefix = Tekton-invoked entry point (`python -m scripts.mcp.<name>`)
+- `_` prefix = imported helper, never run directly
+
+## Future repo split
+
+If Tekton task YAMLs move to a separate repo, this package stays in the image
+repo (baked into the eval container). The new repo calls these entry points via
+`python -m` — no Python imports cross the repo boundary.

@@ -27,9 +27,9 @@ from pathlib import Path
 
 from abevalflow.gates.base import GateResult
 from abevalflow.gates.security.base import SecurityGate
-from abevalflow.mcp.phase1.license import DEFAULT_ALLOWED_LICENSES, LicenseGate
-from abevalflow.mcp.phase1.no_user_code import NoUserCodeGate
-from abevalflow.mcp.phase1.secrets import SecretsGate
+from abevalflow.mcp.phase1.license_gate import DEFAULT_ALLOWED_LICENSES, LicenseGate
+from abevalflow.mcp.phase1.no_user_code_gate import NoUserCodeGate
+from abevalflow.mcp.phase1.secrets_gate import SecretsGate
 from abevalflow.schemas import GatePolicy
 
 # Ordered list of the Phase 1 gate classes, in execution order.

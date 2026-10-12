@@ -1,11 +1,13 @@
-"""Execution / I/O layer for the MCP evaluation pipeline.
+"""Thin CLI runners for the MCP evaluation pipeline.
 
-These modules shell out to external tools, probe the live server, and read/write
-report JSON. The pure pass/fail evaluation logic they feed lives in
-``abevalflow.mcp``.
+These entry points are the **public API of the eval container image**: each is
+invoked by a Tekton task step as ``python -m scripts.mcp.<name>``. They shell out
+to external tools, create an MCP client and call evaluation logic from
+``abevalflow.mcp``, or read/write report JSON. All substantial evaluation logic
+lives in ``abevalflow.mcp`` (types, client, gates, checks, Compass mapping);
+these runners are intentionally thin wrappers around it.
 
-Tekton entry points are ``run_``-prefixed and run as
-``python -m scripts.mcp.<name>``:
+Entry points (``run_``-prefixed):
 
 - ``run_secrets_scan``        - Phase 1 secrets scan (gitleaks)
 - ``run_no_user_code_scan``   - Phase 1 no-user-code scan (semgrep)
@@ -15,6 +17,7 @@ Tekton entry points are ``run_``-prefixed and run as
 - ``run_compass_fetch``       - Phase 2 Compass-fact consume
 - ``run_phase2_gates``        - Phase 2 gate evaluation + summary
 
-Internal helpers (imported by the entry points, never run directly) are
-underscore-prefixed: ``_common``, ``_phase2``, ``_mcp_client``.
+Scanner I/O helpers (underscore-prefixed, never run directly):
+
+- ``_common``                 - ``run_tool``, ``write_scan``
 """

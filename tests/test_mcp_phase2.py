@@ -14,14 +14,14 @@ import os
 import pytest
 
 from abevalflow.gates.base import GateMode
+from abevalflow.mcp.client import RpcResponse, _parse_sse_messages, _select_response
 from abevalflow.mcp.phase2 import PHASE2_CHECKS, run_phase2
-from abevalflow.mcp.phase2.base import Phase2Gate
+from abevalflow.mcp.phase2 import checks as phase2_probe
+from abevalflow.mcp.phase2.gate import Phase2Gate
+from abevalflow.mcp.types import STATUS_FAIL, STATUS_NOT_EVALUATED, STATUS_PASS, CheckOutcome, write_check_result
 from abevalflow.schemas import GatePolicy
 from scripts.mcp import run_compass_fetch as compass_fetch
 from scripts.mcp import run_phase2_gates
-from scripts.mcp import run_phase2_probe as phase2_probe
-from scripts.mcp._mcp_client import RpcResponse, _parse_sse_messages, _select_response
-from scripts.mcp._phase2 import STATUS_FAIL, STATUS_NOT_EVALUATED, STATUS_PASS, CheckOutcome, write_check_result
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -100,7 +100,7 @@ def test_select_response_matches_string_id_against_int_request():
 
 
 def test_list_all_tools_follows_pagination():
-    from scripts.mcp._mcp_client import MCPClient
+    from abevalflow.mcp.client import MCPClient
 
     pages = {
         None: {"tools": [{"name": "a"}], "nextCursor": "c1"},
@@ -118,7 +118,7 @@ def test_list_all_tools_follows_pagination():
 
 
 def test_list_all_tools_breaks_on_repeating_cursor():
-    from scripts.mcp._mcp_client import MCPClient
+    from abevalflow.mcp.client import MCPClient
 
     client = MCPClient.__new__(MCPClient)
 
@@ -185,7 +185,7 @@ def test_protocol_compliance_disconnect_keeps_collected_findings():
     # A mid-probe disconnect must not erase conformance violations already found: a
     # bad init (findings collected) plus a client that drops the next request must
     # FAIL with those findings, not downgrade to not_evaluated.
-    from scripts.mcp._mcp_client import MCPConnectionError
+    from abevalflow.mcp.client import MCPConnectionError
 
     class DroppingClient:
         def post(self, *_a, **_kw):
@@ -220,6 +220,94 @@ def test_schema_conformance_fails_on_broken_tools_list():
 
     malformed = _rpc({"jsonrpc": "2.0", "id": 2, "result": {"tools": "not-a-list"}})
     assert phase2_probe.check_schema_conformance(None, malformed).status == STATUS_FAIL
+
+
+# ---------------------------------------------------------------------------
+# openapi-conformance
+# ---------------------------------------------------------------------------
+
+
+class _OpenApiClient:
+    """Fake MCP client exposing endpoint_url + get() for OpenAPI probing.
+
+    ``routes`` maps a URL to (status, content_type, text); missing URLs raise
+    MCPConnectionError (simulating an unreachable/404-at-connect path).
+    """
+
+    def __init__(self, endpoint_url, routes):
+        self.endpoint_url = endpoint_url
+        self._routes = routes
+
+    def get(self, url, *, extra_headers=None):
+        from abevalflow.mcp.client import MCPConnectionError
+
+        if url not in self._routes:
+            raise MCPConnectionError(f"no route for {url}")
+        return self._routes[url]
+
+
+_VALID_OPENAPI = json.dumps({"openapi": "3.0.3", "info": {"title": "t", "version": "1"}, "paths": {}})
+
+
+def test_openapi_pass_from_well_known_path():
+    client = _OpenApiClient(
+        "http://srv:8080/mcp",
+        {"http://srv:8080/openapi.json": (200, "application/json", _VALID_OPENAPI)},
+    )
+    out = phase2_probe.check_openapi_conformance(client, None)
+    assert out.status == STATUS_PASS
+
+
+def test_openapi_pass_from_explicit_url():
+    client = _OpenApiClient(
+        "http://srv:8080/mcp", {"http://host/custom.json": (200, "application/json", _VALID_OPENAPI)}
+    )
+    out = phase2_probe.check_openapi_conformance(client, None, openapi_url="http://host/custom.json")
+    assert out.status == STATUS_PASS
+
+
+def test_openapi_pass_from_mcp_native_contract():
+    # No REST contract, but tools/list returns tools with inputSchema -> MCP-native
+    # equivalent satisfies "OpenAPI (or equivalent)" per the ADR.
+    client = _OpenApiClient("http://srv:8080/mcp", {})  # all well-known paths unreachable
+    tools = _rpc({"result": {"tools": [{"name": "a", "inputSchema": {"type": "object"}}]}})
+    out = phase2_probe.check_openapi_conformance(client, tools)
+    assert out.status == STATUS_PASS
+    assert "MCP-native equivalent" in out.reason
+
+
+def test_openapi_fail_when_neither_rest_nor_mcp():
+    # No REST contract AND no usable MCP tools/list -> no contract at all.
+    client = _OpenApiClient("http://srv:8080/mcp", {})
+    empty_tools = _rpc({"result": {"tools": []}})
+    out = phase2_probe.check_openapi_conformance(client, empty_tools)
+    assert out.status == STATUS_FAIL
+    assert out.findings[0]["rule_id"] == "openapi-missing"
+
+
+def test_openapi_fail_when_absent_and_no_tools_resp():
+    # No REST contract AND tools_resp is None -> FAIL.
+    client = _OpenApiClient("http://srv:8080/mcp", {})
+    out = phase2_probe.check_openapi_conformance(client, None)
+    assert out.status == STATUS_FAIL
+    assert out.findings[0]["rule_id"] == "openapi-missing"
+
+
+def test_openapi_fail_when_unparseable():
+    client = _OpenApiClient(
+        "http://srv:8080/mcp", {"http://srv:8080/openapi.json": (200, "application/json", "{ not json")}
+    )
+    out = phase2_probe.check_openapi_conformance(client, None)
+    assert out.status == STATUS_FAIL
+    assert out.findings[0]["rule_id"] == "openapi-unparseable"
+
+
+def test_openapi_fail_when_not_openapi3():
+    doc = json.dumps({"swagger": "2.0", "info": {}, "paths": {}})  # OpenAPI 2, missing openapi 3.x
+    client = _OpenApiClient("http://srv:8080/mcp", {"http://srv:8080/openapi.json": (200, "application/json", doc)})
+    out = phase2_probe.check_openapi_conformance(client, None)
+    assert out.status == STATUS_FAIL
+    assert out.findings[0]["rule_id"] == "openapi-invalid"
 
 
 def test_schema_conformance_output_schema_when_present():
@@ -305,9 +393,9 @@ def test_rate_limiting_not_evaluated_without_throttle():
 
 
 def test_deferred_checks_are_not_evaluated():
+    # Behavioral checks deferred to Phase 3 (can't be verified black-box in Phase 2).
     assert phase2_probe.check_response_size_limit(None).status == STATUS_NOT_EVALUATED
     assert phase2_probe.check_mandatory_timeouts(None).status == STATUS_NOT_EVALUATED
-    assert phase2_probe.check_openapi_conformance(None).status == STATUS_NOT_EVALUATED
 
 
 # ---------------------------------------------------------------------------
