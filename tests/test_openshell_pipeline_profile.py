@@ -217,11 +217,18 @@ class TestOpenshellPipelineProfile:
         # propagate the client's failure status — without it, x509 parsing
         # the still-emitted certificate would pass the check.
         assert "set -uo pipefail" in script
-        # TLS chain validation is enabled only when the CA Secret exists.
+        # TLS chain validation is enabled only when the CA bundle exists, and
+        # it must be the CA that signed the gateway's serving certificate:
+        # openshell-ca ships in the openshell-mtls bundle, while the forge
+        # service CA can never validate the gateway chain (a mismatch the
+        # pre-pipefail false-pass used to mask).
         ca = next(e for e in step["env"] if e["name"] == "GATEWAY_CA_CERT")
         ref = ca["valueFrom"]["secretKeyRef"]
-        assert ref["name"] == "forge-ai-gateway-ca"
+        assert ref["name"] == "openshell-mtls"
+        assert ref["key"] == "ca.crt"
         assert ref["optional"] is True
+        # An HTTP answer is not service health: 5xx responses fail the probe.
+        assert "(server error)" in script
 
     def test_evaluate_openshell_step_logs_mlflow(self):
         evaluate = (REPO / "pipeline" / "tasks" / "phases" / "evaluate.yaml").read_text()

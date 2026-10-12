@@ -29,12 +29,14 @@ spec:
       env:
         # When present, TLS validation and the HTTP probe verify the gateway
         # certificate chain; without it, the TLS layer reports handshake +
-        # SANs only. Optional so the probe still runs in namespaces that do
-        # not have this Secret.
+        # SANs only. The chain must be checked against the CA that signed the
+        # gateway's serving certificate (openshell-ca, shipped in the
+        # openshell-mtls bundle) — the forge service CA cannot validate it.
+        # Optional so the probe still runs in namespaces without the bundle.
         - name: GATEWAY_CA_CERT
           valueFrom:
             secretKeyRef:
-              name: forge-ai-gateway-ca
+              name: openshell-mtls
               key: ca.crt
               optional: true
       script: |
@@ -49,7 +51,16 @@ spec:
         fail=0
         probe() { # name url
           if curl -sS --max-time 8 -o /dev/null -w "%{http_code}" $2 >/tmp/code 2>/tmp/err; then
-            echo "  PASS  $1  (HTTP $(cat /tmp/code))"
+            code="$(cat /tmp/code)"
+            # Reachability is not service health: a 5xx means the dependency
+            # answered but is not serving. 4xx can be a valid answer for a
+            # bare endpoint (e.g. 404 on a CDN root), so only server errors
+            # fail the probe.
+            if [ "${code:-0}" -ge 500 ] 2>/dev/null; then
+              echo "  FAIL  $1  -> HTTP $code (server error)"; fail=1
+            else
+              echo "  PASS  $1  (HTTP $code)"
+            fi
           else
             echo "  FAIL  $1  -> $(tr -d '\n' </tmp/err | cut -c1-110)"; fail=1
           fi
@@ -85,7 +96,11 @@ spec:
           fi
           local code
           if code=$(curl -sS --max-time 10 -o /dev/null -w "%{http_code}" $curl_ca "$endpoint" 2>/tmp/gw-err); then
-            echo "  PASS  $name http (HTTP $code)"
+            if [ "${code:-0}" -ge 500 ] 2>/dev/null; then
+              echo "  FAIL  $name http -> HTTP $code (server error)"; fail=1
+            else
+              echo "  PASS  $name http (HTTP $code)"
+            fi
           else
             echo "  FAIL  $name http -> $(tr -d '\n' </tmp/gw-err | cut -c1-110)"; fail=1
           fi
