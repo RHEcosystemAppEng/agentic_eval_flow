@@ -143,6 +143,28 @@ class TestOpenshellPipelineProfile:
         assert '*".svc.cluster.local:"*' not in script
         assert '"https://host.containers.internal:"*' not in script
 
+    def test_probe_targets_pipeline_gateway_contract(self):
+        probe = _load(REPO / "pipeline" / "tasks" / "eval-stack-probe.yaml")
+        pipeline_defaults = _param_defaults(_load(PIPELINE)["spec"])
+        probe_default = _param_defaults(probe["spec"])["openshell-gateway-endpoint"]
+        # The probe must test the same endpoint the Pipeline uses.
+        assert probe_default == pipeline_defaults["openshell-gateway-endpoint"]
+        step = probe["spec"]["steps"][0]
+        script = step["script"]
+        assert 'gateway_probe "openshell agent" "$(params.openshell-gateway-endpoint)"' in script
+        # The VMI's raw service name is not the Pipeline's contract.
+        assert "openshell-saw-agent-gateway" not in script
+        # Three layers: TCP reachability, TLS handshake/validation, HTTP.
+        assert "/dev/tcp/" in script
+        assert "openssl s_client" in script
+        assert "subjectAltName" in script
+        assert "curl -sS" in script
+        # TLS chain validation is enabled only when the CA Secret exists.
+        ca = next(e for e in step["env"] if e["name"] == "GATEWAY_CA_CERT")
+        ref = ca["valueFrom"]["secretKeyRef"]
+        assert ref["name"] == "forge-ai-gateway-ca"
+        assert ref["optional"] is True
+
     def test_evaluate_openshell_step_logs_mlflow(self):
         evaluate = (REPO / "pipeline" / "tasks" / "phases" / "evaluate.yaml").read_text()
         openshell = evaluate.split("name: aeh-openshell-eval", 1)[1].split("name: aeh-pairwise", 1)[0]
