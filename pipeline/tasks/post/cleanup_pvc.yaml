@@ -4,15 +4,26 @@ metadata:
   name: cleanup-pvc
 spec:
   description: >-
-    Deletes the workspace PVC after a pipeline run completes.
-    Runs as a finally task to prevent PVC quota exhaustion.
+    Deletes the workspace PVC after a pipeline run completes. Runs as a
+    finally task to prevent PVC quota exhaustion. Non-blocking by design:
+    a cleanup failure never fails the PipelineRun. The outcome is reported
+    in the cleanup-status result (deleted / none / api-unavailable /
+    failed), and a PVC that could not be deleted is labelled
+    abevalflow.io/cleanup-failed=true so operators can find and alert on it.
   params:
     - name: pipelinerun-name
       type: string
       description: Name of the PipelineRun whose PVCs should be cleaned up
+  results:
+    - name: cleanup-status
+      description: >-
+        deleted: all owned PVCs deleted; none: no owned PVCs found;
+        api-unavailable: the lookup could not reach the API, deletion
+        unverified; failed: one or more deletes failed (PVCs labelled
+        abevalflow.io/cleanup-failed=true).
   steps:
     - name: delete-pvc
-      image: image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
+      image: image-registry.openshift-image-registry.svc:5000/openshell/cli:latest
       onError: continue
       script: |
         #!/usr/bin/env bash
@@ -20,28 +31,55 @@ spec:
 
         # Get current namespace from service account
         NAMESPACE=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)
+        RESULT_PATH="$(results.cleanup-status.path)"
 
         echo "Cleaning up PVCs for PipelineRun $(params.pipelinerun-name) in namespace ${NAMESPACE}..."
         pvcs=""
+        lookup_ok=0
         for attempt in 1 2 3; do
           if pvcs=$(oc get pvc -n "${NAMESPACE}" --request-timeout=20s \
             -o jsonpath='{range .items[?(@.metadata.ownerReferences[0].name=="$(params.pipelinerun-name)")]}{.metadata.name}{"\n"}{end}'); then
+            lookup_ok=1
             break
           fi
           echo "WARNING: PVC lookup attempt ${attempt}/3 failed"
           sleep $((attempt * 5))
         done
 
-        if [ -z "$pvcs" ]; then
-          echo "No owned PVCs found, or the API remained unavailable; cleanup is best-effort"
+        # Non-blocking by design: the run stays green, but the outcome is
+        # reported so an operator can see the PVC may still exist.
+        if [ "$lookup_ok" -ne 1 ]; then
+          echo "api-unavailable" > "$RESULT_PATH"
+          echo "WARNING: PVC lookup failed; the API remained unavailable, deletion unverified"
           exit 0
         fi
 
+        if [ -z "$pvcs" ]; then
+          echo "none" > "$RESULT_PATH"
+          echo "No owned PVCs found; nothing to clean up"
+          exit 0
+        fi
+
+        failed=0
         while read -r pvc; do
           if [ -n "$pvc" ]; then
             echo "Deleting PVC: $pvc"
-            oc delete pvc "$pvc" -n "${NAMESPACE}" --wait=false --request-timeout=20s \
-              || echo "WARNING: failed to delete PVC $pvc"
+            if ! oc delete pvc "$pvc" -n "${NAMESPACE}" --wait=false --request-timeout=20s; then
+              failed=1
+              echo "WARNING: failed to delete PVC $pvc"
+              # Operator-visible marker on the leaked PVC: alert on the
+              # abevalflow.io/cleanup-failed label instead of a log line.
+              oc label pvc "$pvc" -n "${NAMESPACE}" \
+                abevalflow.io/cleanup-failed=true --overwrite --request-timeout=20s \
+                || echo "WARNING: could not label PVC $pvc (needs patch on persistentvolumeclaims)"
+            fi
           fi
         done <<< "$pvcs"
+
+        if [ "$failed" -ne 0 ]; then
+          echo "failed" > "$RESULT_PATH"
+          echo "WARNING: PVC cleanup failed for this run; labelled PVCs remain for an operator"
+          exit 0
+        fi
+        echo "deleted" > "$RESULT_PATH"
         echo "PVC cleanup complete"

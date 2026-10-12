@@ -115,6 +115,36 @@ class TestOpenshellPipelineProfile:
         assert "--request-timeout=20s" in step["script"]
         assert step["image"].startswith("image-registry.openshift-image-registry.svc:5000/")
 
+    def test_cleanup_failures_are_operator_visible(self):
+        task = _load(REPO / "pipeline" / "tasks" / "post" / "cleanup_pvc.yaml")
+        assert "cleanup-status" in {r["name"] for r in task["spec"]["results"]}
+        script = task["spec"]["steps"][0]["script"]
+        assert "$(results.cleanup-status.path)" in script
+        for outcome in ("api-unavailable", "none", "failed", "deleted"):
+            assert f'echo "{outcome}" > "$RESULT_PATH"' in script
+        # A failed delete labels the leaked PVC instead of failing the run.
+        assert "abevalflow.io/cleanup-failed=true" in script
+        pipeline = _load(PIPELINE)
+        result = next(r for r in pipeline["spec"]["results"] if r["name"] == "cleanup-status")
+        assert result["value"] == "$(finally.cleanup.results.cleanup-status)"
+        # Labelling the PVC needs patch on persistentvolumeclaims.
+        rbac = list(yaml.safe_load_all((REPO / "config" / "rbac.yaml").read_text()))
+        role = next(o for o in rbac if o and o["kind"] == "Role" and o["metadata"]["name"] == "pipeline-trial-manager")
+        pvc_rule = next(r for r in role["rules"] if "persistentvolumeclaims" in r["resources"])
+        assert "patch" in pvc_rule["verbs"]
+
+    def test_rbac_applies_into_any_namespace(self):
+        # metadata.namespace would make `oc apply -n X` fail, and a subject
+        # namespace would bind another namespace's ServiceAccount; subjects
+        # without a namespace default to the RoleBinding's own namespace.
+        rbac = list(yaml.safe_load_all((REPO / "config" / "rbac.yaml").read_text()))
+        for obj in rbac:
+            assert obj is not None
+            assert "namespace" not in obj["metadata"], obj["metadata"]["name"]
+            if obj["kind"] == "RoleBinding":
+                for subject in obj["subjects"]:
+                    assert "namespace" not in subject
+
     def test_explicit_auth_mode_selects_gateway_path(self):
         # The default alias endpoint must select the mTLS path through an
         # explicit parameter, never through endpoint hostname shape.

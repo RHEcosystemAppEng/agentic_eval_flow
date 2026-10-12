@@ -205,6 +205,11 @@ spec:
     - name: scorecard-recommendation
       description: "Unified scorecard recommendation (pass/warn/fail)"
       value: $(tasks.analyze.results.scorecard-recommendation)
+    - name: cleanup-status
+      description: >-
+        Finally PVC cleanup outcome: deleted / none / api-unavailable /
+        failed. Non-blocking: a failed cleanup never fails the run.
+      value: $(finally.cleanup.results.cleanup-status)
 
   workspaces:
     - name: shared-workspace
