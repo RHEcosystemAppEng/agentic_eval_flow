@@ -181,6 +181,22 @@ def test_protocol_compliance_flags_missing_result_and_bad_id():
     assert "init-result" in rule_ids
 
 
+def test_protocol_compliance_disconnect_keeps_collected_findings():
+    # A mid-probe disconnect must not erase conformance violations already found: a
+    # bad init (findings collected) plus a client that drops the next request must
+    # FAIL with those findings, not downgrade to not_evaluated.
+    from scripts.mcp._mcp_client import MCPConnectionError
+
+    class DroppingClient:
+        def post(self, *_a, **_kw):
+            raise MCPConnectionError("connection reset")
+
+    bad_init = _rpc({"jsonrpc": "2.0", "id": 999, "result": {}})  # wrong id + missing fields
+    out = phase2_probe.check_protocol_compliance(DroppingClient(), bad_init)
+    assert out.status == STATUS_FAIL
+    assert out.findings  # init findings preserved through the disconnect
+
+
 def test_schema_conformance_pass_and_fail():
     good = _rpc({"result": {"tools": [{"name": "a", "inputSchema": {"type": "object", "properties": {}}}]}})
     assert phase2_probe.check_schema_conformance(None, good).status == STATUS_PASS
@@ -191,6 +207,19 @@ def test_schema_conformance_pass_and_fail():
 
     empty = _rpc({"result": {"tools": []}})
     assert phase2_probe.check_schema_conformance(None, empty).status == STATUS_NOT_EVALUATED
+
+
+def test_schema_conformance_fails_on_broken_tools_list():
+    # A tools/list that errors or is malformed is a real conformance failure, not an
+    # absence of tools: it must FAIL (not not_evaluated) so a broken endpoint cannot
+    # slip through schema validation.
+    errored = _rpc({"jsonrpc": "2.0", "id": 2, "error": {"code": -32603, "message": "boom"}})
+    out = phase2_probe.check_schema_conformance(None, errored)
+    assert out.status == STATUS_FAIL
+    assert out.findings[0]["rule_id"] == "tools-list-malformed"
+
+    malformed = _rpc({"jsonrpc": "2.0", "id": 2, "result": {"tools": "not-a-list"}})
+    assert phase2_probe.check_schema_conformance(None, malformed).status == STATUS_FAIL
 
 
 def test_schema_conformance_output_schema_when_present():

@@ -203,6 +203,27 @@ def test_no_user_code_scan_flags_committed_semgrepignore(tmp_path, monkeypatch):
     assert "semgrep-ignore-present" in {f["rule_id"] for f in data["findings"]}
 
 
+def test_no_user_code_scan_flags_uncovered_language(tmp_path, monkeypatch):
+    # An artifact written in a language the ruleset does not cover yields 0 scanned
+    # files; that must fail closed with a HIGH finding, not a silent clean PASS.
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "main.rs").write_text('fn main() { println!("hi"); }\n')
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    monkeypatch.setattr(
+        no_user_code_scan,
+        "run_tool",
+        lambda *a, **k: _fake_result(returncode=0, stdout='{"results": [], "paths": {"scanned": []}}'),
+    )
+    rc = _run_scanner(no_user_code_scan, [str(repo), "--reports-dir", str(reports)])
+    assert rc == 0
+    data = json.loads((reports / "no-user-code-scan.json").read_text())
+    findings = data["findings"]
+    assert "no-user-code-uncovered-language" in {f["rule_id"] for f in findings}
+    assert any(f["severity"] == "high" for f in findings)
+
+
 # ---------------------------------------------------------------------------
 # Integration tests (real tools, skipped when absent)
 # ---------------------------------------------------------------------------

@@ -143,6 +143,17 @@ def check_protocol_compliance(client: MCPClient, init: RpcResponse) -> CheckOutc
                 )
             )
     except MCPConnectionError as exc:
+        # A mid-probe disconnect must not erase conformance violations already found:
+        # if we collected any, report them as a FAIL; only a disconnect with nothing
+        # collected yet is genuinely not_evaluated.
+        if findings:
+            return CheckOutcome(
+                "protocol-compliance",
+                STATUS_FAIL,
+                f"Protocol/JSON-RPC 2.0 conformance violations found before the server became "
+                f"unreachable mid-probe: {exc}",
+                findings=findings,
+            )
         return CheckOutcome("protocol-compliance", STATUS_NOT_EVALUATED, f"Server became unreachable mid-probe: {exc}")
 
     if findings:
@@ -195,6 +206,25 @@ def _schema_is_object(schema: object) -> bool:
     return True
 
 
+def _tools_list_error(tools_resp: RpcResponse) -> str | None:
+    """Describe why a tools/list response is unusable, or None when it is a
+    well-formed result (including a well-formed *empty* tool list).
+
+    Lets callers tell a broken tools/list endpoint (a conformance FAIL) from a
+    server that simply declares no tools (not_evaluated), instead of collapsing
+    both to an empty list.
+    """
+    msg = tools_resp.message
+    if not isinstance(msg, dict):
+        return "tools/list did not return a JSON-RPC object"
+    if "error" in msg:
+        return f"tools/list returned a JSON-RPC error: {msg.get('error')!r}"
+    result = msg.get("result")
+    if not isinstance(result, dict) or not isinstance(result.get("tools"), list):
+        return "tools/list result has no well-formed 'tools' array"
+    return None
+
+
 def check_schema_conformance(client: MCPClient, tools_resp: RpcResponse) -> CheckOutcome:
     """Every tool declares a well-formed input schema, plus a well-formed output
     schema when one is present.
@@ -204,6 +234,16 @@ def check_schema_conformance(client: MCPClient, tools_resp: RpcResponse) -> Chec
     present (its absence is not a violation). Whether actual tool RESPONSES conform
     to the declared schema is behavioral and is left to Phase 3.
     """
+    err = _tools_list_error(tools_resp)
+    if err:
+        # A broken tools/list endpoint is a real conformance failure, not an absence
+        # of tools: fail rather than silently reporting not_evaluated.
+        return CheckOutcome(
+            "schema-conformance",
+            STATUS_FAIL,
+            err,
+            findings=[make_finding(severity="high", message=err, rule_id="tools-list-malformed")],
+        )
     tools = _tools_from(tools_resp)
     if not tools:
         return CheckOutcome("schema-conformance", STATUS_NOT_EVALUATED, "tools/list returned no tools to validate.")
@@ -364,17 +404,24 @@ def probe_all(server_url: str, *, timeout: float = 30.0) -> list[CheckOutcome]:
         try:
             init = client.initialize()
             client.send_initialized()
-            # Aggregate every tools/list page (follows nextCursor) so schema and
-            # annotation checks see tools beyond page one. Wrap the full set in a
-            # synthetic response so the per-check helpers keep one interface.
-            all_tools = client.list_all_tools()
-            tools_resp = RpcResponse(
-                status_code=200,
-                headers={},
-                content_type="application/json",
-                message={"jsonrpc": "2.0", "id": 2, "result": {"tools": all_tools}},
-                raw_text="",
-            )
+            # Fetch page one first so a broken tools/list endpoint is visible to the
+            # checks. If it is well-formed, aggregate every page (follows nextCursor)
+            # so schema/annotation checks see tools beyond page one, wrapped in a
+            # synthetic response so the per-check helpers keep one interface. If it is
+            # malformed/errored, pass the real response through so schema-conformance
+            # fails instead of a synthetic empty wrapper reading as not_evaluated.
+            first_page = client.list_tools()
+            if _tools_list_error(first_page) is None:
+                all_tools = client.list_all_tools()
+                tools_resp = RpcResponse(
+                    status_code=200,
+                    headers={},
+                    content_type="application/json",
+                    message={"jsonrpc": "2.0", "id": 2, "result": {"tools": all_tools}},
+                    raw_text="",
+                )
+            else:
+                tools_resp = first_page
         except MCPConnectionError as exc:
             reason = f"Server unreachable at {server_url}: {exc}"
             logger.warning(reason)

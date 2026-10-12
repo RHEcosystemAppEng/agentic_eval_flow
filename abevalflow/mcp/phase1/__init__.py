@@ -8,11 +8,14 @@ any deployment and without running the server (ADR Approach 4, Phase 1):
 - License compliance (LicenseGate)
 
 Each gate subclasses SecurityGate and reads a normalized ``{"findings": [...]}``
-scan JSON emitted by the corresponding scanner in ``scripts/mcp/``. Phase 1 is
-kept isolated from the skill pipeline's global security-gate registry
-(``abevalflow.gates.security``): these gates are instantiated only via this
-module's :func:`run_phase1`, so onboarding an MCP server does not pull skill
-scanners and vice versa.
+scan JSON emitted by the corresponding scanner in ``scripts/mcp/``. These gates
+are instantiated directly from :data:`PHASE1_GATES` via :func:`run_phase1` and
+never through the skill pipeline's global security-gate registry
+(``abevalflow.gates.security``'s ``_SECURITY_GATE_REGISTRY``), so a Phase 1 run
+never executes the skill scanners (CiscoGate, SkillMdScannerGate) and vice versa.
+(Note: importing ``abevalflow.gates.security`` still eagerly imports those skill
+gate classes - the isolation is that they are never *run* for an MCP server, not
+that their modules are never imported.)
 
 Phase 1 always executes, independent of runtime outcomes, so its checks resolve
 to pass/fail only (never the not-evaluated state used for Phase 2/3).

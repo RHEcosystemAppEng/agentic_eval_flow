@@ -4,8 +4,9 @@
 Runs semgrep with the bundled offline ruleset (rules/no_user_code.yml) over an
 MCP server repo and normalizes results into no-user-code-scan.json for
 NoUserCodeGate. The ruleset covers Python/JS/TS/Go/Java; a file in an uncovered
-language is not scanned, so the scan records a ``coverage`` block and warns when
-zero files were scanned (a zero-finding pass then means "nothing to scan", not
+language is not scanned, so the scan records a ``coverage`` block and, when zero
+files in a non-empty artifact were scanned, fails closed with a high-severity
+finding (a zero-finding result there means "nothing could be scanned", not
 "clean"). Keep the ruleset offline - do not use ``--config auto`` (network).
 
 Submissions must not be able to quietly suppress their own findings: inline
@@ -158,12 +159,28 @@ def main() -> int:
 
     findings += normalize(data.get("results", []))
     coverage = coverage_summary(args.target_dir, data.get("paths", {}).get("scanned", []))
-    write_scan(scan_path, SCANNER, args.target_dir, findings, extra={"coverage": coverage})
-    if coverage["files_scanned"] == 0:
+
+    if coverage["files_scanned"] == 0 and coverage["target_files_total"] > 0:
+        # Zero files scanned in a non-empty artifact means it is written in a language
+        # the ruleset does not cover, so a zero-finding result proves nothing. Fail
+        # closed: emit a HIGH finding so a blocking gate blocks (and warn mode warns)
+        # instead of granting a silent PASS that bypasses the no-user-code control.
         logger.warning(
             "no-user-code: semgrep scanned 0 files in a covered language (%d files in artifact); "
-            "this PASS does not show the server avoids user-code execution - add rules for its language",
+            "flagging - cannot verify the server avoids user-code execution",
             coverage["target_files_total"],
+        )
+        findings.append(
+            make_finding(
+                severity="high",
+                message=(
+                    f"semgrep scanned 0 files in a covered language (artifact has "
+                    f"{coverage['target_files_total']} files); the no-user-code ruleset covers "
+                    "Python/JS/TS/Go/Java only, so execution of user-provided code could not be "
+                    "verified. Add rules for the server's language."
+                ),
+                rule_id="no-user-code-uncovered-language",
+            )
         )
     else:
         logger.info(
@@ -173,6 +190,8 @@ def main() -> int:
             coverage["target_files_total"],
             ", ".join(coverage["languages"]),
         )
+
+    write_scan(scan_path, SCANNER, args.target_dir, findings, extra={"coverage": coverage})
     return 0
 
 

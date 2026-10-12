@@ -101,7 +101,10 @@ class Phase2Gate:
         except (json.JSONDecodeError, OSError) as exc:
             # A corrupt result file is a real pipeline defect, so log it loudly and
             # score 0.0 - but per the three-state model a "couldn't read" must not
-            # block outside block mode (mirrors the fail branch below).
+            # block outside block mode (mirrors the fail branch below). This is a
+            # deliberate Phase 2 choice (warn never blocks, even on a corrupt file;
+            # see test_corrupt_result_file_blocks_only_in_block_mode) and differs
+            # from Phase 1's security gates, which fail closed regardless of mode.
             logger.error("Failed to read %s: %s", path, exc)
             return self._result(
                 passed=mode != GateMode.BLOCK,
