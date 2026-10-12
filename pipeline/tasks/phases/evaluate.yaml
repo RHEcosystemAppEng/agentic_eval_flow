@@ -1759,24 +1759,11 @@ spec:
           export PATH="/tmp/bin:$PATH"
         fi
 
-        # Materialize the CI client certificate before registering the gateway.
-        # gateway add inspects this directory when selecting mTLS transport.
+        # Gateway profile shared by both auth modes; mode-specific credentials
+        # are staged inside their case branches below.
         export XDG_CONFIG_HOME="${HOME}/.config"
         GW_NAME="${OPENSHELL_GATEWAY_NAME:-ci-gateway}"
-        MTLS_SRC="/tmp/.config/openshell"
-        MTLS_DST="${XDG_CONFIG_HOME}/openshell/gateways/${GW_NAME}/mtls"
         mkdir -p "${XDG_CONFIG_HOME}/openshell"
-        if [ -f "$MTLS_SRC/tls.crt" ] && [ -f "$MTLS_SRC/tls.key" ]; then
-          mkdir -p "$MTLS_DST"
-          cp -f "$MTLS_SRC/ca.crt" "$MTLS_DST/" 2>/dev/null || true
-          cp -f "$MTLS_SRC/tls.crt" "$MTLS_DST/"
-          cp -f "$MTLS_SRC/tls.key" "$MTLS_DST/"
-          chmod 600 "$MTLS_DST"/* 2>/dev/null || true
-          echo "OpenShell mTLS material staged before gateway registration"
-        else
-          echo "ERROR: openshell-mtls client certificate is missing" >&2
-          exit 1
-        fi
 
         # The authentication path is selected by the explicit openshell-auth-mode
         # parameter, never by the endpoint's hostname shape. Native mTLS requires
@@ -1784,6 +1771,24 @@ spec:
         # this CLI drops client authentication.
         case "${OPENSHELL_AUTH_MODE:-mtls}" in
           mtls)
+            # Materialize the CI client certificate before registering the
+            # gateway: gateway add inspects this directory when selecting mTLS
+            # transport. Scoped to this branch on purpose — the client
+            # certificate is an mTLS-only requirement, and an OIDC-only
+            # deployment has no openshell-mtls Secret to stage here.
+            MTLS_SRC="/tmp/.config/openshell"
+            MTLS_DST="${XDG_CONFIG_HOME}/openshell/gateways/${GW_NAME}/mtls"
+            if [ -f "$MTLS_SRC/tls.crt" ] && [ -f "$MTLS_SRC/tls.key" ]; then
+              mkdir -p "$MTLS_DST"
+              cp -f "$MTLS_SRC/ca.crt" "$MTLS_DST/" 2>/dev/null || true
+              cp -f "$MTLS_SRC/tls.crt" "$MTLS_DST/"
+              cp -f "$MTLS_SRC/tls.key" "$MTLS_DST/"
+              chmod 600 "$MTLS_DST"/* 2>/dev/null || true
+              echo "OpenShell mTLS material staged before gateway registration"
+            else
+              echo "ERROR: openshell-mtls client certificate is missing" >&2
+              exit 1
+            fi
             unset OPENSHELL_GATEWAY_INSECURE
             CLI_GATEWAY_ENDPOINT="$OPENSHELL_GATEWAY_ENDPOINT"
             # Use the CLI's supported local/mTLS registration path. This lets
@@ -1844,8 +1849,11 @@ spec:
         esac
 
         # Secret mounts flat at $HOME/.config/openshell. OpenShell CLI expects
-        # gateways/<sandbox>/mtls/{ca.crt,tls.crt,tls.key}.
-        if [ -f "$MTLS_DST/tls.crt" ] && [ -f "$MTLS_DST/tls.key" ]; then
+        # gateways/<sandbox>/mtls/{ca.crt,tls.crt,tls.key}. MTLS_DST is set
+        # only by the mtls branch (and this step runs under set -u), and the
+        # oidc branch already logs its token-cache state, so this diagnostic
+        # block is mTLS-only.
+        if [ -n "${MTLS_DST:-}" ] && [ -f "$MTLS_DST/tls.crt" ] && [ -f "$MTLS_DST/tls.key" ]; then
           echo "OpenShell mTLS profile files:"
           find "$HOME/.config/openshell/gateways/$GW_NAME" -maxdepth 3 -type f -printf '%p %s bytes\n' 2>/dev/null || true
           openssl x509 -in "$MTLS_DST/tls.crt" -noout -subject -issuer -fingerprint -sha256 2>/dev/null || true

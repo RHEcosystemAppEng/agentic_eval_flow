@@ -173,6 +173,29 @@ class TestOpenshellPipelineProfile:
         assert '*".svc.cluster.local:"*' not in script
         assert '"https://host.containers.internal:"*' not in script
 
+    def test_mtls_staging_is_scoped_to_mtls_branch(self):
+        # The mTLS client certificate is an mTLS-only requirement: staging it
+        # and its required-file check must live inside the mtls branch, so an
+        # OIDC-only deployment (no openshell-mtls Secret) reaches the oidc
+        # branch without failing on it.
+        task = _load(REPO / "pipeline" / "tasks" / "phases" / "evaluate.yaml")
+        step = next(s for s in task["spec"]["steps"] if s["name"] == "aeh-openshell-eval")
+        script = step["script"]
+        case_head = 'case "${OPENSHELL_AUTH_MODE:-mtls}" in'
+        before_case = script.split(case_head, 1)[0]
+        mtls_branch = script.split(case_head, 1)[1].split("oidc)", 1)[0]
+        oidc_branch = script.split("oidc)", 1)[1].split("*)", 1)[0]
+        for token in ("MTLS_SRC", "MTLS_DST", "openshell-mtls client certificate is missing"):
+            assert token not in before_case, token
+            assert token in mtls_branch, token
+            assert token not in oidc_branch, token
+        # The oidc branch depends only on the OIDC Secret's own fields.
+        for token in ("OPENSHELL_OIDC_ISSUER", "OPENSHELL_OIDC_CLIENT_ID", "OPENSHELL_OIDC_CLIENT_SECRET"):
+            assert token in oidc_branch
+        # Post-case diagnostics run under set -u with MTLS_DST unset in oidc
+        # mode, so they must guard the variable instead of referencing it.
+        assert '[ -n "${MTLS_DST:-}" ]' in script
+
     def test_probe_targets_pipeline_gateway_contract(self):
         probe = _load(REPO / "pipeline" / "tasks" / "eval-stack-probe.yaml")
         pipeline_defaults = _param_defaults(_load(PIPELINE)["spec"])
@@ -189,6 +212,11 @@ class TestOpenshellPipelineProfile:
         assert "openssl s_client" in script
         assert "subjectAltName" in script
         assert "curl -sS" in script
+        # A failed TLS handshake or certificate validation must fail the TLS
+        # layer: openssl s_client is piped into openssl x509, so pipefail must
+        # propagate the client's failure status — without it, x509 parsing
+        # the still-emitted certificate would pass the check.
+        assert "set -uo pipefail" in script
         # TLS chain validation is enabled only when the CA Secret exists.
         ca = next(e for e in step["env"] if e["name"] == "GATEWAY_CA_CERT")
         ref = ca["valueFrom"]["secretKeyRef"]
