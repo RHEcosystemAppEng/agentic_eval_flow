@@ -376,7 +376,10 @@ judges:
               continue
             command = (tool.get("input") or {}).get("command")
             if (isinstance(command, str)
-                and command.strip() == "node tools/collect-brief-evidence.mjs"
+                and command.strip() in (
+                    "node tools/collect-brief-evidence.mjs",
+                    "cd ~ && node tools/collect-brief-evidence.mjs",
+                )
                 and tool.get("id")):
               pending.add(tool["id"])
         elif (ev.get("type") == "tool_result"

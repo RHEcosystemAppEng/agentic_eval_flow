@@ -62,6 +62,14 @@ def test_m365_scorer_uses_observed_count_below_collection_limit():
     assert _check(_record(message_count=2)) is True
 
 
+def test_m365_scorer_accepts_collector_from_home_directory():
+    record = _record()
+    record["events"][0]["tools"][0]["input"]["command"] = (
+        "cd ~ && node tools/collect-brief-evidence.mjs"
+    )
+    assert _check(record) is True
+
+
 def test_m365_scorer_account_matches_scene():
     judge = next(
         j for j in yaml.safe_load(EVAL.read_text())["judges"]
@@ -82,6 +90,12 @@ def test_m365_scorer_rejects_keyword_only_or_failed_collection():
 
     record = _record()
     record["events"][1]["tool_use_id"] = "different-call"
+    assert _check(record) is False
+
+    record = _record()
+    record["events"][0]["tools"][0]["input"]["command"] = (
+        "cd ~ && node tools/collect-brief-evidence.mjs seal"
+    )
     assert _check(record) is False
 
 
