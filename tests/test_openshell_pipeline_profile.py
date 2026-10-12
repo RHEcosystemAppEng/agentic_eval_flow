@@ -115,6 +115,34 @@ class TestOpenshellPipelineProfile:
         assert "--request-timeout=20s" in step["script"]
         assert step["image"].startswith("image-registry.openshift-image-registry.svc:5000/")
 
+    def test_explicit_auth_mode_selects_gateway_path(self):
+        # The default alias endpoint must select the mTLS path through an
+        # explicit parameter, never through endpoint hostname shape.
+        pipeline_defaults = _param_defaults(_load(PIPELINE)["spec"])
+        assert pipeline_defaults["openshell-auth-mode"] == "mtls"
+        assert pipeline_defaults["openshell-gateway-endpoint"] == "https://openshell:17670"
+        evaluate = next(t for t in _load(PIPELINE)["spec"]["tasks"] if t["name"] == "evaluate")
+        forwarded = {p["name"]: p["value"] for p in evaluate["params"]}
+        assert forwarded["openshell-auth-mode"] == "$(params.openshell-auth-mode)"
+
+        task = _load(REPO / "pipeline" / "tasks" / "phases" / "evaluate.yaml")
+        assert _param_defaults(task["spec"])["openshell-auth-mode"] == "mtls"
+        step = next(s for s in task["spec"]["steps"] if s["name"] == "aeh-openshell-eval")
+        env = next(e for e in step["env"] if e["name"] == "OPENSHELL_AUTH_MODE")
+        assert env["value"] == "$(params.openshell-auth-mode)"
+        script = step["script"]
+        case_head = 'case "${OPENSHELL_AUTH_MODE:-mtls}" in'
+        assert case_head in script
+        mtls_branch = script.split(case_head, 1)[1].split("oidc)", 1)[0]
+        assert "unset OPENSHELL_GATEWAY_INSECURE" in mtls_branch
+        assert "--local" in mtls_branch
+        oidc_branch = script.split("oidc)", 1)[1].split("*)", 1)[0]
+        assert "openshell-auth-mode=oidc requires" in oidc_branch
+        assert "OPENSHELL_OIDC_ISSUER" in oidc_branch
+        # The endpoint-shape sniffing that used to pick the path is gone.
+        assert '*".svc.cluster.local:"*' not in script
+        assert '"https://host.containers.internal:"*' not in script
+
     def test_evaluate_openshell_step_logs_mlflow(self):
         evaluate = (REPO / "pipeline" / "tasks" / "phases" / "evaluate.yaml").read_text()
         openshell = evaluate.split("name: aeh-openshell-eval", 1)[1].split("name: aeh-pairwise", 1)[0]

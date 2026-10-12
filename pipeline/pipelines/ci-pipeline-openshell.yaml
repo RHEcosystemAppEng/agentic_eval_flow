@@ -119,6 +119,13 @@ spec:
       type: string
       # Installed by config/forge-saw/openshell-eval-alias.yaml in the run namespace.
       default: "https://openshell:17670"
+    - name: openshell-auth-mode
+      type: string
+      # Explicit gateway authentication path. The default alias endpoint is
+      # certificate-valid for the name "openshell", so the default mode is
+      # mtls; choose oidc only when the gateway is registered for
+      # client-credentials OIDC instead of client certificates.
+      default: "mtls"
     - name: openshell-sandbox-image
       type: string
       default: "ghcr.io/rh-forge/openclaw-saw-agent@sha256:b47b92a6b3fd03327c1f2093a5c28aba0fdf3cb620e9154335688900191fe2b9"
@@ -292,6 +299,8 @@ spec:
           value: $(params.openshell-cli-version)
         - name: openshell-gateway-endpoint
           value: $(params.openshell-gateway-endpoint)
+        - name: openshell-auth-mode
+          value: $(params.openshell-auth-mode)
         - name: openshell-sandbox-image
           value: $(params.openshell-sandbox-image)
         - name: openshell-provider
