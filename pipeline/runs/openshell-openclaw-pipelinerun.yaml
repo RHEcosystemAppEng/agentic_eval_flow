@@ -70,6 +70,12 @@ spec:
   timeouts:
     pipeline: 3h0m0s
     tasks: 2h30m0s
+    # Stays above the cleanup finally task's internal budgets (bounded
+    # pod-log archive — 10s MinIO health check + per-pod log fetches —
+    # + 120s pod diagnostics + 300s PVC confirmation + API-retry
+    # headroom, ~10m worst case), so a stuck holder ends in the task's
+    # own conservative "failed" report rather than a Tekton timeout
+    # that writes no result.
     finally: 15m0s
   workspaces:
     - name: shared-workspace

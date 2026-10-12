@@ -10,21 +10,68 @@ spec:
     in the cleanup-status result (deleted / none / api-unavailable /
     failed), and a PVC that could not be deleted is labelled
     abevalflow.io/cleanup-failed=true so operators can find and alert on it.
+    Two things hold the workspace PVC past the DAG tasks: the run's retained
+    TaskRun pods, and the affinity-assistant StatefulSet Tekton runs for
+    volumeClaimTemplate workspaces (deleted only at PipelineRun completion,
+    which happens after this finally task ends). The task releases both
+    holders (DAG pods only, never finally pods), waits for the pod objects
+    to disappear, and confirms the PVCs are actually gone. Deleting the DAG
+    pods destroys their logs with them, so the task first archives each
+    pod's complete step logs to MinIO (under the run's report prefix,
+    debug/pod-logs/<run>/) — a byte-for-byte durability copy, not
+    reporting: no model call, no formatting. The archive is fail-safe:
+    if it does not complete, the pods are kept (their logs stay
+    readable on them) and the PVC is reported failed — logs are never
+    destroyed unarchived. scripts/fetch_run_logs.sh pulls the archived
+    directory to a local folder. Run reporting lives in MLflow/MinIO
+    and in scripts/pipelinerun-report.sh, which reads the TaskRun
+    objects that survive the release.
   params:
     - name: pipelinerun-name
       type: string
       description: Name of the PipelineRun whose PVCs should be cleaned up
+    - name: delete-retained-pods
+      type: string
+      default: "true"
+      description: >-
+        Release the run's completed TaskRun pods and its Affinity
+        Assistant so PVC deletion can complete: Tekton retains the pods
+        (holding the pvc-protection finalizer) and deletes the assistant
+        only at PipelineRun completion, after this task ends. Set to
+        "false" only if the pods' logs must outlive the run on the pods
+        themselves — no archive is taken (step statuses and results
+        live on the TaskRun objects either way) and the PVC will then
+        stay Terminating. With "true", each pod's logs are archived to
+        MinIO before it is deleted. Surfaced as a Pipeline parameter
+        so operators can set it without editing this Task manifest.
   results:
     - name: cleanup-status
       description: >-
-        deleted: all owned PVCs deleted; none: no owned PVCs found;
-        api-unavailable: the lookup could not reach the API, deletion
-        unverified; failed: one or more deletes failed (PVCs labelled
-        abevalflow.io/cleanup-failed=true).
+        deleted: all owned PVCs confirmed removed; none: no owned PVCs
+        found; api-unavailable: the lookup could not reach the API,
+        deletion unverified; failed: one or more PVCs were still present
+        after deletion (labelled abevalflow.io/cleanup-failed=true).
   steps:
     - name: delete-pvc
-      image: image-registry.openshift-image-registry.svc:5000/openshell/cli:latest
+      # The openshift/cli samples imagestream is pullable by any namespace's
+      # ServiceAccount. Do not use a private repo image here: pulls from a
+      # cold node fail with "authentication required" and skip the cleanup
+      # entirely (observed with the openshell/cli mirror, which only worked
+      # where the image was already node-cached).
+      image: image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
       onError: continue
+      # Endpoint only — the MinIO credentials never reach this task;
+      # the upload runs inside the MinIO pod, which already has them.
+      # Optional: in a stack without MinIO (no minio-credentials
+      # secret) the task releases the pods unarchived, as it did
+      # before archiving existed.
+      env:
+        - name: MINIO_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: minio-credentials
+              key: endpoint-url
+              optional: true
       script: |
         #!/usr/bin/env bash
         set -uo pipefail
@@ -60,23 +107,217 @@ spec:
           exit 0
         fi
 
-        failed=0
+        # Release everything that mounts the workspace PVC before deleting
+        # it, or the pvc-protection finalizer never clears and an accepted
+        # delete stalls in Terminating forever (the PV and quota stay
+        # allocated). Two holders exist:
+        #   1. The run's completed TaskRun pods, which Tekton retains after
+        #      completion. memberOf=tasks matches only DAG pods, never this
+        #      finally pod or any other finally task's pod, so the cleanup
+        #      cannot delete itself.
+        #   2. The run's Affinity Assistant: for volumeClaimTemplate
+        #      workspaces Tekton runs an affinity-assistant StatefulSet
+        #      whose nop pod mounts the run's workspace PVC purely to
+        #      co-schedule the DAG tasks. Tekton deletes it only at
+        #      PipelineRun completion — i.e. after this finally task ends —
+        #      so without releasing it here no confirmation window, however
+        #      long, can ever see the reclaim. It is run-scoped via
+        #      tekton.dev/pipelineRun, and Tekton does not recreate it once
+        #      deleted (both verified live).
+        if [ "$(params.delete-retained-pods)" = "true" ]; then
+          # Deleting these pods destroys their logs with them — the
+          # run's complete per-step record. Archive each DAG pod's
+          # logs to MinIO first: a byte-for-byte durability copy, not
+          # reporting (no model call, no formatting). The upload runs
+          # inside the MinIO deployment's own pod, which already has
+          # mc and the credentials (quay.io/minio/mc is not reliably
+          # pullable here, and no extra image belongs on the cleanup
+          # path), so this task never sees the credentials.
+          # scripts/fetch_run_logs.sh pulls the archived directory to
+          # a local folder. Fail-safe: if the archive does not
+          # complete, the pods are kept — their logs stay readable on
+          # them — and the PVC confirmation below reports failed;
+          # logs are never destroyed unarchived.
+          release_ok=1
+          if [ -z "${MINIO_ENDPOINT:-}" ]; then
+            echo "WARNING: no MinIO endpoint configured (minio-credentials secret); releasing the pods without archiving their logs"
+          elif ! curl -sf --max-time 10 "${MINIO_ENDPOINT}/minio/health/live" >/dev/null 2>&1; then
+            echo "WARNING: MinIO at ${MINIO_ENDPOINT} is not reachable; keeping the run's pods (their logs stay readable on them) - the PVC will stay Terminating"
+            release_ok=0
+          else
+            MINIO_POD="$(oc get pod -n "${NAMESPACE}" -l app=minio \
+              -o jsonpath='{.items[0].metadata.name}' --request-timeout=20s 2>/dev/null || true)"
+            if [ -z "$MINIO_POD" ]; then
+              echo "WARNING: could not find the MinIO pod; keeping the run's pods (their logs stay readable on them) - the PVC will stay Terminating"
+              release_ok=0
+            else
+              LOGDIR=/tmp/pod-logs
+              rm -rf "$LOGDIR"
+              mkdir -p "$LOGDIR"
+              echo "Archiving the run's step pod logs to MinIO before releasing the pods..."
+              archived=0
+              # One file per TaskRun pod, named by the taskRun label
+              # (retries create distinct TaskRuns, so no attempt's
+              # logs are overwritten). --all-containers captures
+              # every step of the task, with step headers.
+              while IFS=$'\t' read -r pod taskrun; do
+                [ -n "$pod" ] && [ -n "$taskrun" ] || continue
+                if oc logs -n "${NAMESPACE}" "${pod}" --all-containers --request-timeout=60s \
+                  > "${LOGDIR}/${taskrun}.log" 2>&1; then
+                  archived=$((archived + 1))
+                else
+                  echo "WARNING: could not fetch the logs of pod ${pod}"
+                fi
+              done < <(oc get pods -n "${NAMESPACE}" \
+                -l "tekton.dev/pipelineRun=$(params.pipelinerun-name),tekton.dev/memberOf=tasks" \
+                --request-timeout=20s \
+                -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.metadata.labels.tekton\.dev/taskRun}{"\n"}{end}' 2>/dev/null)
+              if [ "$archived" -eq 0 ]; then
+                echo "WARNING: no DAG pod logs could be fetched; keeping the run's pods - the PVC will stay Terminating"
+                release_ok=0
+              else
+                # Join the run's report prefix when the store task
+                # created one (everything of a run under one prefix;
+                # store names it <date>_<time>_<submission>_<run>),
+                # else fall back to a root-level pod-logs/ path.
+                REPORT_PREFIX="$(oc exec -n "${NAMESPACE}" "${MINIO_POD}" -- sh -c \
+                  'mc alias set local http://localhost:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null 2>&1 && mc ls local/ab-eval-reports/' 2>/dev/null \
+                  | grep -E "_$(params.pipelinerun-name)/$" | awk '{print $NF}' | tail -1 || true)"
+                DEST="local/ab-eval-reports/${REPORT_PREFIX}debug/pod-logs/$(params.pipelinerun-name)"
+                # Stream the logs into the MinIO pod, then upload
+                # from there. All path components are cluster-safe
+                # identifiers (DNS-1123 names), so no quoting hazards.
+                REMOTE_DIR="/tmp/runlogs-$(params.pipelinerun-name)"
+                if ! oc exec -n "${NAMESPACE}" "${MINIO_POD}" -- mkdir -p "${REMOTE_DIR}" >/dev/null 2>&1; then
+                  echo "WARNING: could not prepare ${REMOTE_DIR} in the MinIO pod; keeping the run's pods"
+                  release_ok=0
+                else
+                  for f in "${LOGDIR}"/*.log; do
+                    if ! oc exec -i -n "${NAMESPACE}" "${MINIO_POD}" -- sh -c "cat > ${REMOTE_DIR}/$(basename "$f")" < "$f"; then
+                      echo "WARNING: could not stream $(basename "$f") into the MinIO pod"
+                      release_ok=0
+                    fi
+                  done
+                  # mc cp publishes the streamed files; the listing is
+                  # verified in this pod (the MinIO image ships no
+                  # grep) — only a full set of landed files allows the
+                  # release below.
+                  upload_listing="$(oc exec -n "${NAMESPACE}" "${MINIO_POD}" -- sh -c "
+                    mc alias set local http://localhost:9000 \"\$MINIO_ROOT_USER\" \"\$MINIO_ROOT_PASSWORD\" >/dev/null 2>&1 || exit 1
+                    mc cp ${REMOTE_DIR}/*.log ${DEST}/ >/dev/null 2>&1 || exit 1
+                    mc ls ${DEST}/
+                    rm -rf ${REMOTE_DIR}
+                  " 2>/dev/null || true)"
+                  uploaded="$(echo "$upload_listing" | grep -c '\.log$' || true)"
+                  if [ "$uploaded" != "$archived" ]; then
+                    echo "WARNING: archived ${archived} pod logs but ${uploaded:-0} landed in ${DEST#local/}; keeping the run's pods"
+                    release_ok=0
+                  else
+                    echo "Archived ${archived} pod log(s) to ${DEST#local/}"
+                  fi
+                fi
+              fi
+            fi
+          fi
+          if [ "$release_ok" -ne 1 ]; then
+            echo "Skipping the pod release so no unarchived logs are destroyed; the PVC will stay Terminating and be reported failed"
+          else
+            echo "Deleting retained TaskRun pods of the run so PVC deletion can complete..."
+            if ! oc delete pod -n "${NAMESPACE}" \
+              -l "tekton.dev/pipelineRun=$(params.pipelinerun-name),tekton.dev/memberOf=tasks" \
+              --ignore-not-found=true --request-timeout=20s; then
+              echo "WARNING: could not delete retained TaskRun pods; PVCs may stay Terminating"
+            fi
+            # Release the Affinity Assistant before waiting on the pods: its
+            # nop pod also mounts the PVC, so the PVC cannot disappear while
+            # the StatefulSet exists no matter how fast the pods go.
+            if ! oc delete statefulset -n "${NAMESPACE}" \
+              -l "tekton.dev/pipelineRun=$(params.pipelinerun-name)" \
+              --ignore-not-found=true --request-timeout=20s; then
+              echo "WARNING: could not delete the run's affinity assistant; PVCs may stay Terminating until the run completes"
+            fi
+            # An accepted pod delete is not a removed pod object: a pod with
+            # a deletionTimestamp still mounts the PVC, and the pvc-protection
+            # finalizer clears only once the object is actually gone. Wait
+            # for that here so the PVC confirmation window below measures
+            # the PVC path rather than leftover pod teardown — this wait is
+            # what revealed the second holder behind runs 7-9. It is a
+            # diagnostic bound, not the completion gate (the PVC loop below
+            # is: a PVC cannot disappear while any pod still mounts it), so
+            # it stays short; with the 5m confirmation window and API-retry
+            # headroom, the task's worst case fits inside the 15m finally
+            # budget. A failed listing must not count as "gone" — keep
+            # waiting.
+            pod_deadline=$((SECONDS + 120))
+            while [ "$SECONDS" -lt "$pod_deadline" ]; do
+              if pods_left="$(oc get pods -n "${NAMESPACE}" \
+                -l "tekton.dev/pipelineRun=$(params.pipelinerun-name),tekton.dev/memberOf=tasks" \
+                --request-timeout=20s -o name 2>&1)"; then
+                if [ -z "$pods_left" ]; then
+                  echo "Retained TaskRun pods confirmed gone"
+                  break
+                fi
+                echo "Waiting for retained TaskRun pods to disappear ($((pod_deadline - SECONDS))s left): $(echo "$pods_left" | tr '\n' ' ')"
+              else
+                echo "WARNING: could not list the run's pods: $pods_left"
+              fi
+              sleep 15
+            done
+          fi
+        fi
+
         while read -r pvc; do
           if [ -n "$pvc" ]; then
             echo "Deleting PVC: $pvc"
             if ! oc delete pvc "$pvc" -n "${NAMESPACE}" --wait=false --request-timeout=20s; then
-              failed=1
               echo "WARNING: failed to delete PVC $pvc"
-              # Operator-visible marker on the leaked PVC: alert on the
-              # abevalflow.io/cleanup-failed label instead of a log line.
-              oc label pvc "$pvc" -n "${NAMESPACE}" \
-                abevalflow.io/cleanup-failed=true --overwrite --request-timeout=20s \
-                || echo "WARNING: could not label PVC $pvc (needs patch on persistentvolumeclaims)"
             fi
           fi
         done <<< "$pvcs"
 
-        if [ "$failed" -ne 0 ]; then
+        # An accepted delete is not a completed delete: confirm removal
+        # instead of trusting it, and make anything still present
+        # operator-visible. Reclaim is fast once the holders are released
+        # (~2-5s, measured with both the retained pods and the affinity
+        # assistant gone) — the multi-minute waits in runs 7-9 were the
+        # affinity assistant still holding the PVC, not slow reclamation,
+        # which is why lengthening the window never helped. Five minutes
+        # is a safety margin over the measured reclaim, not a guess at
+        # latency; if the cluster is slower still, "failed" is the
+        # conservative report: it never claims a deletion that was not
+        # confirmed.
+        remaining=""
+        deadline=$((SECONDS + 300))
+        while [ "$SECONDS" -lt "$deadline" ]; do
+          remaining=""
+          while read -r pvc; do
+            if [ -n "$pvc" ]; then
+              if get_err=$(oc get pvc "$pvc" -n "${NAMESPACE}" --request-timeout=20s 2>&1); then
+                # Still present.
+                remaining="${remaining}${pvc} "
+              elif ! echo "$get_err" | grep -q '(NotFound)'; then
+                # Cannot verify — treat as present rather than risk a
+                # false "deleted".
+                remaining="${remaining}${pvc} "
+              fi
+            fi
+          done <<< "$pvcs"
+          if [ -z "$remaining" ]; then
+            break
+          fi
+          echo "Waiting for PVC deletion to complete ($((deadline - SECONDS))s left): ${remaining}"
+          sleep 15
+        done
+
+        if [ -n "$remaining" ]; then
+          for pvc in $remaining; do
+            echo "WARNING: PVC $pvc is still present after deletion"
+            # Operator-visible marker on the leaked PVC: alert on the
+            # abevalflow.io/cleanup-failed label instead of a log line.
+            oc label pvc "$pvc" -n "${NAMESPACE}" \
+              abevalflow.io/cleanup-failed=true --overwrite --request-timeout=20s \
+              || echo "WARNING: could not label PVC $pvc (needs patch on persistentvolumeclaims)"
+          done
           echo "failed" > "$RESULT_PATH"
           echo "WARNING: PVC cleanup failed for this run; labelled PVCs remain for an operator"
           exit 0
