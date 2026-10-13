@@ -9,6 +9,7 @@
 #
 # Pipeline stages:
 #   parse-snapshot → fetch-mcp-repo → create-namespace → deploy-mcp → wait-ready
+#     → mcp-behavioral-eval (Phase 3)
 #   finally: teardown-namespace
 #
 # PREREQUISITES:
@@ -18,7 +19,11 @@
 #      bound to the ServiceAccount referenced in the kubeconfig
 #   3. (Optional) Credentials Secret on the target cluster if the MCP
 #      server requires backend auth — see CREDENTIALS_SECRET param
-#   4. VPN connectivity between Konflux cluster and target cluster
+#   4. Secrets "mcp-eval-llm-agent" and "mcp-eval-llm-judge" in the
+#      default namespace on the TARGET cluster, each containing api-key
+#      and endpoint for the respective LLM model (Phase 3 behavioral
+#      evaluation).
+#   5. VPN connectivity between Konflux cluster and target cluster
 apiVersion: tekton.dev/v1
 kind: PipelineRun
 metadata:
@@ -82,6 +87,35 @@ spec:
         description: >-
           Name of the image pull Secret in the Konflux namespace to copy
           into the ephemeral namespace for registry authentication.
+
+      # === Phase 3: Behavioral evaluation ===
+      - name: JOB_TIMEOUT
+        type: string
+        default: "1800"
+        description: Timeout in seconds for the mcpchecker Job
+      - name: PASS_THRESHOLD
+        type: string
+        default: "0.7"
+        description: Minimum overall score (0.0–1.0) for a pass recommendation
+      - name: LLM_AGENT_SECRET
+        type: string
+        default: "mcp-eval-llm-agent"
+        description: >-
+          Name of the Secret on the target cluster (in the default
+          namespace) containing the agent LLM api-key, endpoint, and model.
+      - name: LLM_JUDGE_SECRET
+        type: string
+        default: "mcp-eval-llm-judge"
+        description: >-
+          Name of the Secret on the target cluster (in the default
+          namespace) containing the judge LLM model name. Credentials
+          come from the agent secret.
+      - name: MCP_EVAL_IMAGE
+        type: string
+        default: "quay.io/ecosystem-appeng/abevalflow-mcp-eval:0.1"
+        description: >-
+          MCP eval image with mcpchecker binary, task suite files, and
+          aggregation scripts baked in.
 
     workspaces:
       - name: shared-workspace
@@ -217,6 +251,45 @@ spec:
           - name: readiness-timeout
             value: $(params.READINESS_TIMEOUT)
         workspaces:
+          - name: target-kubeconfig
+            workspace: target-kubeconfig
+
+      # ================================================================
+      # Stage 6: Phase 3 — Behavioral evaluation (mcpchecker)
+      # ================================================================
+      - name: mcp-behavioral-eval
+        runAfter: [wait-ready]
+        taskRef:
+          resolver: bundles
+          params:
+            - name: name
+              value: mcp-behavioral-eval
+            - name: bundle
+              value: quay.io/ecosystem-appeng/abevalflow-task-mcp-behavioral-eval:0.1
+            - name: kind
+              value: task
+        params:
+          - name: namespace-name
+            value: $(tasks.create-namespace.results.namespace-name)
+          - name: service-name
+            value: $(params.SERVICE_NAME)
+          - name: service-port
+            value: $(params.SERVICE_PORT)
+          - name: job-timeout
+            value: $(params.JOB_TIMEOUT)
+          - name: pass-threshold
+            value: $(params.PASS_THRESHOLD)
+          - name: llm-agent-secret
+            value: $(params.LLM_AGENT_SECRET)
+          - name: llm-judge-secret
+            value: $(params.LLM_JUDGE_SECRET)
+          - name: mcp-eval-image
+            value: $(params.MCP_EVAL_IMAGE)
+          - name: pipeline-run-id
+            value: $(context.pipelineRun.name)
+        workspaces:
+          - name: source
+            workspace: shared-workspace
           - name: target-kubeconfig
             workspace: target-kubeconfig
 

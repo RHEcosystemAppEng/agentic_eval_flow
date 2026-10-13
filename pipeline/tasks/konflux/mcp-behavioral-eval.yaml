@@ -1,0 +1,299 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: mcp-behavioral-eval
+  labels:
+    app.kubernetes.io/name: abevalflow
+    app.kubernetes.io/component: konflux
+spec:
+  description: >-
+    Phase 3 — Behavioral evaluation of an MCP server using mcpchecker.
+    Runs mcpchecker as a Kubernetes Job on the target cluster so it
+    can reach the deployed MCP service directly. The generic default
+    task suite tests tool correctness, edge-case handling, and
+    sensitive data redaction — applicable to any MCP server.
+    Suite files and aggregation code are baked into the mcp-eval image.
+  params:
+    - name: namespace-name
+      type: string
+      description: Ephemeral namespace where the MCP server is deployed
+    - name: service-name
+      type: string
+      default: "mcp-server"
+      description: Kubernetes Service name of the deployed MCP server
+    - name: service-port
+      type: string
+      default: "8080"
+      description: Port on which the MCP server listens
+    - name: job-timeout
+      type: string
+      default: "1800"
+      description: Timeout in seconds for the mcpchecker Job
+    - name: pass-threshold
+      type: string
+      default: "0.7"
+      description: >-
+        Minimum overall score (0.0–1.0) for a pass recommendation.
+        Default 0.7 per ADR specification.
+    - name: llm-agent-secret
+      type: string
+      default: "mcp-eval-llm-agent"
+      description: >-
+        Name of the Secret on the target cluster (in the default namespace)
+        containing LLM credentials. Keys: openai-api-key, openai-base-url,
+        anthropic-api-key, anthropic-base-url (fill only the active
+        provider), and model-name (e.g. "openai:gpt-4o"). Copied into
+        the ephemeral namespace.
+    - name: llm-judge-secret
+      type: string
+      default: "mcp-eval-llm-judge"
+      description: >-
+        Name of the Secret on the target cluster (in the default namespace)
+        containing the judge LLM model name. Only the model key is used;
+        credentials come from the agent secret (mcpchecker shares provider
+        env vars between agent and judge).
+    - name: mcp-eval-image
+      type: string
+      default: "quay.io/ecosystem-appeng/abevalflow-mcp-eval:0.1"
+      description: >-
+        MCP eval image with mcpchecker binary, task suite files, and
+        aggregation scripts baked in.
+    - name: pipeline-run-id
+      type: string
+      description: Pipeline run ID for provenance tracking
+  workspaces:
+    - name: source
+      description: Shared workspace for storing results
+    - name: target-kubeconfig
+      description: >-
+        Kubeconfig for the target cluster. Must contain a file named
+        "kubeconfig".
+  results:
+    - name: phase3-passed
+      description: Whether Phase 3 behavioral evaluation passed (true/false/error).
+    - name: report-path
+      description: Workspace-relative path to the Phase 3 reports directory.
+  steps:
+    # ── Step 1: Copy LLM secrets to ephemeral namespace ──
+    - name: setup
+      image: registry.redhat.io/openshift4/ose-cli:latest
+      env:
+        - name: KUBECONFIG
+          value: $(workspaces.target-kubeconfig.path)/kubeconfig
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        NAMESPACE="$(params.namespace-name)"
+
+        for SECRET_NAME in "$(params.llm-agent-secret)" "$(params.llm-judge-secret)"; do
+          if [ -n "$SECRET_NAME" ]; then
+            oc get secret "$SECRET_NAME" -n default -o yaml \
+              | sed '/^\s*namespace:/d; /^\s*uid:/d; /^\s*resourceVersion:/d; /^\s*creationTimestamp:/d' \
+              | oc apply -n "$NAMESPACE" -f - || {
+                echo "WARNING: Could not copy secret '$SECRET_NAME'"
+              }
+          fi
+        done
+
+    # ── Step 2: Create and run mcpchecker Job on target cluster ──
+    - name: run-mcpchecker-job
+      image: registry.redhat.io/openshift4/ose-cli:latest
+      env:
+        - name: KUBECONFIG
+          value: $(workspaces.target-kubeconfig.path)/kubeconfig
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        NAMESPACE="$(params.namespace-name)"
+        JOB_NAME="mcpchecker-eval"
+        IMAGE="$(params.mcp-eval-image)"
+        AGENT_SECRET="$(params.llm-agent-secret)"
+        JUDGE_SECRET="$(params.llm-judge-secret)"
+        MCP_URL="http://$(params.service-name):$(params.service-port)"
+
+        # Secrets have all provider keys; only the active provider's values
+        # are non-empty. mcpchecker ignores empty env vars.
+        ENV_VARS=""
+        if [ -n "$AGENT_SECRET" ]; then
+          ENV_VARS="${ENV_VARS}
+                - name: OPENAI_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: ${AGENT_SECRET}
+                      key: openai-api-key
+                - name: OPENAI_BASE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: ${AGENT_SECRET}
+                      key: openai-base-url
+                - name: ANTHROPIC_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: ${AGENT_SECRET}
+                      key: anthropic-api-key
+                - name: ANTHROPIC_BASE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: ${AGENT_SECRET}
+                      key: anthropic-base-url
+                - name: AGENT_LLM_MODEL
+                  valueFrom:
+                    secretKeyRef:
+                      name: ${AGENT_SECRET}
+                      key: model-name"
+        fi
+        if [ -n "$JUDGE_SECRET" ]; then
+          ENV_VARS="${ENV_VARS}
+                - name: JUDGE_LLM_MODEL
+                  valueFrom:
+                    secretKeyRef:
+                      name: ${JUDGE_SECRET}
+                      key: model-name"
+        fi
+
+        cat <<JOBEOF | oc apply -f - --namespace="$NAMESPACE"
+        apiVersion: batch/v1
+        kind: Job
+        metadata:
+          name: $JOB_NAME
+          namespace: $NAMESPACE
+        spec:
+          backoffLimit: 0
+          activeDeadlineSeconds: $(params.job-timeout)
+          template:
+            spec:
+              restartPolicy: Never
+              containers:
+                - name: mcpchecker
+                  image: $IMAGE
+                  command: ["/bin/bash", "-c"]
+                  args:
+                    - |
+                      set -euo pipefail
+
+                      mkdir -p /workspace/tasks
+                      envsubst < /opt/suites/mcp/default/eval.yaml > /workspace/eval.yaml
+                      cp /opt/suites/mcp/default/tasks/*.yaml /workspace/tasks/
+                      envsubst < /opt/suites/mcp/default/mcp-config.yaml > /workspace/mcp-config.yaml
+
+                      cd /workspace
+                      mcpchecker check eval.yaml \
+                        --mcp-config-file mcp-config.yaml \
+                        -o json || echo "mcpchecker exited with code \$?"
+                  workingDir: /workspace
+                  env:
+                    - name: HOME
+                      value: /tmp
+                    - name: MCP_URL
+                      value: "$MCP_URL"
+        $ENV_VARS
+        JOBEOF
+
+        # Wait for Job completion
+        TIMEOUT=$(params.job-timeout)
+        DEADLINE=$((SECONDS + TIMEOUT))
+
+        while true; do
+          STATUS=$(oc get job "$JOB_NAME" -n "$NAMESPACE" \
+            -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}' 2>/dev/null || true)
+          FAILED=$(oc get job "$JOB_NAME" -n "$NAMESPACE" \
+            -o jsonpath='{.status.conditions[?(@.type=="Failed")].status}' 2>/dev/null || true)
+
+          if [ "$STATUS" = "True" ]; then
+            echo "Job completed"
+            break
+          fi
+          if [ "$FAILED" = "True" ]; then
+            echo "WARNING: Job failed, collecting logs"
+            break
+          fi
+          if [ $SECONDS -ge $DEADLINE ]; then
+            echo "ERROR: Job timed out after ${TIMEOUT}s"
+            break
+          fi
+          sleep 10
+        done
+
+        # Collect Job output
+        RESULTS_DIR="$(workspaces.source.path)/eval-results/behavioral"
+        mkdir -p "$RESULTS_DIR"
+
+        POD_NAME=$(oc get pods -n "$NAMESPACE" -l job-name="$JOB_NAME" \
+          -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+
+        if [ -n "$POD_NAME" ]; then
+          oc logs "$POD_NAME" -n "$NAMESPACE" > "$RESULTS_DIR/mcpchecker-raw.txt" 2>&1 || {
+            echo '{"error": "Failed to collect mcpchecker logs", "results": []}' \
+              > "$RESULTS_DIR/mcpchecker-raw.txt"
+          }
+
+          RAW="$RESULTS_DIR/mcpchecker-raw.txt"
+          OUTPUT="$RESULTS_DIR/mcpchecker-output.json"
+          if grep -n '^{' "$RAW" > /dev/null 2>&1; then
+            START_LINE=$(grep -n '^{' "$RAW" | head -1 | cut -d: -f1)
+            tail -n +$START_LINE "$RAW" > "$OUTPUT"
+          else
+            echo '{"error": "No JSON in mcpchecker output", "results": []}' > "$OUTPUT"
+          fi
+
+          if ! python3 -c "import json; json.load(open('$OUTPUT'))" 2>/dev/null; then
+            echo '{"error": "Invalid JSON from mcpchecker", "results": []}' > "$OUTPUT"
+          fi
+        else
+          echo '{"error": "Job pod not found", "results": []}' \
+            > "$RESULTS_DIR/mcpchecker-output.json"
+        fi
+
+    # ── Step 3: Aggregate results and write Tekton results ──
+    - name: aggregate-results
+      image: $(params.mcp-eval-image)
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        RESULTS_DIR="$(workspaces.source.path)/eval-results/behavioral"
+        REPORTS_DIR="$(workspaces.source.path)/reports/behavioral"
+        OUTPUT_FILE="$RESULTS_DIR/mcpchecker-output.json"
+        REPORT_REL="reports/behavioral"
+
+        if [ ! -f "$OUTPUT_FILE" ]; then
+          echo -n "error" > "$(results.phase3-passed.path)"
+          echo -n "$REPORT_REL" > "$(results.report-path.path)"
+          exit 0
+        fi
+
+        HAS_ERROR=$(python3 -c "
+        import json
+        d = json.load(open('$OUTPUT_FILE'))
+        print('yes' if d.get('error') and not d.get('results') and not d.get('taskResults') else 'no')
+        " 2>/dev/null || echo "yes")
+
+        if [ "$HAS_ERROR" = "yes" ]; then
+          echo -n "error" > "$(results.phase3-passed.path)"
+          echo -n "$REPORT_REL" > "$(results.report-path.path)"
+          exit 0
+        fi
+
+        mkdir -p "$REPORTS_DIR"
+
+        python3 /opt/scripts/aggregate_mcpchecker.py \
+          --output-json "$OUTPUT_FILE" \
+          --submission-name "mcp-behavioral-eval" \
+          --report-dir "$REPORTS_DIR" \
+          --pipeline-run-id "$(params.pipeline-run-id)" \
+          > /tmp/aggregate_output.json 2>/tmp/aggregate_stderr.log || {
+            echo '{"overall_score": 0, "passed_tasks": 0, "total_tasks": 0, "recommendation": "error"}' \
+              > /tmp/aggregate_output.json
+          }
+
+        RECOMMENDATION=$(python3 -c "import json; d=json.load(open('/tmp/aggregate_output.json')); print(d.get('recommendation', 'fail'))")
+
+        if [ "$RECOMMENDATION" = "pass" ]; then
+          echo -n "true" > "$(results.phase3-passed.path)"
+        else
+          echo -n "false" > "$(results.phase3-passed.path)"
+        fi
+        echo -n "$REPORT_REL" > "$(results.report-path.path)"
+        echo "Phase 3 result: $RECOMMENDATION"
