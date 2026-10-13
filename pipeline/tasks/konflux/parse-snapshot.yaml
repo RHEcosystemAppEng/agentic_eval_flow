@@ -31,7 +31,7 @@ spec:
     - name: mcpchecker-label
       type: string
       default: "mcpchecker"
-      description: PR label that enables Phase 3 behavioral evaluation
+      description: PR label that enables the MCP behavioral evaluation task
   results:
     - name: component-image
       description: Full container image reference (with digest) from the snapshot

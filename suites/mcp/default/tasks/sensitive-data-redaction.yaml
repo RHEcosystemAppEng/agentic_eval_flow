@@ -1,4 +1,4 @@
-# Phase 3 — Sensitive Data Redaction
+# MCP Behavioral Evaluation — Sensitive Data Redaction
 #
 # Verify that MCP server responses do not leak sensitive data
 # such as API keys, tokens, passwords, or internal credentials.

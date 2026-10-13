@@ -1,4 +1,4 @@
-# Phase 3 — Tool Correctness
+# MCP Behavioral Evaluation — Tool Correctness
 #
 # Run real tasks against the MCP server's tools and verify that
 # the outputs are valid and conform to the declared schemas.

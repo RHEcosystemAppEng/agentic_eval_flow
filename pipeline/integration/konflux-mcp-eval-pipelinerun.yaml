@@ -9,7 +9,7 @@
 #
 # Pipeline stages:
 #   parse-snapshot → fetch-mcp-repo → create-namespace → deploy-mcp → wait-ready
-#     → mcp-behavioral-eval (Phase 3)
+#     → mcp-behavioral-eval
 #   finally: teardown-namespace
 #
 # PREREQUISITES:
@@ -21,7 +21,7 @@
 #      server requires backend auth — see CREDENTIALS_SECRET param
 #   4. Secrets "mcp-eval-llm-agent" and "mcp-eval-llm-judge" in the
 #      default namespace on the TARGET cluster, each containing api-key
-#      and endpoint for the respective LLM model (Phase 3 behavioral
+#      and endpoint for the respective LLM model (behavioral
 #      evaluation).
 #   5. VPN connectivity between Konflux cluster and target cluster
 apiVersion: tekton.dev/v1
@@ -88,7 +88,7 @@ spec:
           Name of the image pull Secret in the Konflux namespace to copy
           into the ephemeral namespace for registry authentication.
 
-      # === Phase 3: Behavioral evaluation ===
+      # === MCP Behavioral evaluation ===
       - name: JOB_TIMEOUT
         type: string
         default: "1800"
@@ -121,7 +121,7 @@ spec:
         default: ""
         description: >-
           Newline-separated PR labels injected by Pipelines as Code
-          via {{ pull_request_labels }}. Used to gate Phase 3.
+          via {{ pull_request_labels }}. Used to gate the MCP behavioral evaluation task.
 
     workspaces:
       - name: shared-workspace
@@ -263,7 +263,7 @@ spec:
             workspace: target-kubeconfig
 
       # ================================================================
-      # Stage 6: Phase 3 — Behavioral evaluation (mcpchecker)
+      # Stage 6: MCP Behavioral evaluation (mcpchecker)
       # ================================================================
       - name: mcp-behavioral-eval
         runAfter: [wait-ready]

@@ -1,4 +1,4 @@
-# Phase 3 — Edge-Case Handling
+# MCP Behavioral Evaluation — Edge-Case Handling
 #
 # Send malformed and boundary inputs to the MCP server's tools
 # and verify that the server handles them gracefully (returns an

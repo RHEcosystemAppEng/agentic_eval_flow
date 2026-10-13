@@ -7,7 +7,7 @@ metadata:
     app.kubernetes.io/component: konflux
 spec:
   description: >-
-    Phase 3 — Behavioral evaluation of an MCP server using mcpchecker.
+    Behavioral evaluation of an MCP server using mcpchecker.
     Runs mcpchecker as a Kubernetes Job on the target cluster so it
     can reach the deployed MCP service directly. The generic default
     task suite tests tool correctness, edge-case handling, and
@@ -69,10 +69,10 @@ spec:
         Kubeconfig for the target cluster. Must contain a file named
         "kubeconfig".
   results:
-    - name: phase3-passed
-      description: Whether Phase 3 behavioral evaluation passed (true/false/error).
+    - name: eval-passed
+      description: Whether MCP behavioral evaluation passed (true/false/error).
     - name: report-path
-      description: Workspace-relative path to the Phase 3 reports directory.
+      description: Workspace-relative path to the MCP behavioral evaluation reports directory.
   steps:
     # ── Step 1: Copy LLM secrets to ephemeral namespace ──
     - name: setup
@@ -259,7 +259,7 @@ spec:
         REPORT_REL="reports/behavioral"
 
         if [ ! -f "$OUTPUT_FILE" ]; then
-          echo -n "error" > "$(results.phase3-passed.path)"
+          echo -n "error" > "$(results.eval-passed.path)"
           echo -n "$REPORT_REL" > "$(results.report-path.path)"
           exit 0
         fi
@@ -271,7 +271,7 @@ spec:
         " 2>/dev/null || echo "yes")
 
         if [ "$HAS_ERROR" = "yes" ]; then
-          echo -n "error" > "$(results.phase3-passed.path)"
+          echo -n "error" > "$(results.eval-passed.path)"
           echo -n "$REPORT_REL" > "$(results.report-path.path)"
           exit 0
         fi
@@ -291,9 +291,9 @@ spec:
         RECOMMENDATION=$(python3 -c "import json; d=json.load(open('/tmp/aggregate_output.json')); print(d.get('recommendation', 'fail'))")
 
         if [ "$RECOMMENDATION" = "pass" ]; then
-          echo -n "true" > "$(results.phase3-passed.path)"
+          echo -n "true" > "$(results.eval-passed.path)"
         else
-          echo -n "false" > "$(results.phase3-passed.path)"
+          echo -n "false" > "$(results.eval-passed.path)"
         fi
         echo -n "$REPORT_REL" > "$(results.report-path.path)"
-        echo "Phase 3 result: $RECOMMENDATION"
+        echo "MCP behavioral evaluation result: $RECOMMENDATION"
