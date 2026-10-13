@@ -99,7 +99,7 @@ spec:
         mkdir -p "$REPORTS_DIR"
 
         echo "=== Phase 2 live probe against $SERVER_URL ==="
-        python -m scripts.mcp.run_phase2_probe \
+        python -m scripts.mcp.probes.phase2_conformance_probe \
           --server-url "$SERVER_URL" \
           --reports-dir "$REPORTS_DIR" \
           --timeout "$TIMEOUT" \
@@ -108,18 +108,18 @@ spec:
         # Compass-consumed checks: live mode (API) takes precedence over file mode.
         if [ -n "$COMPASS_URL" ] && [ -n "$COMPASS_ENTITY_REF" ]; then
           echo "=== Phase 2 Compass consume (live) for $COMPASS_ENTITY_REF ==="
-          python -m scripts.mcp.run_compass_fetch \
+          python -m scripts.mcp.probes.phase2_compass_probe \
             --compass-url "$COMPASS_URL" \
             --entity-ref "$COMPASS_ENTITY_REF" \
             --reports-dir "$REPORTS_DIR"
         elif [ -n "$COMPASS_FACTS_FILE" ]; then
           echo "=== Phase 2 Compass consume (file) from $COMPASS_FACTS_FILE ==="
-          python -m scripts.mcp.run_compass_fetch \
+          python -m scripts.mcp.probes.phase2_compass_probe \
             --facts-file "$(workspaces.source.path)/$COMPASS_FACTS_FILE" \
             --reports-dir "$REPORTS_DIR"
         else
           echo "No Compass source given; consumed checks will report not_evaluated."
-          python -m scripts.mcp.run_compass_fetch \
+          python -m scripts.mcp.probes.phase2_compass_probe \
             --reports-dir "$REPORTS_DIR"
         fi
 
@@ -137,8 +137,8 @@ spec:
 
         # Shared gate wrapper (baked in the image): runs the gate module, emits the
         # Tekton results from the summary, and propagates the gate's exit code.
-        bash /opt/scripts/mcp/run_gate.sh \
-          scripts.mcp.run_phase2_gates \
+        bash /opt/scripts/mcp/gate_wrapper.sh \
+          scripts.mcp.runners.phase2_gate \
           "$REPORTS_DIR" \
           "$MODE" \
           "$REPORTS_DIR/phase2-summary.json" \

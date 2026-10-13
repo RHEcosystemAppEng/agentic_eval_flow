@@ -7,11 +7,11 @@
 # the two tasks stay consistent when this behavior changes.
 #
 # Usage:
-#   run_gate.sh <gate-module> <reports-dir> <mode> <summary-json> \
+#   gate_wrapper.sh <gate-module> <reports-dir> <mode> <summary-json> \
 #               <passed-result-path> <report-rel> <report-path-result>
 set -uo pipefail
 
-GATE_MODULE="$1"        # e.g. scripts.mcp.run_phase1_gates
+GATE_MODULE="$1"        # e.g. scripts.mcp.runners.phase1_gate
 REPORTS_DIR="$2"        # absolute reports dir for this submission/phase
 MODE="$3"               # block | warn | disabled
 SUMMARY="$4"            # phaseN-summary.json written by the gate module

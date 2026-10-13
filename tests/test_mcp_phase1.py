@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from abevalflow.mcp.phase1 import (
+from abevalflow.mcp.gates import (
     DEFAULT_ALLOWED_LICENSES,
     LicenseGate,
     NoUserCodeGate,
@@ -26,9 +26,9 @@ from abevalflow.mcp.phase1 import (
     run_phase1,
 )
 from abevalflow.schemas import GateMode, GatePolicy
-from scripts.mcp import run_license_scan as license_scan
-from scripts.mcp import run_no_user_code_scan as no_user_code_scan
-from scripts.mcp import run_secrets_scan as secrets_scan
+from scripts.mcp.scanners import phase1_license_scan as license_scan
+from scripts.mcp.scanners import phase1_no_user_code_scan as no_user_code_scan
+from scripts.mcp.scanners import phase1_secrets_scan as secrets_scan
 
 BLOCK = GatePolicy(default_mode=GateMode.BLOCK)
 

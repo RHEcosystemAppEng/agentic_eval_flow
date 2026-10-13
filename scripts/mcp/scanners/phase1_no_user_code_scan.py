@@ -15,7 +15,7 @@ still honors a committed ``.semgrepignore``, so its mere presence is flagged as 
 high-severity finding - which fails a blocking gate - rather than being trusted.
 
 Usage:
-    python -m scripts.mcp.run_no_user_code_scan <target_dir> --reports-dir <dir>
+    python -m scripts.mcp.scanners.phase1_no_user_code_scan <target_dir> --reports-dir <dir>
 """
 
 from __future__ import annotations
@@ -26,8 +26,8 @@ import logging
 import sys
 from pathlib import Path
 
-from abevalflow.mcp.types import make_finding
-from scripts.mcp._common import run_tool, write_scan
+from abevalflow.mcp.helpers import make_finding
+from scripts.mcp.scanners.helpers import run_tool, write_scan
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 SCAN_FILENAME = "no-user-code-scan.json"
 SCANNER = "semgrep"
 # Offline multi-language ruleset (Python/JS/TS/Go/Java). See module docstring.
-RULES_PATH = Path(__file__).parent / "rules" / "no_user_code.yml"
+RULES_PATH = Path(__file__).parent.parent / "rules" / "no_user_code.yml"
 
 # semgrep severity -> our severity.
 _SEVERITY_MAP = {"ERROR": "high", "WARNING": "medium", "INFO": "low"}

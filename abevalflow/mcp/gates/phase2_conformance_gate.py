@@ -5,7 +5,7 @@ Unlike the Phase 1 security gates (one class per gate, reusing
 differ only by name and by a three-state status, so a single data-driven gate is
 used instead of a subclass per check.
 
-Each check result file (written by scripts/mcp/run_phase2_probe.py or run_compass_fetch.py)
+Each check result file (written by scripts/mcp/probes/phase2_conformance_probe.py or phase2_compass_probe.py)
 has the shape::
 
     {"check": ..., "status": "pass"|"fail"|"not_evaluated", "source": ...,

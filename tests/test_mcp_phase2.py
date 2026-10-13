@@ -14,14 +14,14 @@ import os
 import pytest
 
 from abevalflow.gates.base import GateMode
-from abevalflow.mcp.client import RpcResponse, _parse_sse_messages, _select_response
-from abevalflow.mcp.phase2 import PHASE2_CHECKS, run_phase2
-from abevalflow.mcp.phase2 import checks as phase2_probe
-from abevalflow.mcp.phase2.gate import Phase2Gate
-from abevalflow.mcp.types import STATUS_FAIL, STATUS_NOT_EVALUATED, STATUS_PASS, CheckOutcome, write_check_result
+from abevalflow.mcp.checks import phase2_conformance_checks as phase2_probe
+from abevalflow.mcp.gates import PHASE2_CHECKS, Phase2Gate, run_phase2
+from abevalflow.mcp.helpers import write_check_result
+from abevalflow.mcp.mcp_client import RpcResponse, _parse_sse_messages, _select_response
+from abevalflow.mcp.types import STATUS_FAIL, STATUS_NOT_EVALUATED, STATUS_PASS, CheckOutcome
 from abevalflow.schemas import GatePolicy
-from scripts.mcp import run_compass_fetch as compass_fetch
-from scripts.mcp import run_phase2_gates
+from scripts.mcp.probes import phase2_compass_probe as compass_fetch
+from scripts.mcp.runners import phase2_gate as run_phase2_gates
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -100,7 +100,7 @@ def test_select_response_matches_string_id_against_int_request():
 
 
 def test_list_all_tools_follows_pagination():
-    from abevalflow.mcp.client import MCPClient
+    from abevalflow.mcp.mcp_client import MCPClient
 
     pages = {
         None: {"tools": [{"name": "a"}], "nextCursor": "c1"},
@@ -118,7 +118,7 @@ def test_list_all_tools_follows_pagination():
 
 
 def test_list_all_tools_breaks_on_repeating_cursor():
-    from abevalflow.mcp.client import MCPClient
+    from abevalflow.mcp.mcp_client import MCPClient
 
     client = MCPClient.__new__(MCPClient)
 
@@ -185,7 +185,7 @@ def test_protocol_compliance_disconnect_keeps_collected_findings():
     # A mid-probe disconnect must not erase conformance violations already found: a
     # bad init (findings collected) plus a client that drops the next request must
     # FAIL with those findings, not downgrade to not_evaluated.
-    from abevalflow.mcp.client import MCPConnectionError
+    from abevalflow.mcp.mcp_client import MCPConnectionError
 
     class DroppingClient:
         def post(self, *_a, **_kw):
@@ -239,7 +239,7 @@ class _OpenApiClient:
         self._routes = routes
 
     def get(self, url, *, extra_headers=None):
-        from abevalflow.mcp.client import MCPConnectionError
+        from abevalflow.mcp.mcp_client import MCPConnectionError
 
         if url not in self._routes:
             raise MCPConnectionError(f"no route for {url}")
@@ -474,7 +474,7 @@ def test_map_facts_oauth_explicit_false_fails_only_for_false():
 
 
 def test_map_results_pass_and_fail():
-    from abevalflow.mcp.phase2.compass import map_results
+    from abevalflow.mcp.checks.phase2_compass_checks import map_results
 
     results = [
         {"checkId": "mcp-tool-schema-check", "state": "passed", "details": {"notes": {"data": "All names valid"}}},
@@ -487,7 +487,7 @@ def test_map_results_pass_and_fail():
 
 
 def test_map_results_missing_check_is_not_evaluated():
-    from abevalflow.mcp.phase2.compass import map_results
+    from abevalflow.mcp.checks.phase2_compass_checks import map_results
 
     # Empty results — entity not registered yet
     by_check = {o.check: o for o in map_results([])}
@@ -496,7 +496,7 @@ def test_map_results_missing_check_is_not_evaluated():
 
 
 def test_map_results_error_state_is_not_evaluated():
-    from abevalflow.mcp.phase2.compass import map_results
+    from abevalflow.mcp.checks.phase2_compass_checks import map_results
 
     results = [
         {"checkId": "mcp-tool-schema-check", "state": "ERROR", "details": {}},

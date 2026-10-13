@@ -7,7 +7,7 @@ allow-list. Emits license-scan.json for LicenseGate. Transitive/dependency
 license scanning is out of scope (ADR Phase 1).
 
 Usage:
-    python -m scripts.mcp.run_license_scan <target_dir> --reports-dir <dir> \
+    python -m scripts.mcp.scanners.phase1_license_scan <target_dir> --reports-dir <dir> \
         [--allow apache-2.0 --allow mit ...]
 """
 
@@ -19,9 +19,9 @@ import logging
 import sys
 from pathlib import Path
 
-from abevalflow.mcp.phase1.license_gate import DEFAULT_ALLOWED_LICENSES
-from abevalflow.mcp.types import make_finding
-from scripts.mcp._common import run_tool, write_scan
+from abevalflow.mcp.gates.phase1_license_gate import DEFAULT_ALLOWED_LICENSES
+from abevalflow.mcp.helpers import make_finding
+from scripts.mcp.scanners.helpers import run_tool, write_scan
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)

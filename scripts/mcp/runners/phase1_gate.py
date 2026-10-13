@@ -11,7 +11,7 @@ Reporting stub: the three-state Evaluation-results-database writer is added by t
 pipeline layer later; Phase 1 checks are pass/fail only.
 
 Usage:
-    python -m scripts.mcp.run_phase1_gates --reports-dir <dir> [--mode block|warn]
+    python -m scripts.mcp.runners.phase1_gate --reports-dir <dir> [--mode block|warn]
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ import logging
 import sys
 from pathlib import Path
 
-from abevalflow.mcp.phase1 import run_phase1
+from abevalflow.mcp.gates import run_phase1
 from abevalflow.schemas import GateMode, GatePolicy
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")

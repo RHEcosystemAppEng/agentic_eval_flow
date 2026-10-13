@@ -14,7 +14,7 @@ to the Evaluation-results database is still handled by the pipeline layer later;
 this writes local JSON only.
 
 Usage:
-    python -m scripts.mcp.run_phase2_gates --reports-dir <dir> [--mode block|warn]
+    python -m scripts.mcp.runners.phase2_gate --reports-dir <dir> [--mode block|warn]
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ import logging
 import sys
 from pathlib import Path
 
-from abevalflow.mcp.phase2 import run_phase2
+from abevalflow.mcp.gates import run_phase2
 from abevalflow.schemas import GateMode, GatePolicy
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")

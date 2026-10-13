@@ -5,7 +5,7 @@
 # to keep false positives low and to run fully offline (no --config p/registry
 # network fetch). Extend per language as needed.
 #
-# Severity ERROR -> mapped to HIGH by scripts/mcp/run_no_user_code_scan.py.
+# Severity ERROR -> mapped to HIGH by scripts/mcp/scanners/phase1_no_user_code_scan.py.
 rules:
   # ---- Python -------------------------------------------------------------
   - id: python-dynamic-exec

@@ -75,10 +75,10 @@ spec:
         done
 
         echo "=== Phase 1 scanners on $SOURCE_DIR ==="
-        python -m scripts.mcp.run_secrets_scan "$SOURCE_DIR" --reports-dir "$REPORTS_DIR"
-        python -m scripts.mcp.run_no_user_code_scan "$SOURCE_DIR" --reports-dir "$REPORTS_DIR"
+        python -m scripts.mcp.scanners.phase1_secrets_scan "$SOURCE_DIR" --reports-dir "$REPORTS_DIR"
+        python -m scripts.mcp.scanners.phase1_no_user_code_scan "$SOURCE_DIR" --reports-dir "$REPORTS_DIR"
         # shellcheck disable=SC2086
-        python -m scripts.mcp.run_license_scan "$SOURCE_DIR" --reports-dir "$REPORTS_DIR" $LICENSE_ARGS
+        python -m scripts.mcp.scanners.phase1_license_scan "$SOURCE_DIR" --reports-dir "$REPORTS_DIR" $LICENSE_ARGS
 
     - name: gate
       image: $(params.mcp-eval-image)
@@ -94,8 +94,8 @@ spec:
 
         # Shared gate wrapper (baked in the image): runs the gate module, emits the
         # Tekton results from the summary, and propagates the gate's exit code.
-        bash /opt/scripts/mcp/run_gate.sh \
-          scripts.mcp.run_phase1_gates \
+        bash /opt/scripts/mcp/gate_wrapper.sh \
+          scripts.mcp.runners.phase1_gate \
           "$REPORTS_DIR" \
           "$MODE" \
           "$REPORTS_DIR/phase1-summary.json" \

@@ -6,7 +6,7 @@ a ``CheckOutcome`` carrying a three-state result (pass / fail / not_evaluated).
 
 These are pure evaluation logic: the client handles I/O, and the checks analyze
 responses and return verdicts. The CLI entry point that creates the client and
-writes results to disk lives in ``scripts/mcp/run_phase2_probe.py``.
+writes results to disk lives in ``scripts/mcp/probes/phase2_conformance_probe.py``.
 """
 
 from __future__ import annotations
@@ -15,13 +15,13 @@ import json
 import logging
 from urllib.parse import urlsplit, urlunsplit
 
-from abevalflow.mcp.client import MCPClient, MCPConnectionError, RpcResponse
+from abevalflow.mcp.helpers import make_finding
+from abevalflow.mcp.mcp_client import MCPClient, MCPConnectionError, RpcResponse
 from abevalflow.mcp.types import (
     STATUS_FAIL,
     STATUS_NOT_EVALUATED,
     STATUS_PASS,
     CheckOutcome,
-    make_finding,
 )
 
 logger = logging.getLogger(__name__)

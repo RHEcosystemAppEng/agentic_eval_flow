@@ -5,15 +5,15 @@ Connects to a running MCP server over Streamable HTTP and runs the deterministic
 (no-LLM) contract/conformance checks, writing one three-state result file per
 check for the Phase 2 gates to read.
 
-Check logic lives in ``abevalflow.mcp.phase2.checks``; this module is the thin
+Check logic lives in ``abevalflow.mcp.checks.phase2_conformance_checks``; this module is the thin
 CLI wrapper that creates the client, invokes the checks, and writes results.
 
 Checks that Compass already collects as real automated facts (tool-name rules,
 OAuth match) are NOT probed here — they are consumed via
-``scripts/mcp/run_compass_fetch.py`` instead.
+``scripts/mcp/probes/phase2_compass_probe.py`` instead.
 
 Usage:
-    python -m scripts.mcp.run_phase2_probe --server-url http://<service>:8080/mcp \
+    python -m scripts.mcp.probes.phase2_conformance_probe --server-url http://<service>:8080/mcp \
         --reports-dir <dir> [--timeout 30] [--openapi-url URL]
 """
 
@@ -25,8 +25,8 @@ import sys
 import time
 from pathlib import Path
 
-from abevalflow.mcp.phase2.checks import probe_all
-from abevalflow.mcp.types import write_check_result
+from abevalflow.mcp.checks.phase2_conformance_checks import probe_all
+from abevalflow.mcp.helpers import write_check_result
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)

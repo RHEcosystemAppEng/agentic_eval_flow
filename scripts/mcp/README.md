@@ -2,47 +2,127 @@
 
 Thin CLI entry points for the MCP-server evaluation pipeline. These are the
 **public API of the eval container image**: each is invoked by a Tekton task
-step as `python -m scripts.mcp.<name>`. They shell out to external tools,
-create an MCP client, read files, and write result JSON. All substantial
-evaluation logic lives in `abevalflow.mcp`.
+step as `python -m scripts.mcp.<subpackage>.<name>`. They shell out to external
+tools, invoke evaluation logic from `abevalflow.mcp`, and write result JSON.
+
+## Structure (organized by role, phase-prefixed)
+
+| Directory | Role | What it does |
+|-----------|------|-------------|
+| `scanners/` | **Scan** source code | Shell out to external tools (gitleaks, semgrep, licensee) and write normalized scan JSON. Phase 1 only — no running server needed. |
+| `runners/` | **Run** gate evaluations | Thin CLIs that invoke the gate logic from `abevalflow.mcp.gates` and write summary JSON. Both phases. |
+| `probes/` | **Probe** the live server | Connect to the running MCP server (or Compass API) and write per-check result JSON. Phase 2 only — server must be running. |
+| `rules/` | **Bundled rulesets** | Offline semgrep rules for the no-user-code scan. Not a runner — consumed by the scanner. |
+
+### `scanners/` — Phase 1 scanner runners
+
+| File | What it does | Emits |
+|------|-------------|-------|
+| `phase1_secrets_scan.py` | Shells out to gitleaks | `secrets-scan.json` |
+| `phase1_no_user_code_scan.py` | Shells out to semgrep (bundled offline ruleset) | `no-user-code-scan.json` |
+| `phase1_license_scan.py` | Shells out to licensee (top-level license only) | `license-scan.json` |
+| `helpers.py` | `run_tool()` + `write_scan()` — scanner I/O helpers | — |
+
+### `runners/` — gate evaluation runners
+
+| File | What it does | Emits |
+|------|-------------|-------|
+| `phase1_gate.py` | Calls `abevalflow.mcp.gates.run_phase1()` | `phase1-summary.json` |
+| `phase2_gate.py` | Calls `abevalflow.mcp.gates.run_phase2()` | `phase2-summary.json` |
+
+### `gate_wrapper.sh` — shared Tekton gate wrapper
+
+Lives at `scripts/mcp/gate_wrapper.sh` (flat, following repo convention for
+utility scripts). Both Tekton gate steps call it to run the gate module, emit
+Tekton results (`passed` flag + report path), and propagate the exit code.
+
+### `probes/` — Phase 2 probe runners
+
+| File | What it does | Emits |
+|------|-------------|-------|
+| `phase2_conformance_probe.py` | Creates MCPClient, calls `probe_all()` | per-check `<name>-check.json` |
+| `phase2_compass_probe.py` | Fetches Compass results (live API or file mode) | per-check `<name>-check.json` |
+
+### `rules/` — bundled offline rulesets
+
+| File | Used by |
+|------|---------|
+| `no_user_code.yml` | semgrep (Phase 1 no-user-code scan) |
 
 ## Two-package split
 
 | Package | Role | Contains |
 |---------|------|----------|
-| `abevalflow/mcp/` | **What** to decide | Gates, checks, types, client, Compass mapping — no I/O to external tools |
-| `scripts/mcp/` (here) | **How** to collect data | CLI entry points that shell out to tools, invoke the logic, write results |
+| `abevalflow/mcp/` | **What** to decide | Gates, checks, types, client, Compass mapping — reads JSON, decides pass/fail |
+| `scripts/mcp/` (here) | **How** to collect data | CLI entry points that run tools, write results — the public API of the eval image |
 
-The contract between them: **JSON files on disk.** Scanners/probe write them.
-Gates read them.
+The contract between them: **JSON files on disk.** Writers produce them, readers consume them.
 
-## Entry points
+## Running locally
 
-| Module | Phase | What it does | Emits |
-|--------|-------|-------------|-------|
-| `run_secrets_scan.py`       | 1 | Shells out to gitleaks | `secrets-scan.json` |
-| `run_no_user_code_scan.py`  | 1 | Shells out to semgrep (bundled offline ruleset) | `no-user-code-scan.json` |
-| `run_license_scan.py`       | 1 | Shells out to licensee (top-level license only) | `license-scan.json` |
-| `run_phase1_gates.py`       | 1 | Calls `abevalflow.mcp.phase1.run_phase1()` | `phase1-summary.json` + gate exit code |
-| `run_phase2_probe.py`       | 2 | Creates MCPClient, calls `probe_all()` | per-check `<name>-check.json` files |
-| `run_compass_fetch.py`      | 2 | Reads Compass facts file, calls `map_facts()` | per-check `<name>-check.json` files |
-| `run_phase2_gates.py`       | 2 | Calls `abevalflow.mcp.phase2.run_phase2()` | `phase2-summary.json` + gate exit code |
+`run_mcp_eval.sh` is the local dev/testing runner. It mirrors what the two
+Tekton Tasks do, so a local run exercises the same code paths as a cluster run.
 
-`run_gate.sh` is the shared bash gate wrapper baked into the eval image.
+```bash
+# Both phases — scan source + probe running server:
+bash scripts/mcp/run_mcp_eval.sh \
+    --repo /path/to/mcp-server-source \
+    --server-url http://localhost:8080/mcp
 
-## Helpers
+# Phase 1 only (no server needed):
+bash scripts/mcp/run_mcp_eval.sh --repo /path/to/mcp-server-source
 
-| Module | What it provides |
-|--------|-----------------|
-| `_common.py` | `run_tool()` (subprocess runner), `write_scan()` (scan JSON writer) — scanner I/O only |
+# Phase 2 only (server must be running):
+bash scripts/mcp/run_mcp_eval.sh --server-url http://localhost:8080/mcp
 
-## Naming convention
+# With explicit gate mode and license allow-list:
+bash scripts/mcp/run_mcp_eval.sh \
+    --repo /path/to/mcp-server-source \
+    --server-url http://localhost:8080/mcp \
+    --mode warn --allow "apache-2.0 mit"
+```
 
-- `run_` prefix = Tekton-invoked entry point (`python -m scripts.mcp.<name>`)
-- `_` prefix = imported helper, never run directly
+## Tested against
+
+The pipeline has been verified against two MCP servers:
+
+**generic-mock-mcp-server** — a configurable mock that serves static responses
+via Streamable HTTP. Good for fast local testing.
+```bash
+git clone https://github.com/generic-mock-mcp-server /tmp/generic-mock-mcp-server
+cd /tmp/generic-mock-mcp-server && uv venv && uv pip install -r requirements.txt
+uv run python src/server.py --schema tests/schema.json --transport streamable-http --port 8080
+
+# In another terminal:
+bash scripts/mcp/run_mcp_eval.sh \
+    --repo /tmp/generic-mock-mcp-server \
+    --server-url http://localhost:8080/mcp
+```
+
+**openshift-mcp-server** — a real Go-based MCP server (Kubernetes tools,
+Streamable HTTP). Tests against a real server with 14+ tools and pagination.
+```bash
+# Pre-built binary (or build from source):
+/tmp/omcp --config /tmp/omcp.toml  # port 8081
+
+bash scripts/mcp/run_mcp_eval.sh \
+    --repo /tmp/openshift-mcp-server \
+    --server-url http://localhost:8081/mcp
+```
+
+## On a cluster (Tekton)
+
+Two Tekton Tasks run inside the eval container image
+(`quay.io/ecosystem-appeng/abevalflow-mcp-eval:0.1`):
+
+- `mcp-phase1-static` — scanners + phase 1 gate
+- `mcp-phase2-conformance` — probe + compass + phase 2 gate
+
+Task YAMLs: `pipeline/tasks/konflux/mcp-phase1-static.yaml` and
+`mcp-phase2-conformance.yaml`.
 
 ## Future repo split
 
-If Tekton task YAMLs move to a separate repo, this package stays in the image
-repo (baked into the eval container). The new repo calls these entry points via
-`python -m` — no Python imports cross the repo boundary.
+If Tekton task YAMLs move to a separate repo, the Python code stays here (baked
+into the eval container image). The new repo has only YAML — it calls these
+entry points via `python -m`. Zero code changes on either side.

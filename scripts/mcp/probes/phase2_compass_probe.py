@@ -12,15 +12,15 @@ Two modes:
 If both are given, live mode takes precedence. If neither is given the consumed
 checks report not_evaluated.
 
-Mapping logic lives in ``abevalflow.mcp.phase2.compass``; this module is the
+Mapping logic lives in ``abevalflow.mcp.checks.phase2_compass_checks``; this module is the
 thin CLI wrapper that handles I/O (file reads, HTTP calls) and writes results.
 
 Usage (file mode):
-    python -m scripts.mcp.run_compass_fetch \\
+    python -m scripts.mcp.probes.phase2_compass_probe \\
         --facts-file facts.json --reports-dir <dir>
 
 Usage (live mode):
-    python -m scripts.mcp.run_compass_fetch \\
+    python -m scripts.mcp.probes.phase2_compass_probe \\
         --compass-url https://compass.stage.redhat.com/api/soundcheck \\
         --entity-ref mcpserver:redhat/my-server \\
         --reports-dir <dir>
@@ -42,13 +42,13 @@ from urllib.parse import quote
 
 import httpx
 
-from abevalflow.mcp.phase2.compass import (
+from abevalflow.mcp.checks.phase2_compass_checks import (
     CHECK_OAUTH,
     CHECK_TOOL_NAME,
     map_facts,
     map_results,
 )
-from abevalflow.mcp.types import write_check_result
+from abevalflow.mcp.helpers import write_check_result
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)

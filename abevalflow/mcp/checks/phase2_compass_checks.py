@@ -26,19 +26,19 @@ Two consumption modes:
   results from ``GET /api/soundcheck/results``.
 
 The CLI entry point that reads facts from a file or fetches live results from
-the SoundCheck API lives in ``scripts/mcp/run_compass_fetch.py``.
+the SoundCheck API lives in ``scripts/mcp/probes/phase2_compass_probe.py``.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+from abevalflow.mcp.helpers import make_finding
 from abevalflow.mcp.types import (
     STATUS_FAIL,
     STATUS_NOT_EVALUATED,
     STATUS_PASS,
     CheckOutcome,
-    make_finding,
 )
 
 FACT_TOOLS = "mcp:default/tools"
