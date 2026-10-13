@@ -9,6 +9,10 @@ Usage:
     # Single run
     python run_aeh.py single --runner harbor --config eval.yaml --output /path/to/output
 
+    # Single run with concurrent case shards (openshell runner)
+    python run_aeh.py single --runner openshell --config eval.yaml \
+        --output /path/to/output --concurrency 2
+
     # Pairwise run
     python run_aeh.py pairwise --runner harbor \
         --control-config eval-control.yaml \
@@ -34,6 +38,11 @@ from typing import Any
 import yaml
 
 from abevalflow.harbor_extensions import OPENSHIFT_ENVIRONMENT_IMPORT_PATH
+
+try:  # repo root on sys.path (tests, pipeline PYTHONPATH)
+    from scripts import aeh_sharding
+except ImportError:  # running as a script from scripts/
+    import aeh_sharding  # type: ignore[no-redef]
 
 
 class RunnerError(Exception):
@@ -760,6 +769,7 @@ class OpenShellRunner(BaseRunner):
         config: Path,
         output: Path,
         run_id: str | None = None,
+        concurrency: int = 1,
         **opts: Any,
     ) -> int:
         if not self.model:
@@ -806,12 +816,102 @@ class OpenShellRunner(BaseRunner):
         print(f"  OPENSHELL_GATEWAY_ENDPOINT={env.get('OPENSHELL_GATEWAY_ENDPOINT')}")
         print(f"  AGENT_EVAL_OPENSHELL_IMAGE={env.get('AGENT_EVAL_OPENSHELL_IMAGE')}")
         try:
-            result = subprocess.run(cmd, env=env)
+            if concurrency <= 1:
+                result = subprocess.run(cmd, env=env)
+                rc = result.returncode
+            else:
+                rc = self._run_sharded(patched, rid, actual, env, concurrency)
         finally:
             if patched != config:
                 patched.unlink(missing_ok=True)
         _sync_output_dir(output, actual)
-        return result.returncode
+        return rc
+
+    def _run_sharded(
+        self,
+        patched: Path,
+        rid: str,
+        actual: Path,
+        env: dict[str, str],
+        concurrency: int,
+    ) -> int:
+        """Run cases as concurrent harness shards, then merge into ``actual``.
+
+        Each shard is a full ``agent_eval.openshell.run`` subprocess over a
+        config whose dataset holds only that shard's cases, run as
+        ``<rid>-s<i>`` under the same reports leaf. All shards must succeed
+        and produce summary.yaml before the merge — a partial merge must
+        never look like a complete green run.
+        """
+        cases_root = aeh_sharding.dataset_root(patched)
+        cases = aeh_sharding.list_case_dirs(cases_root) if cases_root else []
+        if len(cases) <= 1:
+            print(f"aeh-concurrency={concurrency} requested but {len(cases)} case(s) found; running sequentially")
+            return subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "agent_eval.openshell.run",
+                    "--config",
+                    str(patched),
+                    "--model",
+                    self.model,
+                    "--run-id",
+                    rid,
+                ],
+                env=env,
+            ).returncode
+
+        n_shards = min(concurrency, len(cases))
+        shards = aeh_sharding.shard_cases(cases, n_shards)
+        print(f"=== Sharding {len(cases)} case(s) across {n_shards} concurrent harness run(s)")
+        for i, shard in enumerate(shards):
+            print(f"  shard {i}: {[c.name for c in shard]}")
+
+        tag = str(os.getpid())
+        shard_configs, shard_root = aeh_sharding.write_shard_configs(patched, shards, tag=tag)
+        procs: list[subprocess.Popen] = []
+        try:
+            for i, shard_config in enumerate(shard_configs):
+                shard_cmd = [
+                    sys.executable,
+                    "-m",
+                    "agent_eval.openshell.run",
+                    "--config",
+                    str(shard_config),
+                    "--model",
+                    self.model,
+                    "--run-id",
+                    f"{rid}-s{i}",
+                ]
+                print(f"Running shard {i}: {' '.join(shard_cmd)}")
+                procs.append(subprocess.Popen(shard_cmd, env=env))
+            rcs = [proc.wait() for proc in procs]
+        finally:
+            aeh_sharding.cleanup_shard_files(shard_configs, shard_root)
+
+        shard_dirs = [actual.parent / f"{rid}-s{i}" for i in range(len(shards))]
+        failures = [(i, rc) for i, rc in enumerate(rcs) if rc != 0]
+        missing = [str(d) for d in shard_dirs if not (d / "summary.yaml").is_file()]
+        if failures or missing:
+            print(
+                "ERROR: shard run incomplete — "
+                f"failures={failures} missing_summary={missing}; "
+                "shard run dirs kept for debugging, results NOT merged",
+                file=sys.stderr,
+            )
+            return next((rc for _, rc in failures), 1)
+
+        try:
+            summary = aeh_sharding.merge_run_dirs(shard_dirs, actual, run_id=rid)
+        except aeh_sharding.ShardMergeError as exc:
+            print(f"ERROR: merging shard runs failed: {exc}", file=sys.stderr)
+            return 1
+        merged_cases = len(summary.get("per_case") or {})
+        print(f"Merged {len(shards)} shard run(s): {merged_cases} case(s), mean_reward={summary.get('mean_reward')}")
+        for shard_dir in shard_dirs:
+            shutil.rmtree(shard_dir, ignore_errors=True)
+        return 0
 
 
 # Registry of available runners
@@ -872,6 +972,16 @@ def main() -> int:
     single.add_argument("--config", required=True, help="Path to eval.yaml")
     single.add_argument("--output", required=True, help="Output directory")
     single.add_argument("--run-id", help="Run identifier")
+    single.add_argument(
+        "--concurrency",
+        type=int,
+        default=1,
+        help=(
+            "Max concurrent case shards (openshell runner, single mode only). "
+            "1 = sequential, unchanged. Shards are merged into one run dir; "
+            "any shard failure fails the run without merging."
+        ),
+    )
     single.add_argument("--tasks-dir", help="Tasks directory (harbor mode)")
     single.add_argument("--jobs-dir", help="Jobs directory (harbor mode)")
 
@@ -902,6 +1012,7 @@ def main() -> int:
                 config=Path(args.config),
                 output=Path(args.output),
                 run_id=args.run_id,
+                concurrency=getattr(args, "concurrency", 1),
                 tasks_dir=Path(args.tasks_dir) if args.tasks_dir else None,
                 jobs_dir=Path(args.jobs_dir) if args.jobs_dir else None,
             )

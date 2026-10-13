@@ -293,6 +293,23 @@ class TestOpenshellPipelineProfile:
                 for subject in obj["subjects"]:
                     assert "namespace" not in subject
 
+    def test_aeh_concurrency_threaded_with_sequential_task_default(self):
+        # The openshell profile runs the openclaw-forge cases as concurrent
+        # shards (2 cases → 2 parallel harness runs, merged into one run dir);
+        # the task-level default stays 1 so every other embedding stays
+        # sequential.
+        defaults = _param_defaults(_load(PIPELINE)["spec"])
+        assert defaults["aeh-concurrency"] == "2"
+        evaluate = next(t for t in _load(PIPELINE)["spec"]["tasks"] if t["name"] == "evaluate")
+        forwarded = {p["name"]: p["value"] for p in evaluate["params"]}
+        assert forwarded["aeh-concurrency"] == "$(params.aeh-concurrency)"
+
+        task = _load(REPO / "pipeline" / "tasks" / "phases" / "evaluate.yaml")
+        assert _param_defaults(task["spec"])["aeh-concurrency"] == "1"
+        step = next(s for s in task["spec"]["steps"] if s["name"] == "aeh-openshell-eval")
+        script = step["script"]
+        assert '--concurrency "$(params.aeh-concurrency)"' in script
+
     def test_explicit_auth_mode_selects_gateway_path(self):
         # The default alias endpoint must select the mTLS path through an
         # explicit parameter, never through endpoint hostname shape.

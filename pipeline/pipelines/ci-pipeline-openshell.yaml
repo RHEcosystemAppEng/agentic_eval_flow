@@ -77,6 +77,13 @@ spec:
     - name: aeh-model-override
       type: string
       default: "inference/rits/zai-org/GLM-5-3-Flash"
+    - name: aeh-concurrency
+      type: string
+      default: "2"
+      description: >-
+        Max concurrent OpenShell AEH case shards. The openclaw-forge
+        submission carries 2 cases; 2 runs them in parallel and merges the
+        shard results into one run dir.
     - name: aeh-judge-model-override
       type: string
       # Judges call /v1/messages (Anthropic dialect); see the judge-glm-5-3
@@ -289,6 +296,8 @@ spec:
           value: $(params.llm-api-key)
         - name: aeh-model-override
           value: $(params.aeh-model-override)
+        - name: aeh-concurrency
+          value: $(params.aeh-concurrency)
         - name: aeh-judge-model-override
           value: $(params.aeh-judge-model-override)
         - name: aeh-mode

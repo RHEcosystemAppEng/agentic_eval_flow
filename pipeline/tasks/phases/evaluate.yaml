@@ -132,6 +132,15 @@ spec:
       type: string
       default: ""
       description: Override models.judge from eval.yaml
+    - name: aeh-concurrency
+      type: string
+      default: "1"
+      description: >-
+        Max concurrent case shards for OpenShell AEH single runs. 1 runs all
+        cases sequentially in one harness process (unchanged). N>1 splits the
+        dataset into N shards run as parallel harness subprocesses whose run
+        dirs are merged into one; any shard failure fails the run without
+        merging. Capped at the number of cases.
     - name: aeh-mode
       type: string
       default: "single"
@@ -2113,6 +2122,7 @@ spec:
           --config "$SUBMISSION_DIR/eval.yaml" \
           --output "$OUT_DIR" \
           --run-id "$RUN_ID" \
+          --concurrency "$(params.aeh-concurrency)" \
           ${MODEL:+--model "$MODEL"} \
           ${JUDGE_OVERRIDE:+--judge-model "$JUDGE_OVERRIDE"}
         AEH_EXIT=$?

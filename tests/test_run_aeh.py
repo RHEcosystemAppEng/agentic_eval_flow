@@ -555,3 +555,140 @@ class TestRunnerExtensibility:
         finally:
             # Cleanup
             del RUNNERS["custom"]
+
+
+class TestOpenShellRunnerSharding:
+    """OpenShellRunner concurrency: shard fan-out, merge, and fail-safety."""
+
+    def _setup(self, tmp_path: Path, n_cases: int, monkeypatch) -> tuple[Path, Path]:
+        monkeypatch.setenv("AGENT_EVAL_OPENSHELL_IMAGE", "sandbox-img:latest")
+        monkeypatch.setenv("OPENSHELL_GATEWAY_ENDPOINT", "https://openshell:17670")
+        monkeypatch.setenv("AGENT_EVAL_RUNS_DIR", str(tmp_path / "reports"))
+        submission = tmp_path / "submission"
+        submission.mkdir()
+        cases = submission / "cases"
+        for i in range(n_cases):
+            case = cases / f"case-{i:03d}"
+            case.mkdir(parents=True)
+            (case / "input.yaml").write_text("prompt: hi\n")
+        config = submission / "eval.yaml"
+        config.write_text(yaml.safe_dump({"name": "forge-eval-rubrics", "dataset": {"path": "cases"}}, sort_keys=False))
+        output = tmp_path / "reports" / "forge-eval-rubrics" / "rid"
+        return config, output
+
+    def test_default_concurrency_runs_sequentially(self, tmp_path: Path, monkeypatch):
+        config, output = self._setup(tmp_path, 2, monkeypatch)
+        runner = get_runner("openshell", model="skill-model")
+        with patch("subprocess.run") as mock_run, patch("subprocess.Popen") as mock_popen:
+            mock_run.return_value = MagicMock(returncode=0)
+            rc = runner.run_single(config, output, run_id="rid")
+        assert rc == 0
+        mock_popen.assert_not_called()
+        (cmd,) = [call.args[0] for call in mock_run.call_args_list]
+        assert cmd[-1] == "rid"
+        assert "--concurrency" not in cmd
+
+    def test_sharded_run_merges_into_one_dir(self, tmp_path: Path, monkeypatch):
+        config, output = self._setup(tmp_path, 3, monkeypatch)
+        runs_dir = tmp_path / "reports"
+
+        def fake_harness(cmd, env=None, **kwargs):
+            """Simulate agent_eval.openshell.run over a shard config."""
+            shard_config = Path(cmd[cmd.index("--config") + 1])
+            rid = cmd[cmd.index("--run-id") + 1]
+            raw = yaml.safe_load(shard_config.read_text())
+            shard_root = shard_config.parent / raw["dataset"]["path"]
+            per_case = {}
+            for case_dir in sorted(shard_root.iterdir()):
+                per_case[case_dir.name] = {"rubric": {"value": 5, "judge_type": "llm"}}
+            run_dir = runs_dir / "forge-eval-rubrics" / rid
+            run_dir.mkdir(parents=True)
+            (run_dir / "summary.yaml").write_text(
+                yaml.safe_dump({"run_id": rid, "per_case": per_case}, sort_keys=False)
+            )
+            (run_dir / "run_result.json").write_text('{"duration_s": 5.0}')
+            proc = MagicMock()
+            proc.wait.return_value = 0
+            return proc
+
+        runner = get_runner("openshell", model="skill-model")
+        with patch("subprocess.Popen", side_effect=fake_harness) as mock_popen:
+            rc = runner.run_single(config, output, run_id="rid", concurrency=2)
+        assert rc == 0
+        # 3 cases, 2 shards: round-robin [case-000, case-002] / [case-001]
+        assert mock_popen.call_count == 2
+        run_ids = [c.args[0][c.args[0].index("--run-id") + 1] for c in mock_popen.call_args_list]
+        assert run_ids == ["rid-s0", "rid-s1"]
+        # merged into the canonical run dir; shard dirs cleaned up
+        summary = yaml.safe_load((output / "summary.yaml").read_text())
+        assert set(summary["per_case"]) == {"case-000", "case-001", "case-002"}
+        assert summary["run_id"] == "rid"
+        assert summary["mean_reward"] == 1.0
+        assert not (runs_dir / "forge-eval-rubrics" / "rid-s0").exists()
+        assert not (runs_dir / "forge-eval-rubrics" / "rid-s1").exists()
+        # shard configs and case copies are cleaned up
+        leftovers = [p.name for p in (tmp_path / "submission").iterdir() if p.name.startswith(".")]
+        assert leftovers == []
+
+    def test_shard_failure_does_not_merge(self, tmp_path: Path, monkeypatch):
+        config, output = self._setup(tmp_path, 2, monkeypatch)
+        runs_dir = tmp_path / "reports"
+
+        def fake_harness(cmd, env=None, **kwargs):
+            rid = cmd[cmd.index("--run-id") + 1]
+            run_dir = runs_dir / "forge-eval-rubrics" / rid
+            if rid.endswith("-s1"):
+                proc = MagicMock()
+                proc.wait.return_value = 3  # shard 1 fails, writes nothing
+                return proc
+            run_dir.mkdir(parents=True)
+            (run_dir / "summary.yaml").write_text(
+                yaml.safe_dump({"run_id": rid, "per_case": {"case-000": {}}}, sort_keys=False)
+            )
+            proc = MagicMock()
+            proc.wait.return_value = 0
+            return proc
+
+        runner = get_runner("openshell", model="skill-model")
+        with patch("subprocess.Popen", side_effect=fake_harness):
+            rc = runner.run_single(config, output, run_id="rid", concurrency=2)
+        assert rc != 0
+        # no merged run dir: a partial merge must never look like a green run
+        assert not (output / "summary.yaml").exists()
+        # failed shard dirs are kept for debugging
+        assert (runs_dir / "forge-eval-rubrics" / "rid-s0").exists()
+
+    def test_single_case_falls_back_to_sequential(self, tmp_path: Path, monkeypatch):
+        config, output = self._setup(tmp_path, 1, monkeypatch)
+        runner = get_runner("openshell", model="skill-model")
+        with patch("subprocess.run") as mock_run, patch("subprocess.Popen") as mock_popen:
+            mock_run.return_value = MagicMock(returncode=0)
+            rc = runner.run_single(config, output, run_id="rid", concurrency=4)
+        assert rc == 0
+        mock_popen.assert_not_called()
+        (cmd,) = [call.args[0] for call in mock_run.call_args_list]
+        assert cmd[cmd.index("--run-id") + 1] == "rid"
+
+    def test_cli_passes_concurrency(self, tmp_path: Path, monkeypatch):
+        config, output = self._setup(tmp_path, 1, monkeypatch)
+        from scripts.run_aeh import main
+
+        argv = [
+            "run_aeh.py",
+            "single",
+            "--runner",
+            "openshell",
+            "--config",
+            str(config),
+            "--output",
+            str(output),
+            "--concurrency",
+            "3",
+        ]
+        with (
+            patch("sys.argv", argv),
+            patch("scripts.run_aeh.OpenShellRunner.run_single", return_value=0) as mock_single,
+        ):
+            rc = main()
+        assert rc == 0
+        assert mock_single.call_args.kwargs["concurrency"] == 3
