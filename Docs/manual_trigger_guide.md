@@ -244,8 +244,10 @@ the Tekton pod. Validate both paths and the upstream CA.
 
 The manifests are namespace-agnostic: apply them into `$NS` directly, from a
 checkout of `$FLOW_REV`. Review the files before applying. The RBAC grants the
-`pipeline` ServiceAccount pod and PVC management, including `patch`, which the
-finally cleanup Task uses to label a PVC it could not delete.
+`pipeline` ServiceAccount pod, PVC and StatefulSet management, including
+`patch`, which the finally cleanup Task uses to label a PVC it could not
+delete, and `delete` on StatefulSets, which it uses to release the run's
+Affinity Assistant (see the cleanup section below).
 
 ```bash
 oc -n "$NS" apply -f config/rbac.yaml
@@ -345,13 +347,57 @@ credentials. Connection refused usually means the local forward stopped. MinIO
 Cleanup requires API connectivity even after evaluation succeeds. The finally
 Task is non-blocking (`onError: continue`) and reports its outcome as the
 `cleanup-status` result on the PipelineRun: `deleted`, `none`, `api-unavailable`
-or `failed`. Check that result rather than assuming green means the PVC was
-deleted; a `failed` cleanup also labels the leaked PVC
-`abevalflow.io/cleanup-failed=true`, so `oc -n "$NS" get pvc -l
-abevalflow.io/cleanup-failed=true` finds leftovers across runs. If store fails,
-preserve its workspace before cleanup and run a store-only TaskRun with that
-existing PVC and the original run ID/results paths. A normal PipelineRun rerun
-executes evaluation again; it does not resume at store.
+or `failed`. `deleted` means the PVC objects were confirmed gone (the Task
+polls for up to five minutes after deleting), not merely that the delete
+was accepted; a `failed`
+cleanup also labels the leaked PVC `abevalflow.io/cleanup-failed=true`, so
+`oc -n "$NS" get pvc -l abevalflow.io/cleanup-failed=true` finds leftovers
+across runs. If store fails, preserve its workspace before cleanup and run a
+store-only TaskRun with that existing PVC and the original run ID/results
+paths. A normal PipelineRun rerun executes evaluation again; it does not
+resume at store.
+
+Two things hold a run's workspace PVC past the DAG tasks, and the cleanup Task
+releases both before deleting the PVCs. Tekton retains the run's completed
+TaskRun pods, and while those pod objects reference the workspace PVC the
+pvc-protection finalizer never clears — the PVC (and its storage quota) stays
+Terminating indefinitely even though the delete was accepted; the Task deletes
+the run's DAG pods and waits for the pod objects to disappear. Tekton also
+runs an Affinity Assistant StatefulSet for `volumeClaimTemplate` workspaces,
+whose nop pod mounts the same PVC purely to co-schedule the DAG tasks, and
+Tekton deletes it only at PipelineRun completion — which happens after the
+finally Task ends — so the Task deletes that run-scoped StatefulSet as well
+(measured reclaim once both holders are released: ~2-5s; multi-minute
+confirmation windows are a symptom of a holder still present, not of slow
+reclamation). Before releasing the pods, the task archives each DAG pod's
+complete step logs to MinIO — under the run's report prefix, at
+`debug/pod-logs/<run>/`, one file per TaskRun pod — so the release cannot
+destroy the run's only complete per-step log record. The archive is a
+byte-for-byte durability copy, not reporting (no model call, no
+formatting): reporting has its own surfaces (MLflow/MinIO, and
+`scripts/pipelinerun-report.sh`, which reads the TaskRun objects that
+survive the release). Pull the archived logs into a local directory with
+`scripts/fetch_run_logs.sh <run> [namespace] [out-dir]` (the namespace
+defaults to the current oc context's, never to a pinned one). The archive is
+fail-safe: if it does not complete (no endpoint configured, MinIO
+unreachable, a partial fetch or incomplete upload), the pods are kept —
+their logs stay readable on them — and the PVC is
+reported `failed` with the `abevalflow.io/cleanup-failed` label; logs are
+never destroyed unarchived. Set the Pipeline's `delete-retained-pods`
+param to `"false"` only if a run's pods must outlive the run on the pods
+themselves — no archive is taken, neither holder is released, so the run's
+PVC stays Terminating: step statuses and results stay on the TaskRun
+objects either way, and the reports live in MLflow/MinIO.
+
+Stage results outlive the pod logs: each TaskRun object keeps its status,
+step conditions, timings and results, and `scripts/pipelinerun-report.sh`
+aggregates them per stage (the examples use the verification run in
+`forge-nommen`; pass the namespace, or omit it to use the current project):
+
+```bash
+scripts/pipelinerun-report.sh scharan-verify-cleanup-112-2 forge-nommen
+scripts/pipelinerun-report.sh scharan-verify-cleanup-112-2 forge-nommen --steps evaluate
+```
 
 Before any rerun, verify both Git revisions, installed Task versions and
 namespace URLs. The openshell gateway address is the `openshell` Service, whose
