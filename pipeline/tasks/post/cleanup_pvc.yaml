@@ -20,9 +20,10 @@ spec:
     pod's complete step logs to MinIO (under the run's report prefix,
     debug/pod-logs/<run>/) — a byte-for-byte durability copy, not
     reporting: no model call, no formatting. The archive is fail-safe:
-    if it does not complete, the pods are kept (their logs stay
-    readable on them) and the PVC is reported failed — logs are never
-    destroyed unarchived. scripts/fetch_run_logs.sh pulls the archived
+    if it does not complete — no endpoint configured, MinIO
+    unreachable, or an incomplete fetch or upload — the pods are kept
+    (their logs stay readable on them) and the PVC is reported
+    failed; logs are never destroyed unarchived. scripts/fetch_run_logs.sh pulls the archived
     directory to a local folder. Run reporting lives in MLflow/MinIO
     and in scripts/pipelinerun-report.sh, which reads the TaskRun
     objects that survive the release.
@@ -62,9 +63,10 @@ spec:
       onError: continue
       # Endpoint only — the MinIO credentials never reach this task;
       # the upload runs inside the MinIO pod, which already has them.
-      # Optional: in a stack without MinIO (no minio-credentials
-      # secret) the task releases the pods unarchived, as it did
-      # before archiving existed.
+      # Optional only so a missing secret does not fail the step
+      # outright: with no endpoint the task keeps the pods (their logs
+      # stay readable on them) rather than releasing them unarchived —
+      # the same fail-safe as an unreachable MinIO.
       env:
         - name: MINIO_ENDPOINT
           valueFrom:
@@ -140,7 +142,8 @@ spec:
           # logs are never destroyed unarchived.
           release_ok=1
           if [ -z "${MINIO_ENDPOINT:-}" ]; then
-            echo "WARNING: no MinIO endpoint configured (minio-credentials secret); releasing the pods without archiving their logs"
+            echo "WARNING: no MinIO endpoint configured (minio-credentials secret); keeping the run's pods (their logs stay readable on them) - the PVC will stay Terminating"
+            release_ok=0
           elif ! curl -sf --max-time 10 "${MINIO_ENDPOINT}/minio/health/live" >/dev/null 2>&1; then
             echo "WARNING: MinIO at ${MINIO_ENDPOINT} is not reachable; keeping the run's pods (their logs stay readable on them) - the PVC will stay Terminating"
             release_ok=0
@@ -155,65 +158,79 @@ spec:
               rm -rf "$LOGDIR"
               mkdir -p "$LOGDIR"
               echo "Archiving the run's step pod logs to MinIO before releasing the pods..."
-              archived=0
               # One file per TaskRun pod, named by the taskRun label
               # (retries create distinct TaskRuns, so no attempt's
               # logs are overwritten). --all-containers captures
-              # every step of the task, with step headers.
-              while IFS=$'\t' read -r pod taskrun; do
-                [ -n "$pod" ] && [ -n "$taskrun" ] || continue
-                if oc logs -n "${NAMESPACE}" "${pod}" --all-containers --request-timeout=60s \
-                  > "${LOGDIR}/${taskrun}.log" 2>&1; then
-                  archived=$((archived + 1))
-                else
-                  echo "WARNING: could not fetch the logs of pod ${pod}"
-                fi
-              done < <(oc get pods -n "${NAMESPACE}" \
+              # every step of the task, with step headers. The
+              # completeness gate compares the fetched count against
+              # the pod count from the same listing, so a partial
+              # fetch keeps the pods exactly like a total one does —
+              # and a failed listing is zero knowledge, not zero
+              # pods, so it keeps them as well.
+              if ! pod_listing="$(oc get pods -n "${NAMESPACE}" \
                 -l "tekton.dev/pipelineRun=$(params.pipelinerun-name),tekton.dev/memberOf=tasks" \
                 --request-timeout=20s \
-                -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.metadata.labels.tekton\.dev/taskRun}{"\n"}{end}' 2>/dev/null)
-              if [ "$archived" -eq 0 ]; then
-                echo "WARNING: no DAG pod logs could be fetched; keeping the run's pods - the PVC will stay Terminating"
+                -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.metadata.labels.tekton\.dev/taskRun}{"\n"}{end}' 2>/dev/null)"; then
+                echo "WARNING: could not list the run's pods; keeping the run's pods (their logs stay readable on them) - the PVC will stay Terminating"
                 release_ok=0
               else
-                # Join the run's report prefix when the store task
-                # created one (everything of a run under one prefix;
-                # store names it <date>_<time>_<submission>_<run>),
-                # else fall back to a root-level pod-logs/ path.
-                REPORT_PREFIX="$(oc exec -n "${NAMESPACE}" "${MINIO_POD}" -- sh -c \
-                  'mc alias set local http://localhost:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null 2>&1 && mc ls local/ab-eval-reports/' 2>/dev/null \
-                  | grep -E "_$(params.pipelinerun-name)/$" | awk '{print $NF}' | tail -1 || true)"
-                DEST="local/ab-eval-reports/${REPORT_PREFIX}debug/pod-logs/$(params.pipelinerun-name)"
-                # Stream the logs into the MinIO pod, then upload
-                # from there. All path components are cluster-safe
-                # identifiers (DNS-1123 names), so no quoting hazards.
-                REMOTE_DIR="/tmp/runlogs-$(params.pipelinerun-name)"
-                if ! oc exec -n "${NAMESPACE}" "${MINIO_POD}" -- mkdir -p "${REMOTE_DIR}" >/dev/null 2>&1; then
-                  echo "WARNING: could not prepare ${REMOTE_DIR} in the MinIO pod; keeping the run's pods"
+                expected=0
+                archived=0
+                while IFS=$'\t' read -r pod taskrun; do
+                  [ -n "$pod" ] && [ -n "$taskrun" ] || continue
+                  expected=$((expected + 1))
+                  if oc logs -n "${NAMESPACE}" "${pod}" --all-containers --request-timeout=60s \
+                    > "${LOGDIR}/${taskrun}.log" 2>&1; then
+                    archived=$((archived + 1))
+                  else
+                    echo "WARNING: could not fetch the logs of pod ${pod}"
+                  fi
+                done <<< "$pod_listing"
+                if [ "$archived" -ne "$expected" ]; then
+                  echo "WARNING: fetched ${archived} of ${expected} pod logs; keeping the run's pods (their logs stay readable on them) - the PVC will stay Terminating"
                   release_ok=0
+                elif [ "$expected" -eq 0 ]; then
+                  echo "No DAG pods left to archive; releasing the remaining holders only"
                 else
-                  for f in "${LOGDIR}"/*.log; do
-                    if ! oc exec -i -n "${NAMESPACE}" "${MINIO_POD}" -- sh -c "cat > ${REMOTE_DIR}/$(basename "$f")" < "$f"; then
-                      echo "WARNING: could not stream $(basename "$f") into the MinIO pod"
-                      release_ok=0
-                    fi
-                  done
-                  # mc cp publishes the streamed files; the listing is
-                  # verified in this pod (the MinIO image ships no
-                  # grep) — only a full set of landed files allows the
-                  # release below.
-                  upload_listing="$(oc exec -n "${NAMESPACE}" "${MINIO_POD}" -- sh -c "
-                    mc alias set local http://localhost:9000 \"\$MINIO_ROOT_USER\" \"\$MINIO_ROOT_PASSWORD\" >/dev/null 2>&1 || exit 1
-                    mc cp ${REMOTE_DIR}/*.log ${DEST}/ >/dev/null 2>&1 || exit 1
-                    mc ls ${DEST}/
-                    rm -rf ${REMOTE_DIR}
-                  " 2>/dev/null || true)"
-                  uploaded="$(echo "$upload_listing" | grep -c '\.log$' || true)"
-                  if [ "$uploaded" != "$archived" ]; then
-                    echo "WARNING: archived ${archived} pod logs but ${uploaded:-0} landed in ${DEST#local/}; keeping the run's pods"
+                  # Join the run's report prefix when the store task
+                  # created one (everything of a run under one prefix;
+                  # store names it <date>_<time>_<submission>_<run>),
+                  # else fall back to a root-level pod-logs/ path.
+                  REPORT_PREFIX="$(oc exec -n "${NAMESPACE}" "${MINIO_POD}" -- sh -c \
+                    'mc alias set local http://localhost:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null 2>&1 && mc ls local/ab-eval-reports/' 2>/dev/null \
+                    | grep -E "_$(params.pipelinerun-name)/$" | awk '{print $NF}' | tail -1 || true)"
+                  DEST="local/ab-eval-reports/${REPORT_PREFIX}debug/pod-logs/$(params.pipelinerun-name)"
+                  # Stream the logs into the MinIO pod, then upload
+                  # from there. All path components are cluster-safe
+                  # identifiers (DNS-1123 names), so no quoting hazards.
+                  REMOTE_DIR="/tmp/runlogs-$(params.pipelinerun-name)"
+                  if ! oc exec -n "${NAMESPACE}" "${MINIO_POD}" -- mkdir -p "${REMOTE_DIR}" >/dev/null 2>&1; then
+                    echo "WARNING: could not prepare ${REMOTE_DIR} in the MinIO pod; keeping the run's pods"
                     release_ok=0
                   else
-                    echo "Archived ${archived} pod log(s) to ${DEST#local/}"
+                    for f in "${LOGDIR}"/*.log; do
+                      if ! oc exec -i -n "${NAMESPACE}" "${MINIO_POD}" -- sh -c "cat > ${REMOTE_DIR}/$(basename "$f")" < "$f"; then
+                        echo "WARNING: could not stream $(basename "$f") into the MinIO pod"
+                        release_ok=0
+                      fi
+                    done
+                    # mc cp publishes the streamed files; the listing is
+                    # verified in this pod (the MinIO image ships no
+                    # grep) — only a full set of landed files allows the
+                    # release below.
+                    upload_listing="$(oc exec -n "${NAMESPACE}" "${MINIO_POD}" -- sh -c "
+                      mc alias set local http://localhost:9000 \"\$MINIO_ROOT_USER\" \"\$MINIO_ROOT_PASSWORD\" >/dev/null 2>&1 || exit 1
+                      mc cp ${REMOTE_DIR}/*.log ${DEST}/ >/dev/null 2>&1 || exit 1
+                      mc ls ${DEST}/
+                      rm -rf ${REMOTE_DIR}
+                    " 2>/dev/null || true)"
+                    uploaded="$(echo "$upload_listing" | grep -c '\.log$' || true)"
+                    if [ "$uploaded" != "$archived" ]; then
+                      echo "WARNING: archived ${archived} pod logs but ${uploaded:-0} landed in ${DEST#local/}; keeping the run's pods"
+                      release_ok=0
+                    else
+                      echo "Archived ${archived} pod log(s) to ${DEST#local/}"
+                    fi
                   fi
                 fi
               fi

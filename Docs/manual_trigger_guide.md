@@ -377,9 +377,11 @@ byte-for-byte durability copy, not reporting (no model call, no
 formatting): reporting has its own surfaces (MLflow/MinIO, and
 `scripts/pipelinerun-report.sh`, which reads the TaskRun objects that
 survive the release). Pull the archived logs into a local directory with
-`scripts/fetch_run_logs.sh <run> [namespace] [out-dir]`. The archive is
-fail-safe: if it does not complete (MinIO unreachable, upload incomplete),
-the pods are kept — their logs stay readable on them — and the PVC is
+`scripts/fetch_run_logs.sh <run> [namespace] [out-dir]` (the namespace
+defaults to the current oc context's, never to a pinned one). The archive is
+fail-safe: if it does not complete (no endpoint configured, MinIO
+unreachable, a partial fetch or incomplete upload), the pods are kept —
+their logs stay readable on them — and the PVC is
 reported `failed` with the `abevalflow.io/cleanup-failed` label; logs are
 never destroyed unarchived. Set the Pipeline's `delete-retained-pods`
 param to `"false"` only if a run's pods must outlive the run on the pods

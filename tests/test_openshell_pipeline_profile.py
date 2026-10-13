@@ -255,13 +255,31 @@ class TestOpenshellPipelineProfile:
         assert env["MINIO_ENDPOINT"]["valueFrom"]["secretKeyRef"]["key"] == "endpoint-url"
         assert env["MINIO_ENDPOINT"]["valueFrom"]["secretKeyRef"]["optional"] is True
         assert "root-user" not in script and "root-password" not in script
-        # Fail-safe gating: any archive failure keeps the pods.
+        # Fail-safe gating: any archive failure keeps the pods. A
+        # missing endpoint is as fatal as an unreachable MinIO — it
+        # must not silently release unarchived.
         assert "release_ok=0" in script
         assert "Skipping the pod release" in script
+        endpoint_gate = script.split('if [ -z "${MINIO_ENDPOINT:-}" ]; then', 1)[1]
+        assert endpoint_gate.index("release_ok=0") < endpoint_gate.index("elif")
+        assert "releasing the pods without archiving" not in script
+        # Completeness is measured against the pod count from the same
+        # listing: a partial fetch keeps the pods exactly like a total
+        # one does, and a failed listing is zero knowledge, not zero
+        # pods.
+        assert 'if ! pod_listing=' in script
+        assert "could not list the run's pods" in script
+        assert "expected=$((expected + 1))" in script
+        assert '[ "$archived" -ne "$expected" ]' in script
+        assert 'elif [ "$expected" -eq 0 ]' in script
         # The local pull side exists and reads the same layout.
         fetch = (REPO / "scripts" / "fetch_run_logs.sh").read_text()
         assert "debug/pod-logs" in fetch
         assert "deploy/minio" in fetch
+        # No pinned namespace default: the current context's, or an
+        # explicit one.
+        assert ":-forge-nommen" not in fetch
+        assert "oc config view --minify" in fetch
 
     def test_rbac_applies_into_any_namespace(self):
         # metadata.namespace would make `oc apply -n X` fail, and a subject

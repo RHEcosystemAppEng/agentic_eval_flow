@@ -11,18 +11,32 @@
 #   scripts/fetch_run_logs.sh scharan-verify-cleanup-112-7
 #   scripts/fetch_run_logs.sh scharan-verify-cleanup-112-7 forge-nommen /tmp/logs
 #
+# The namespace defaults to the current oc context's namespace, never
+# to a pinned one.
+#
 # All MinIO access runs inside the MinIO deployment's pod, which already
 # has mc and the credentials — they are never printed or exported here.
 set -euo pipefail
 
 RUN="${1:?usage: $0 <pipelinerun-name> [namespace] [out-dir]}"
-NS="${2:-forge-nommen}"
 OUT="${3:-${RUN}-logs}"
 BUCKET="${MINIO_BUCKET:-ab-eval-reports}"
 
 command -v oc >/dev/null 2>&1 || { echo "oc is required" >&2; exit 1; }
 command -v awk >/dev/null 2>&1 || { echo "awk is required" >&2; exit 1; }
 mkdir -p "$OUT"
+
+# Namespace: an explicit argument, else the current oc context's —
+# never a pinned default, which would silently pull from the wrong
+# place after a context switch.
+NS="${2:-}"
+if [ -z "$NS" ]; then
+  NS="$(oc config view --minify -o jsonpath='{..namespace}' 2>/dev/null || true)"
+fi
+if [ -z "$NS" ]; then
+  echo "No namespace given and the current oc context has none; pass one explicitly" >&2
+  exit 1
+fi
 
 # All remote commands share this alias bootstrap.
 mc() {
