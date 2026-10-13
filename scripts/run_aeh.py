@@ -41,8 +41,10 @@ from abevalflow.harbor_extensions import OPENSHIFT_ENVIRONMENT_IMPORT_PATH
 
 try:  # repo root on sys.path (tests, pipeline PYTHONPATH)
     from scripts import aeh_sharding
+    from scripts.run_aeh_regression import _resolve_score_script
 except ImportError:  # running as a script from scripts/
     import aeh_sharding  # type: ignore[no-redef]
+    from run_aeh_regression import _resolve_score_script  # type: ignore[no-redef]
 
 
 class RunnerError(Exception):
@@ -839,9 +841,16 @@ class OpenShellRunner(BaseRunner):
 
         Each shard is a full ``agent_eval.openshell.run`` subprocess over a
         config whose dataset holds only that shard's cases, run as
-        ``<rid>-s<i>`` under the same reports leaf. All shards must succeed
-        and produce summary.yaml before the merge — a partial merge must
-        never look like a complete green run.
+        ``<rid>-s<i>`` under the same reports leaf. Shards must all produce
+        summary.yaml and exit 0/1 (0 = success, 1 = threshold warning) before
+        the merge — a partial merge must never look like a complete green run.
+
+        Threshold verdicts are per-process in the harness, so a shard's exit 1
+        is an artifact of splitting whenever a judge only applies to some
+        cases (it is n/a — a regression — in shards lacking those cases).
+        After the merge, the verdict is re-derived over the merged case set
+        with the harness's own ``score.py regression``, matching what an
+        equivalent sequential run would have exited.
         """
         cases_root = aeh_sharding.dataset_root(patched)
         cases = aeh_sharding.list_case_dirs(cases_root) if cases_root else []
@@ -891,7 +900,12 @@ class OpenShellRunner(BaseRunner):
             aeh_sharding.cleanup_shard_files(shard_configs, shard_root)
 
         shard_dirs = [actual.parent / f"{rid}-s{i}" for i in range(len(shards))]
-        failures = [(i, rc) for i, rc in enumerate(rcs) if rc != 0]
+        # Harness exit codes: 0 = success, 1 = threshold warning, >=2 = error.
+        # Per-shard threshold verdicts don't apply to the merged case set, so
+        # rc==1 with a complete summary is mergeable (verdict re-derived
+        # below); only real errors or missing results abort the merge.
+        failures = [(i, rc) for i, rc in enumerate(rcs) if rc not in (0, 1)]
+        warnings = [(i, rc) for i, rc in enumerate(rcs) if rc == 1]
         missing = [str(d) for d in shard_dirs if not (d / "summary.yaml").is_file()]
         if failures or missing:
             print(
@@ -901,6 +915,12 @@ class OpenShellRunner(BaseRunner):
                 file=sys.stderr,
             )
             return next((rc for _, rc in failures), 1)
+        if warnings:
+            print(
+                f"Shard(s) {warnings} exited 1 (threshold warning); "
+                "per-shard verdicts don't apply to the merged case set — "
+                "re-evaluating thresholds after the merge"
+            )
 
         try:
             summary = aeh_sharding.merge_run_dirs(shard_dirs, actual, run_id=rid)
@@ -911,7 +931,31 @@ class OpenShellRunner(BaseRunner):
         print(f"Merged {len(shards)} shard run(s): {merged_cases} case(s), mean_reward={summary.get('mean_reward')}")
         for shard_dir in shard_dirs:
             shutil.rmtree(shard_dir, ignore_errors=True)
-        return 0
+        return self._merged_threshold_rc(patched, env, rid)
+
+    def _merged_threshold_rc(self, patched: Path, env: dict[str, str], rid: str) -> int:
+        """Re-derive the harness threshold verdict over the merged run.
+
+        Runs the harness's own ``score.py regression`` — the end-of-run check
+        that made each shard exit 0/1 — against the merged run dir, yielding
+        the exit code an equivalent sequential run would have produced.
+        """
+        script = _resolve_score_script()
+        if script is None:
+            print(
+                "ERROR: harness score.py not found (set AGENT_EVAL_HARNESS_ROOT); "
+                "cannot re-evaluate thresholds over the merged run",
+                file=sys.stderr,
+            )
+            return 1
+        cmd = [sys.executable, str(script), "regression", "--run-id", rid, "--config", str(patched)]
+        print(f"=== Re-evaluating thresholds over merged run: {' '.join(cmd)}")
+        rc = subprocess.run(cmd, env=env, check=False).returncode
+        if rc == 0:
+            print("Merged run: REGRESSIONS: 0 — thresholds satisfied over all cases")
+        else:
+            print(f"Merged run: threshold regressions detected (exit {rc})", file=sys.stderr)
+        return rc
 
 
 # Registry of available runners

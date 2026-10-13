@@ -139,8 +139,11 @@ spec:
         Max concurrent case shards for OpenShell AEH single runs. 1 runs all
         cases sequentially in one harness process (unchanged). N>1 splits the
         dataset into N shards run as parallel harness subprocesses whose run
-        dirs are merged into one; any shard failure fails the run without
-        merging. Capped at the number of cases.
+        dirs are merged into one; shard errors (exit >= 2) or missing
+        summaries fail the run without merging, and thresholds are
+        re-evaluated over the merged run (per-shard threshold verdicts are
+        an artifact of splitting when a judge only applies to some cases).
+        Capped at the number of cases.
     - name: aeh-mode
       type: string
       default: "single"

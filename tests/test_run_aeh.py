@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -576,6 +577,14 @@ class TestOpenShellRunnerSharding:
         output = tmp_path / "reports" / "forge-eval-rubrics" / "rid"
         return config, output
 
+    def _fake_score_script(self, tmp_path: Path, monkeypatch, regressions: int = 0) -> None:
+        """Stand-in harness score.py for the merged threshold re-check."""
+        root = tmp_path / "harness"
+        script = root / "skills" / "eval-run" / "scripts" / "score.py"
+        script.parent.mkdir(parents=True, exist_ok=True)
+        script.write_text(f"import sys\nprint('REGRESSIONS: {regressions}')\nsys.exit({regressions})\n")
+        monkeypatch.setenv("AGENT_EVAL_HARNESS_ROOT", str(root))
+
     def test_default_concurrency_runs_sequentially(self, tmp_path: Path, monkeypatch):
         config, output = self._setup(tmp_path, 2, monkeypatch)
         runner = get_runner("openshell", model="skill-model")
@@ -591,9 +600,12 @@ class TestOpenShellRunnerSharding:
     def test_sharded_run_merges_into_one_dir(self, tmp_path: Path, monkeypatch):
         config, output = self._setup(tmp_path, 3, monkeypatch)
         runs_dir = tmp_path / "reports"
+        real_popen = subprocess.Popen
 
         def fake_harness(cmd, env=None, **kwargs):
             """Simulate agent_eval.openshell.run over a shard config."""
+            if "regression" in cmd:  # merged threshold re-check: real subprocess
+                return real_popen(cmd, env=env, **kwargs)
             shard_config = Path(cmd[cmd.index("--config") + 1])
             rid = cmd[cmd.index("--run-id") + 1]
             raw = yaml.safe_load(shard_config.read_text())
@@ -612,12 +624,15 @@ class TestOpenShellRunnerSharding:
             return proc
 
         runner = get_runner("openshell", model="skill-model")
+        self._fake_score_script(tmp_path, monkeypatch)
         with patch("subprocess.Popen", side_effect=fake_harness) as mock_popen:
             rc = runner.run_single(config, output, run_id="rid", concurrency=2)
         assert rc == 0
-        # 3 cases, 2 shards: round-robin [case-000, case-002] / [case-001]
-        assert mock_popen.call_count == 2
-        run_ids = [c.args[0][c.args[0].index("--run-id") + 1] for c in mock_popen.call_args_list]
+        # 3 cases, 2 shards: round-robin [case-000, case-002] / [case-001];
+        # the third Popen is the merged threshold re-check
+        assert mock_popen.call_count == 3
+        shard_cmds = [c.args[0] for c in mock_popen.call_args_list if "agent_eval.openshell.run" in c.args[0]]
+        run_ids = [cmd[cmd.index("--run-id") + 1] for cmd in shard_cmds]
         assert run_ids == ["rid-s0", "rid-s1"]
         # merged into the canonical run dir; shard dirs cleaned up
         summary = yaml.safe_load((output / "summary.yaml").read_text())
@@ -629,6 +644,95 @@ class TestOpenShellRunnerSharding:
         # shard configs and case copies are cleaned up
         leftovers = [p.name for p in (tmp_path / "submission").iterdir() if p.name.startswith(".")]
         assert leftovers == []
+
+    def test_shard_threshold_warning_merges_and_rechecks(self, tmp_path: Path, monkeypatch, capsys):
+        config, output = self._setup(tmp_path, 2, monkeypatch)
+        runs_dir = tmp_path / "reports"
+        real_popen = subprocess.Popen
+
+        def fake_harness(cmd, env=None, **kwargs):
+            """Shard 0 exits 1 (threshold warning) with a complete summary."""
+            if "regression" in cmd:  # merged threshold re-check: real subprocess
+                return real_popen(cmd, env=env, **kwargs)
+            rid = cmd[cmd.index("--run-id") + 1]
+            run_dir = runs_dir / "forge-eval-rubrics" / rid
+            run_dir.mkdir(parents=True)
+            (run_dir / "summary.yaml").write_text(
+                yaml.safe_dump(
+                    {"run_id": rid, "per_case": {rid: {"rubric": {"value": 5, "judge_type": "llm"}}}},
+                    sort_keys=False,
+                )
+            )
+            proc = MagicMock()
+            proc.wait.return_value = 1 if rid.endswith("-s0") else 0
+            return proc
+
+        runner = get_runner("openshell", model="skill-model")
+        self._fake_score_script(tmp_path, monkeypatch, regressions=0)
+        with patch("subprocess.Popen", side_effect=fake_harness):
+            rc = runner.run_single(config, output, run_id="rid", concurrency=2)
+        assert rc == 0
+        # the warning shard's results are merged, and the verdict is
+        # re-derived over the merged case set
+        assert (output / "summary.yaml").is_file()
+        captured = capsys.readouterr().out
+        assert "threshold warning" in captured
+        assert "re-evaluating thresholds" in captured.lower()
+        assert "REGRESSIONS: 0" in captured
+
+    def test_merged_regression_fails_run(self, tmp_path: Path, monkeypatch):
+        config, output = self._setup(tmp_path, 2, monkeypatch)
+        runs_dir = tmp_path / "reports"
+        real_popen = subprocess.Popen
+
+        def fake_harness(cmd, env=None, **kwargs):
+            if "regression" in cmd:  # merged threshold re-check: real subprocess
+                return real_popen(cmd, env=env, **kwargs)
+            rid = cmd[cmd.index("--run-id") + 1]
+            run_dir = runs_dir / "forge-eval-rubrics" / rid
+            run_dir.mkdir(parents=True)
+            (run_dir / "summary.yaml").write_text(
+                yaml.safe_dump(
+                    {"run_id": rid, "per_case": {rid: {"rubric": {"value": 5, "judge_type": "llm"}}}},
+                    sort_keys=False,
+                )
+            )
+            proc = MagicMock()
+            proc.wait.return_value = 0
+            return proc
+
+        runner = get_runner("openshell", model="skill-model")
+        self._fake_score_script(tmp_path, monkeypatch, regressions=1)
+        with patch("subprocess.Popen", side_effect=fake_harness):
+            rc = runner.run_single(config, output, run_id="rid", concurrency=2)
+        # a real regression over the merged case set fails the run, exactly
+        # like an equivalent sequential run would
+        assert rc == 1
+        assert (output / "summary.yaml").is_file()
+
+    def test_missing_score_script_fails_merged_run(self, tmp_path: Path, monkeypatch):
+        config, output = self._setup(tmp_path, 2, monkeypatch)
+
+        def fake_harness(cmd, env=None, **kwargs):
+            rid = cmd[cmd.index("--run-id") + 1]
+            run_dir = tmp_path / "reports" / "forge-eval-rubrics" / rid
+            run_dir.mkdir(parents=True)
+            (run_dir / "summary.yaml").write_text(
+                yaml.safe_dump({"run_id": rid, "per_case": {rid: {}}}, sort_keys=False)
+            )
+            proc = MagicMock()
+            proc.wait.return_value = 0
+            return proc
+
+        monkeypatch.delenv("AGENT_EVAL_HARNESS_ROOT", raising=False)
+        runner = get_runner("openshell", model="skill-model")
+        with (
+            patch("subprocess.Popen", side_effect=fake_harness),
+            patch("scripts.run_aeh._resolve_score_script", return_value=None),
+        ):
+            rc = runner.run_single(config, output, run_id="rid", concurrency=2)
+        # cannot certify thresholds over the merged run → fail loudly
+        assert rc == 1
 
     def test_shard_failure_does_not_merge(self, tmp_path: Path, monkeypatch):
         config, output = self._setup(tmp_path, 2, monkeypatch)
