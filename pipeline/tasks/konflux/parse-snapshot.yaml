@@ -22,6 +22,16 @@ spec:
         the first component (.components[0]) is used. For multi-component
         applications, set this to the component you want to evaluate to
         avoid accidentally selecting the wrong one.
+    - name: pr-labels
+      type: string
+      default: ""
+      description: >-
+        Newline-separated list of PR labels injected by Pipelines as Code
+        via the {{ pull_request_labels }} variable.
+    - name: mcpchecker-label
+      type: string
+      default: "mcpchecker"
+      description: PR label that enables Phase 3 behavioral evaluation
   results:
     - name: component-image
       description: Full container image reference (with digest) from the snapshot
@@ -31,6 +41,8 @@ spec:
       description: Git commit SHA of the component source
     - name: component-name
       description: Name of the component extracted from the snapshot
+    - name: has-mcpchecker-label
+      description: '"true" if the PR carries the mcpchecker label, "false" otherwise'
   steps:
     - name: parse
       image: registry.access.redhat.com/ubi9/ubi-minimal:latest
@@ -39,6 +51,10 @@ spec:
           value: $(params.SNAPSHOT)
         - name: TARGET_COMPONENT
           value: $(params.component-name)
+        - name: PR_LABELS
+          value: $(params.pr-labels)
+        - name: MCPCHECKER_LABEL
+          value: $(params.mcpchecker-label)
       script: |
         #!/usr/bin/env bash
         set -euo pipefail
@@ -69,7 +85,15 @@ spec:
         echo -n "$GIT_REVISION" > "$(results.git-revision.path)"
         echo -n "$COMPONENT_NAME" > "$(results.component-name.path)"
 
+        # Check if PR has the mcpchecker label
+        HAS_LABEL="false"
+        if echo "$PR_LABELS" | grep -qxF "$MCPCHECKER_LABEL"; then
+          HAS_LABEL="true"
+        fi
+        echo -n "$HAS_LABEL" > "$(results.has-mcpchecker-label.path)"
+
         echo "Component: $COMPONENT_NAME"
         echo "Image: $COMPONENT_IMAGE"
         echo "Git URL: $GIT_URL"
         echo "Git Revision: $GIT_REVISION"
+        echo "Has mcpchecker label: $HAS_LABEL"

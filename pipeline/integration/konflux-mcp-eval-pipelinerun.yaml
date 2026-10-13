@@ -116,6 +116,12 @@ spec:
         description: >-
           MCP eval image with mcpchecker binary, task suite files, and
           aggregation scripts baked in.
+      - name: PR_LABELS
+        type: string
+        default: ""
+        description: >-
+          Newline-separated PR labels injected by Pipelines as Code
+          via {{ pull_request_labels }}. Used to gate Phase 3.
 
     workspaces:
       - name: shared-workspace
@@ -140,6 +146,8 @@ spec:
         params:
           - name: SNAPSHOT
             value: $(params.SNAPSHOT)
+          - name: pr-labels
+            value: $(params.PR_LABELS)
 
       # ================================================================
       # Stage 2: Fetch MCP server source repository
@@ -259,6 +267,10 @@ spec:
       # ================================================================
       - name: mcp-behavioral-eval
         runAfter: [wait-ready]
+        when:
+          - input: "$(tasks.parse-snapshot.results.has-mcpchecker-label)"
+            operator: in
+            values: ["true"]
         taskRef:
           resolver: bundles
           params:
