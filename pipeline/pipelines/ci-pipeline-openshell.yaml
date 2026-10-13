@@ -182,13 +182,6 @@ spec:
     - name: pr-number
       type: string
       default: ""
-    - name: delete-retained-pods
-      type: string
-      default: "true"
-      description: >-
-        Passed to the finally cleanup task. Set to "false" to keep a run's
-        completed TaskRun pods (and their logs) past the run — the workspace
-        PVC then stays Terminating until cleaned up manually.
 
   results:
     - name: recommendation
@@ -420,7 +413,3 @@ spec:
       params:
         - name: pipelinerun-name
           value: $(context.pipelineRun.name)
-        # Surfaced from the Pipeline level: keep a run's pod logs past
-        # the run at the cost of the workspace PVC staying Terminating.
-        - name: delete-retained-pods
-          value: $(params.delete-retained-pods)

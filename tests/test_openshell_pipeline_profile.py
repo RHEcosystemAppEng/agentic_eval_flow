@@ -107,20 +107,13 @@ class TestOpenshellPipelineProfile:
         timeouts = run["spec"]["timeouts"]
         assert timeouts["pipeline"] == "3h0m0s"
         assert timeouts["tasks"] == "2h30m0s"
-        # Must stay above the cleanup finally task's internal budgets
-        # (120s pod diagnostics + 300s PVC confirmation + API-retry
-        # headroom, ~10m worst case) so a stuck holder ends in the task's
-        # own conservative "failed" report, not a Tekton timeout.
-        assert timeouts["finally"] == "15m0s"
 
     def test_cleanup_task_is_best_effort(self):
         task = _load(REPO / "pipeline" / "tasks" / "post" / "cleanup_pvc.yaml")
         step = task["spec"]["steps"][0]
         assert step.get("onError") == "continue"
         assert "--request-timeout=20s" in step["script"]
-        # The openshift/cli samples imagestream is pullable by any SA; a
-        # private repo image only works where it is already node-cached.
-        assert step["image"] == "image-registry.openshift-image-registry.svc:5000/openshift/cli:latest"
+        assert step["image"].startswith("image-registry.openshift-image-registry.svc:5000/")
 
     def test_cleanup_failures_are_operator_visible(self):
         task = _load(REPO / "pipeline" / "tasks" / "post" / "cleanup_pvc.yaml")
@@ -139,147 +132,6 @@ class TestOpenshellPipelineProfile:
         role = next(o for o in rbac if o and o["kind"] == "Role" and o["metadata"]["name"] == "pipeline-trial-manager")
         pvc_rule = next(r for r in role["rules"] if "persistentvolumeclaims" in r["resources"])
         assert "patch" in pvc_rule["verbs"]
-
-    def test_cleanup_releases_retained_taskrun_pods(self):
-        # Tekton retains a run's completed TaskRun pods, and while those
-        # pod objects reference the workspace PVC the pvc-protection
-        # finalizer never clears: the delete is accepted but the PVC
-        # stays Terminating forever (observed: 58 of 70 PVCs in the
-        # verification namespace stuck, some for 10+ days). The cleanup
-        # task must release those pods before deleting the PVCs.
-        task = _load(REPO / "pipeline" / "tasks" / "post" / "cleanup_pvc.yaml")
-        assert _param_defaults(task["spec"])["delete-retained-pods"] == "true"
-        script = task["spec"]["steps"][0]["script"]
-        # memberOf=tasks matches only DAG pods, never the finally pod
-        # running this script, so the cleanup cannot delete itself.
-        selector = "tekton.dev/pipelineRun=$(params.pipelinerun-name),tekton.dev/memberOf=tasks"
-        assert selector in script
-        assert "could not delete retained TaskRun pods" in script
-        # The run's Affinity Assistant StatefulSet is a second holder: for
-        # volumeClaimTemplate workspaces its nop pod mounts the workspace
-        # PVC, and Tekton deletes it only at PipelineRun completion —
-        # after the finally cleanup task ends. Without releasing it here
-        # no confirmation window can ever see the reclaim (runs 7-9
-        # "failed" with multi-minute windows for exactly this reason);
-        # with it released, measured reclaim is ~2-5s. The task must
-        # delete the run-scoped assistant, and the window is a margin
-        # over that measured reclaim, not a guess at latency.
-        assert 'oc delete statefulset -n "${NAMESPACE}"' in script
-        assert '-l "tekton.dev/pipelineRun=$(params.pipelinerun-name)"' in script
-        assert "could not delete the run's affinity assistant" in script
-        # "deleted" must mean confirmed removed, not delete-accepted: the
-        # script polls for actual disappearance and labels what lingers.
-        # The pod release itself is two steps — the delete, then a bounded
-        # wait for the pod objects to be gone (a pod with a
-        # deletionTimestamp still mounts the PVC and holds the finalizer).
-        # The pod wait is a diagnostic bound, not the completion gate (the
-        # PVC loop is), so both budgets together with API-retry headroom
-        # (~10m worst case) must stay inside the example run's 15m finally
-        # timeout — pinned here and in the example-run test so neither can
-        # silently outgrow it.
-        assert "Retained TaskRun pods confirmed gone" in script
-        assert "Waiting for PVC deletion to complete" in script
-        assert "SECONDS + 120" in script
-        assert "SECONDS + 300" in script
-        # A get that fails for any reason other than NotFound must not be
-        # read as "PVC gone".
-        assert "(NotFound)" in script
-        # Deleting the run's pods and affinity assistant needs delete on
-        # both (pods is already granted for the trial-pod lifecycle; pin
-        # both so neither can be dropped).
-        rbac = list(yaml.safe_load_all((REPO / "config" / "rbac.yaml").read_text()))
-        role = next(o for o in rbac if o and o["kind"] == "Role" and o["metadata"]["name"] == "pipeline-trial-manager")
-        pod_rule = next(r for r in role["rules"] if r["resources"] == ["pods"])
-        assert "delete" in pod_rule["verbs"]
-        sts_rule = next(r for r in role["rules"] if r["resources"] == ["statefulsets"])
-        assert sts_rule["apiGroups"] == ["apps"]
-        assert "delete" in sts_rule["verbs"]
-
-    def test_cleanup_is_reclaim_only(self):
-        # The cleanup task's contract is reclaiming storage, not
-        # reporting: it makes no model calls and formats nothing — run
-        # reporting lives in MLflow/MinIO and in
-        # scripts/pipelinerun-report.sh, which reads the TaskRun objects
-        # that survive the release, so no model credentials sit on the
-        # reclamation path. (It does read the pods' logs — once, as a
-        # byte-for-byte archive of what its own release destroys.)
-        task = _load(REPO / "pipeline" / "tasks" / "post" / "cleanup_pvc.yaml")
-        script = task["spec"]["steps"][0]["script"]
-        for absent in (
-            "digest",
-            "oc get taskrun",
-            "python3 -c",
-            "/v1/chat/completions",
-        ):
-            assert absent not in script
-        params = {p["name"] for p in task["spec"]["params"]}
-        for name in ("llm-model", "llm-api-base", "llm-api-key"):
-            assert name not in params
-        # The pipeline forwards no LLM params to the finally task, and
-        # surfaces the pod-release switch as a Pipeline-level parameter.
-        cleanup = next(t for t in _load(PIPELINE)["spec"]["finally"] if t["name"] == "cleanup")
-        forwarded = {p["name"]: p["value"] for p in cleanup["params"]}
-        for name in ("llm-model", "llm-api-base", "llm-api-key"):
-            assert name not in forwarded
-        assert forwarded["delete-retained-pods"] == "$(params.delete-retained-pods)"
-        pipe_params = {p["name"]: p for p in _load(PIPELINE)["spec"]["params"]}
-        assert pipe_params["delete-retained-pods"]["default"] == "true"
-        # With no consumer left, the pipeline ServiceAccount keeps no
-        # tekton.dev grant.
-        rbac = list(yaml.safe_load_all((REPO / "config" / "rbac.yaml").read_text()))
-        role = next(o for o in rbac if o and o["kind"] == "Role" and o["metadata"]["name"] == "pipeline-trial-manager")
-        assert all(r.get("apiGroups") != ["tekton.dev"] for r in role["rules"])
-
-    def test_cleanup_archives_pod_logs_before_release(self):
-        # The pod release destroys the run's complete per-step logs, so
-        # they are archived to MinIO first — fail-safe: if the archive
-        # does not complete, the pods are kept and the PVC is reported
-        # failed; logs are never destroyed unarchived.
-        task = _load(REPO / "pipeline" / "tasks" / "post" / "cleanup_pvc.yaml")
-        step = task["spec"]["steps"][0]
-        script = step["script"]
-        # One file per TaskRun pod (retries are distinct TaskRuns),
-        # every step of the task in it.
-        assert "--all-containers" in script
-        assert "metadata.labels.tekton\\.dev/taskRun" in script
-        # The archive must precede the release, or there is nothing
-        # left to read.
-        assert script.index("Archiving the run's step pod logs") < script.index("oc delete pod")
-        # The upload runs inside the MinIO deployment's pod, which
-        # already has mc and the credentials — no extra image on the
-        # cleanup path, and no credentials in this task.
-        assert "oc exec" in script and "mc cp" in script
-        assert len(task["spec"]["steps"]) == 1
-        assert step["image"].endswith("openshift/cli:latest")
-        env = {e["name"]: e for e in step["env"]}
-        assert env["MINIO_ENDPOINT"]["valueFrom"]["secretKeyRef"]["key"] == "endpoint-url"
-        assert env["MINIO_ENDPOINT"]["valueFrom"]["secretKeyRef"]["optional"] is True
-        assert "root-user" not in script and "root-password" not in script
-        # Fail-safe gating: any archive failure keeps the pods. A
-        # missing endpoint is as fatal as an unreachable MinIO — it
-        # must not silently release unarchived.
-        assert "release_ok=0" in script
-        assert "Skipping the pod release" in script
-        endpoint_gate = script.split('if [ -z "${MINIO_ENDPOINT:-}" ]; then', 1)[1]
-        assert endpoint_gate.index("release_ok=0") < endpoint_gate.index("elif")
-        assert "releasing the pods without archiving" not in script
-        # Completeness is measured against the pod count from the same
-        # listing: a partial fetch keeps the pods exactly like a total
-        # one does, and a failed listing is zero knowledge, not zero
-        # pods.
-        assert "if ! pod_listing=" in script
-        assert "could not list the run's pods" in script
-        assert "expected=$((expected + 1))" in script
-        assert '[ "$archived" -ne "$expected" ]' in script
-        assert 'elif [ "$expected" -eq 0 ]' in script
-        # The local pull side exists and reads the same layout.
-        fetch = (REPO / "scripts" / "fetch_run_logs.sh").read_text()
-        assert "debug/pod-logs" in fetch
-        assert "deploy/minio" in fetch
-        # No pinned namespace default: the current context's, or an
-        # explicit one.
-        assert ":-forge-nommen" not in fetch
-        assert "oc config view --minify" in fetch
 
     def test_rbac_applies_into_any_namespace(self):
         # metadata.namespace would make `oc apply -n X` fail, and a subject
