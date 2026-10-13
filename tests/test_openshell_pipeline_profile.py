@@ -267,7 +267,7 @@ class TestOpenshellPipelineProfile:
         # listing: a partial fetch keeps the pods exactly like a total
         # one does, and a failed listing is zero knowledge, not zero
         # pods.
-        assert 'if ! pod_listing=' in script
+        assert "if ! pod_listing=" in script
         assert "could not list the run's pods" in script
         assert "expected=$((expected + 1))" in script
         assert '[ "$archived" -ne "$expected" ]' in script
