@@ -1,0 +1,62 @@
+{
+  "count": 3,
+  "max_all_state_lists": 1,
+  "created_actions": [
+    {
+      "context_ref": "m365:review-a",
+      "to": [
+        "morgan@example.test"
+      ]
+    },
+    {
+      "context_ref": "m365:review-b",
+      "to": [
+        "morgan@example.test"
+      ]
+    },
+    {
+      "context_ref": "m365:review-c",
+      "to": [
+        "morgan@example.test"
+      ]
+    }
+  ],
+  "content": [
+    {
+      "match": {
+        "context_ref": "m365:review-a",
+        "to": [
+          "morgan@example.test"
+        ]
+      },
+      "body_patterns": [
+        "review",
+        "(?:September|Sept?\\.?) 28|28 (?:September|Sept?\\.?)"
+      ]
+    },
+    {
+      "match": {
+        "context_ref": "m365:review-b",
+        "to": [
+          "morgan@example.test"
+        ]
+      },
+      "body_patterns": [
+        "review",
+        "(?:September|Sept?\\.?) 28|28 (?:September|Sept?\\.?)"
+      ]
+    },
+    {
+      "match": {
+        "context_ref": "m365:review-c",
+        "to": [
+          "morgan@example.test"
+        ]
+      },
+      "body_patterns": [
+        "review",
+        "(?:September|Sept?\\.?) 28|28 (?:September|Sept?\\.?)"
+      ]
+    }
+  ]
+}

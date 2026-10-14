@@ -1,0 +1,82 @@
+name: forge-connectors
+mlflow:
+  experiment: forge-controlled
+models:
+  skill: inference/rits/zai-org/glm-5-3
+  judge: rits/zai-org/glm-5-3
+runner:
+  type: openclaw
+  settings:
+    forge_gateway: true
+    forge_required_outputs:
+    - .openclaw/tmp/brief.evidence.json
+    forge_providers:
+    - forge-ai-gateway
+    - m365-read-intervm
+  system_prompt: Use only the governed collector. Read operations only; do not create
+    drafts or send messages.
+  providers:
+    inference:
+      baseUrl: https://host.containers.internal:18084/v1
+      api: openai-completions
+      apiKey: $FORGE_AI_GATEWAY_BEARER
+      request:
+        allowPrivateNetwork: true
+      models:
+      - id: rits/zai-org/glm-5-3
+        name: GLM 5.3
+        api: openai-completions
+        reasoning: true
+        contextWindow: 262144
+        maxTokens: 65536
+        compat:
+          maxTokensField: max_completion_tokens
+          supportsReasoningEffort: true
+          supportedReasoningEfforts:
+          - high
+          - max
+          reasoningEffortMap:
+            'off': high
+            minimal: high
+            low: high
+            medium: high
+            high: high
+            xhigh: max
+            max: max
+        params:
+          reasoning_effort: high
+  effort: high
+execution:
+  mode: case
+  prompt: '{{ input.prompt }}'
+  timeout: 300
+  env:
+    NODE_USE_ENV_PROXY: '1'
+    FORGE_SOURCES: m365-only
+    CLIMICROSOFT365_GRAPH_BASE_URL: https://host.containers.internal:18080
+    CLIMICROSOFT365_NOUPDATE: '1'
+dataset:
+  path: cases
+  workspace:
+    files: []
+outputs:
+- path: output
+  schema: Collection result
+- path: .openclaw/tmp
+  schema: Canonical collected and sealed evidence
+- path: eval-results
+  schema: Measured usage
+judges:
+- name: collector_contract
+  check: 'import json
+
+    rows = [json.loads(v) if isinstance(v,str) else v for k,v in outputs.get(''files'',{}).items()
+    if k.endswith(''brief.evidence.json'')]
+
+    return len(rows)==1 and rows[0].get(''sealed'') is True and rows[0].get(''schemaVersion'')==1
+    and rows[0].get(''requestedSources'')==[''microsoft365''] and not rows[0].get(''unavailable'')'
+  feedback_type: bool
+thresholds:
+  collector_contract:
+    min_pass_rate: 1
+    max_error_rate: 0

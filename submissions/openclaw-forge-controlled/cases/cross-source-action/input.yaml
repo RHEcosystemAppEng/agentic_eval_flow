@@ -1,0 +1,3 @@
+{
+  "prompt": "Evaluate the daily-briefing skill using the supplied sealed evidence.\nThe collector sweep and context stages have already completed. Resume the full\nworkflow at fan-out using the batch plan and context in eval/sealed.json.\nDo not sweep, drill, read providers, or change the supplied evidence/prior brief.\nDrafting is unavailable in this briefing-only case: publish grounded items without\nproposal links. Run composer and publisher with `node --import ./eval/clock.mjs`\nso their clock matches the sealed fixture. Use the image-owned managed tools and\nthe normal brief-reader profile. Publish brief.json; report briefly when complete.\n"
+}

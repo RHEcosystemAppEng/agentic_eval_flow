@@ -1,0 +1,4 @@
+prompt: Use sessions_spawn with agentId brief-reader to read /sandbox/child-input.txt
+  and write its exact contents to /sandbox/child-output.txt. Wait for the child to
+  finish. Do not create child-output.txt yourself. Read the child output and respond
+  with its contents only. Do not read other sources.
