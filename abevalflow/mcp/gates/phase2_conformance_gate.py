@@ -78,7 +78,7 @@ class Phase2Gate:
 
     @timed_gate
     def evaluate(self, reports_dir: Path, policy: GatePolicy) -> GateResult:
-        gate_policy = policy.get_gate_policy("quality")
+        gate_policy = policy.get_gate_policy(self.check)
         mode = gate_policy.mode
         path = reports_dir / self.result_filename
 

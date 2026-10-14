@@ -551,12 +551,20 @@ def probe_all(server_url: str, *, timeout: float = 30.0, openapi_url: str | None
             # fails instead of a synthetic empty wrapper reading as not_evaluated.
             first_page = client.list_tools()
             if _tools_list_error(first_page) is None:
-                # Check if the first page has a nextCursor indicating more pages.
-                # If not, use the first page directly (avoids a redundant re-fetch).
-                result = first_page.message.get("result", {}) if isinstance(first_page.message, dict) else {}
-                next_cursor = result.get("nextCursor") if isinstance(result, dict) else None
+                # Extract page-1 tools and cursor. If there's a next page, resume
+                # pagination from there (avoids re-fetching page 1).
+                fp_result = first_page.message.get("result", {}) if isinstance(first_page.message, dict) else {}
+                fp_tools = (
+                    [t for t in fp_result.get("tools", []) if isinstance(t, dict)]
+                    if isinstance(fp_result, dict)
+                    else []
+                )
+                next_cursor = fp_result.get("nextCursor") if isinstance(fp_result, dict) else None
                 if next_cursor and isinstance(next_cursor, str):
-                    all_tools = client.list_all_tools()
+                    all_tools = client.list_all_tools(
+                        initial_tools=fp_tools,
+                        start_cursor=next_cursor,
+                    )
                     tools_resp = RpcResponse(
                         status_code=200,
                         headers={},
