@@ -267,12 +267,44 @@ spec:
             workspace: target-kubeconfig
 
       # ================================================================
+      # Stage 5b: Check whether the gating PR label is present
+      # ================================================================
+      - name: check-label
+        runAfter: [parse-snapshot]
+        params:
+          - name: pr-labels
+            value: $(tasks.parse-snapshot.results.pr-labels)
+          - name: target-label
+            value: $(params.MCPCHECKER_LABEL)
+        taskSpec:
+          params:
+            - name: pr-labels
+              type: string
+            - name: target-label
+              type: string
+          results:
+            - name: has-label
+              description: "'true' if target-label appears in pr-labels, 'false' otherwise"
+          steps:
+            - name: check
+              image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+              script: |
+                #!/usr/bin/env bash
+                if echo "$(params.pr-labels)" | grep -qxF "$(params.target-label)"; then
+                  echo -n "true" > "$(results.has-label.path)"
+                else
+                  echo -n "false" > "$(results.has-label.path)"
+                fi
+
+      # ================================================================
       # Stage 6: MCP Behavioral evaluation (mcpchecker)
       # ================================================================
       - name: mcp-behavioral-eval
         runAfter: [wait-ready]
         when:
-          - cel: "'$(params.MCPCHECKER_LABEL)' in '$(tasks.parse-snapshot.results.pr-labels)'.split('\n')"
+          - input: "$(tasks.check-label.results.has-label)"
+            operator: in
+            values: ["true"]
         taskRef:
           resolver: bundles
           params:
