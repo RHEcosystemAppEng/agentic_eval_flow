@@ -8,7 +8,7 @@
 #     schemas / observability, and scripts.mcp) importable via PYTHONPATH=/opt
 #   - the scanners/probes it shells out to: gitleaks, semgrep, licensee
 #   - the minimal Python deps the code imports: pydantic, pyyaml, httpx
-#   - mcpchecker binary (built from source) + Node.js for MCP protocol support
+#   - mcpchecker binary + Node.js (copied from mcpchecker-runner)
 #   - default behavioral task suite (suites/mcp/default)
 #   - mcpchecker result aggregation script
 #   - envsubst for runtime MCP_URL injection
@@ -17,14 +17,8 @@
 #   podman build -t quay.io/ecosystem-appeng/abevalflow-mcp-eval:0.1 \
 #     -f containers/mcp-eval/Containerfile .
 
-# ── Stage 1: Build mcpchecker from source ──
-FROM golang:1.26-alpine AS mcpchecker-builder
-
-RUN apk add --no-cache git
-
-WORKDIR /build
-RUN git clone --depth 1 https://github.com/mcpchecker/mcpchecker.git .
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /mcpchecker ./cmd/mcpchecker
+# ── Stage 1: mcpchecker-runner (source for mcpchecker binary + Node.js) ──
+FROM quay.io/ecosystem-appeng/mcpchecker-runner:latest AS mcpchecker-runner
 
 # ── Stage 2: Runtime image ──
 FROM registry.access.redhat.com/ubi9/python-312:latest
@@ -38,8 +32,8 @@ ARG HTTPX_VERSION=0.28.1
 
 USER 0
 
-# mcpchecker binary
-COPY --from=mcpchecker-builder /mcpchecker /usr/local/bin/mcpchecker
+# Copy mcpchecker binary from mcpchecker-runner
+COPY --from=mcpchecker-runner /usr/local/bin/mcpchecker /usr/local/bin/mcpchecker
 RUN chmod +x /usr/local/bin/mcpchecker
 
 # MCP eval code — only the verified import closure (abevalflow.mcp pulls in

@@ -8,8 +8,9 @@
 # the pipeline tasks to reach the target cluster.
 #
 # Pipeline stages:
-#   parse-snapshot → fetch-mcp-repo → create-namespace → deploy-mcp → wait-ready
-#     → mcp-behavioral-eval
+#   parse-snapshot → fetch-mcp-repo → mcp-phase1-static
+#   parse-snapshot → create-namespace → deploy-mcp → wait-ready
+#     → mcp-phase2-conformance → mcp-behavioral-eval
 #   finally: teardown-namespace
 #
 # PREREQUISITES:
@@ -180,7 +181,34 @@ spec:
             subPath: _mcp-server-repo
 
       # ================================================================
-      # Stage 3: Create ephemeral namespace on target cluster
+      # Stage 3: MCP Phase 1 - Static Analysis
+      # ================================================================
+      - name: mcp-phase1-static
+        runAfter: [fetch-mcp-repo]
+        taskRef:
+          resolver: bundles
+          params:
+            - name: name
+              value: mcp-phase1-static
+            - name: bundle
+              value: quay.io/ecosystem-appeng/abevalflow-task-mcp-phase1-static:0.1
+            - name: kind
+              value: task
+        params:
+          - name: mcp-eval-image
+            value: $(params.MCP_EVAL_IMAGE)
+          - name: source-subdir
+            value: "_mcp-server-repo"
+          - name: submission-name
+            value: $(context.pipelineRun.name)
+          - name: mode
+            value: "block"
+        workspaces:
+          - name: source
+            workspace: shared-workspace
+
+      # ================================================================
+      # Stage 4: Create ephemeral namespace on target cluster
       # ================================================================
       - name: create-namespace
         runAfter: [parse-snapshot]
@@ -203,7 +231,7 @@ spec:
             workspace: target-kubeconfig
 
       # ================================================================
-      # Stage 4: Deploy MCP server into ephemeral namespace
+      # Stage 5: Deploy MCP server into ephemeral namespace
       # ================================================================
       - name: deploy-mcp
         runAfter: [fetch-mcp-repo, create-namespace]
@@ -244,7 +272,7 @@ spec:
             workspace: target-kubeconfig
 
       # ================================================================
-      # Stage 5: Wait for MCP server readiness
+      # Stage 6: Wait for MCP server readiness
       # ================================================================
       - name: wait-ready
         runAfter: [deploy-mcp]
@@ -267,7 +295,36 @@ spec:
             workspace: target-kubeconfig
 
       # ================================================================
-      # Stage 5b: Check whether the gating PR label is present
+      # Stage 7: MCP Phase 2 - Conformance Checks
+      # ================================================================
+      - name: mcp-phase2-conformance
+        runAfter: [wait-ready]
+        taskRef:
+          resolver: bundles
+          params:
+            - name: name
+              value: mcp-phase2-conformance
+            - name: bundle
+              value: quay.io/ecosystem-appeng/abevalflow-task-mcp-phase2-conformance:0.1
+            - name: kind
+              value: task
+        params:
+          - name: mcp-eval-image
+            value: $(params.MCP_EVAL_IMAGE)
+          - name: server-url
+            value: "http://$(params.SERVICE_NAME).$(tasks.create-namespace.results.namespace-name).svc.cluster.local:$(params.SERVICE_PORT)/mcp"
+          - name: submission-name
+            value: $(context.pipelineRun.name)
+          - name: mode
+            value: "block"
+          - name: timeout
+            value: "30"
+        workspaces:
+          - name: source
+            workspace: shared-workspace
+
+      # ================================================================
+      # Stage 7b: Check whether the gating PR label is present
       # ================================================================
       - name: check-label
         runAfter: [parse-snapshot]
@@ -297,10 +354,10 @@ spec:
                 fi
 
       # ================================================================
-      # Stage 6: MCP Behavioral evaluation (mcpchecker)
+      # Stage 8: MCP Phase 3 - Behavioral Evaluation (mcpchecker)
       # ================================================================
       - name: mcp-behavioral-eval
-        runAfter: [wait-ready]
+        runAfter: [mcp-phase2-conformance, check-label]
         when:
           - input: "$(tasks.check-label.results.has-label)"
             operator: in
