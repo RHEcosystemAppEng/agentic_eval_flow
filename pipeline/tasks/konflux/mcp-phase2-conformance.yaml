@@ -1,0 +1,147 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: mcp-phase2-conformance
+  labels:
+    app.kubernetes.io/name: abevalflow
+    app.kubernetes.io/component: konflux
+spec:
+  description: >-
+    MCP evaluation Phase 2 - deterministic contract/conformance (ADR Approach 4).
+    Black-box, no LLM. Probes the deployed, running MCP server over Streamable
+    HTTP for protocol/schema/HTTP conformance and operational limits, and
+    consumes the checks Compass already collects as real facts (tool-name rules,
+    OAuth match). Uses the three-state model
+    (pass / fail / not_evaluated): an unreachable server or a check that cannot
+    produce a meaningful signal is reported not_evaluated, never failed. Assumes
+    the server was already deployed and became ready in a prior pipeline step
+    (reached at <service-name>:8080 by convention).
+  params:
+    - name: mcp-eval-image
+      type: string
+      default: "quay.io/ecosystem-appeng/abevalflow-mcp-eval:0.1"
+      description: >-
+        MCP eval image with the probe dependencies (httpx, pydantic, pyyaml) and
+        the pipeline code (scripts.mcp, abevalflow.mcp) baked in at PYTHONPATH=/opt.
+    - name: server-url
+      type: string
+      description: MCP endpoint URL, e.g. http://<service-name>:8080/mcp
+    - name: submission-name
+      type: string
+      description: Name used for the report directory (reports/<submission-name>/).
+    - name: mode
+      type: string
+      default: "block"
+      description: Gate enforcement mode - block, warn, or disabled.
+    - name: timeout
+      type: string
+      default: "30"
+      description: Per-request HTTP timeout (seconds) for the probe.
+    - name: openapi-url
+      type: string
+      default: ""
+      description: >-
+        Explicit OpenAPI contract URL for the openapi-conformance check. Empty
+        probes well-known paths on the server root; a server publishing no
+        reachable contract fails the check (ADR baseline requirement).
+    - name: compass-facts-file
+      type: string
+      default: ""
+      description: >-
+        Workspace-relative path to a Compass facts JSON for the consumed checks
+        (file mode). Ignored when compass-url + compass-entity-ref are set.
+    - name: compass-url
+      type: string
+      default: ""
+      description: >-
+        SoundCheck API base URL for live Compass result consumption, e.g.
+        https://compass.stage.redhat.com/api/soundcheck. Requires
+        compass-entity-ref and COMPASS_API_KEY in the pod environment.
+    - name: compass-entity-ref
+      type: string
+      default: ""
+      description: >-
+        Compass entity ref for the MCP server being evaluated, e.g.
+        mcpserver:redhat/my-server. Used with compass-url for live mode.
+  workspaces:
+    - name: source
+      description: Workspace for the reports directory.
+  results:
+    - name: phase2-passed
+      description: Whether Phase 2 passed (no check FAILED in block mode).
+    - name: report-path
+      description: Workspace-relative path to the Phase 2 reports directory.
+  steps:
+    - name: probe
+      image: $(params.mcp-eval-image)
+      # User-controlled params are bound to env vars (Tekton substitutes them as
+      # literal strings) instead of inlined into the script, so a value containing
+      # shell metacharacters cannot execute in the task pod.
+      env:
+        - name: SERVER_URL
+          value: $(params.server-url)
+        - name: SUBMISSION_NAME
+          value: $(params.submission-name)
+        - name: TIMEOUT
+          value: $(params.timeout)
+        - name: OPENAPI_URL
+          value: $(params.openapi-url)
+        - name: COMPASS_FACTS_FILE
+          value: $(params.compass-facts-file)
+        - name: COMPASS_URL
+          value: $(params.compass-url)
+        - name: COMPASS_ENTITY_REF
+          value: $(params.compass-entity-ref)
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        REPORTS_DIR="$(workspaces.source.path)/reports/$SUBMISSION_NAME"
+        mkdir -p "$REPORTS_DIR"
+
+        echo "=== Phase 2 live probe against $SERVER_URL ==="
+        python -m scripts.mcp.probes.phase2_conformance_probe \
+          --server-url "$SERVER_URL" \
+          --reports-dir "$REPORTS_DIR" \
+          --timeout "$TIMEOUT" \
+          --openapi-url "$OPENAPI_URL"
+
+        # Compass-consumed checks: live mode (API) takes precedence over file mode.
+        if [ -n "$COMPASS_URL" ] && [ -n "$COMPASS_ENTITY_REF" ]; then
+          echo "=== Phase 2 Compass consume (live) for $COMPASS_ENTITY_REF ==="
+          python -m scripts.mcp.probes.phase2_compass_probe \
+            --compass-url "$COMPASS_URL" \
+            --entity-ref "$COMPASS_ENTITY_REF" \
+            --reports-dir "$REPORTS_DIR"
+        elif [ -n "$COMPASS_FACTS_FILE" ]; then
+          echo "=== Phase 2 Compass consume (file) from $COMPASS_FACTS_FILE ==="
+          python -m scripts.mcp.probes.phase2_compass_probe \
+            --facts-file "$(workspaces.source.path)/$COMPASS_FACTS_FILE" \
+            --reports-dir "$REPORTS_DIR"
+        else
+          echo "No Compass source given; consumed checks will report not_evaluated."
+          python -m scripts.mcp.probes.phase2_compass_probe \
+            --reports-dir "$REPORTS_DIR"
+        fi
+
+    - name: gate
+      image: $(params.mcp-eval-image)
+      env:
+        - name: SUBMISSION_NAME
+          value: $(params.submission-name)
+        - name: MODE
+          value: $(params.mode)
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        REPORTS_DIR="$(workspaces.source.path)/reports/$SUBMISSION_NAME"
+
+        # Shared gate wrapper (baked in the image): runs the gate module, emits the
+        # Tekton results from the summary, and propagates the gate's exit code.
+        bash /opt/scripts/mcp/gate_wrapper.sh \
+          scripts.mcp.runners.phase2_gate \
+          "$REPORTS_DIR" \
+          "$MODE" \
+          "$REPORTS_DIR/phase2-summary.json" \
+          "$(results.phase2-passed.path)" \
+          "reports/$SUBMISSION_NAME" \
+          "$(results.report-path.path)"
