@@ -122,6 +122,10 @@ spec:
         description: >-
           Newline-separated PR labels injected by Pipelines as Code
           via {{ pull_request_labels }}. Used to gate the MCP behavioral evaluation task.
+      - name: MCPCHECKER_LABEL
+        type: string
+        default: "mcpchecker"
+        description: PR label that enables the MCP behavioral evaluation task
 
     workspaces:
       - name: shared-workspace
@@ -268,9 +272,7 @@ spec:
       - name: mcp-behavioral-eval
         runAfter: [wait-ready]
         when:
-          - input: "$(tasks.parse-snapshot.results.has-mcpchecker-label)"
-            operator: in
-            values: ["true"]
+          - cel: "'$(params.MCPCHECKER_LABEL)' in '$(tasks.parse-snapshot.results.pr-labels)'.split('\n')"
         taskRef:
           resolver: bundles
           params:
