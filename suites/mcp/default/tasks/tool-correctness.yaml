@@ -1,0 +1,46 @@
+# MCP Behavioral Evaluation — Tool Correctness
+#
+# Run real tasks against the MCP server's tools and verify that
+# the outputs are valid and conform to the declared schemas.
+# This test is server-agnostic: it discovers available tools
+# dynamically and invokes each with reasonable inputs.
+
+apiVersion: mcpchecker/v1
+kind: Task
+metadata:
+  name: tool-correctness
+  description: >-
+    Discover and invoke all available MCP tools, verify each returns
+    a valid response conforming to its declared schema.
+
+spec:
+  prompt: |
+    You are testing an MCP server for tool correctness.
+
+    1. List all available tools on the MCP server.
+    2. For each tool, read its input schema carefully.
+    3. Invoke each tool with valid, reasonable input arguments that
+       conform to its declared input schema.
+    4. Report for each tool:
+       - The tool name
+       - The input you provided
+       - Whether the call succeeded or failed
+       - A summary of the response received
+
+    Do not skip any tools. If a tool requires specific resource
+    identifiers you do not have, use plausible placeholder values
+    and note this in your report.
+
+  minToolCalls: 1
+
+  verify:
+    - type: llm_judge
+      description: All discovered tools were invoked with valid inputs
+      criteria: |
+        The agent must have:
+        1. Successfully listed the available tools on the MCP server
+        2. Attempted to invoke each discovered tool at least once
+        3. Provided inputs that match each tool's declared input schema
+        4. Reported the result of each tool invocation clearly
+        5. Not fabricated tool calls — every reported call must correspond
+           to an actual MCP tool interaction

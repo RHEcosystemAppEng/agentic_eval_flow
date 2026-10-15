@@ -66,6 +66,30 @@ spec:
 
         echo "Namespace created"
 
+        # Grant the pipeline SA all workload permissions in this namespace.
+        # References the mcp-eval-ephemeral-access ClusterRole (template),
+        # scoping its permissions to this namespace via a RoleBinding.
+        # This must come before other resource creation in this namespace.
+        cat <<EOF | oc apply -n "$NAMESPACE" -f -
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: RoleBinding
+        metadata:
+          name: mcp-eval-ephemeral-access
+          labels:
+            app.kubernetes.io/part-of: abevalflow
+            app.kubernetes.io/name: mcp-eval
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: mcp-eval-ephemeral-access
+        subjects:
+          - kind: ServiceAccount
+            name: mcp-eval-pipeline
+            namespace: default
+        EOF
+
+        echo "Granted ephemeral access in namespace"
+
         # Default deny all ingress
         cat <<EOF | oc apply -n "$NAMESPACE" -f -
         apiVersion: networking.k8s.io/v1
