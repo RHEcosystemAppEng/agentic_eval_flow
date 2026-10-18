@@ -84,15 +84,17 @@ def main() -> int:
     )
 
     # Exit codes: 0 clean/normal. Any output on a crash goes to stderr.
-    if result.returncode != 0:
-        logger.error("gitleaks failed (exit %d): %s", result.returncode, result.stderr.strip())
-        return 1
-
+    # All paths must clean up the temp file — use try/finally around the whole block.
     try:
-        raw = json.loads(report_path.read_text() or "[]")
-    except (json.JSONDecodeError, OSError) as exc:
-        logger.error("Could not read gitleaks report: %s", exc)
-        return 1
+        if result.returncode != 0:
+            logger.error("gitleaks failed (exit %d): %s", result.returncode, result.stderr.strip())
+            return 1
+
+        try:
+            raw = json.loads(report_path.read_text() or "[]")
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.error("Could not read gitleaks report: %s", exc)
+            return 1
     finally:
         report_path.unlink(missing_ok=True)
 

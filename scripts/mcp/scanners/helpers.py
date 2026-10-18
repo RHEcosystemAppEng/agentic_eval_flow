@@ -2,7 +2,7 @@
 
 Provides ``run_tool`` (shell out to a scanner CLI) and ``write_scan`` (write
 normalized scan JSON). Finding construction (``make_finding``) lives in
-``abevalflow.mcp.types`` — scanners import it from there.
+``abevalflow.mcp.helpers`` — scanners import it from there.
 
 All Phase 1 scanners emit the same JSON shape so the Phase 1 gates (which reuse
 ``SecurityGate.evaluate_scan_json``) can read them uniformly::

@@ -58,17 +58,38 @@ class RpcResponse:
 
 
 def _parse_sse_messages(text: str) -> list[dict[str, Any] | list[Any]]:
-    """Extract every JSON-RPC message from an SSE stream body, in order."""
+    """Extract every JSON-RPC message from an SSE stream body, in order.
+
+    Per the SSE spec, multiple consecutive ``data:`` lines before a blank line
+    are concatenated with newlines to form a single event payload. This handles
+    servers that split a JSON-RPC response across multiple ``data:`` lines.
+    """
     messages: list[dict[str, Any] | list[Any]] = []
+    data_lines: list[str] = []
     for line in text.splitlines():
         if line.startswith("data:"):
-            payload = line[len("data:") :].strip()
-            if not payload:
-                continue
+            data_lines.append(line[len("data:") :].strip())
+        elif not line.strip():
+            # Blank line = end of event. Concatenate accumulated data lines.
+            if data_lines:
+                payload = "\n".join(data_lines)
+                data_lines = []
+                if not payload:
+                    continue
+                try:
+                    messages.append(json.loads(payload))
+                except json.JSONDecodeError:
+                    continue
+        # Non-data, non-blank lines (e.g. "event:", "id:") are ignored for our
+        # purposes — we only need the JSON-RPC payloads.
+    # Handle trailing data without a final blank line.
+    if data_lines:
+        payload = "\n".join(data_lines)
+        if payload:
             try:
                 messages.append(json.loads(payload))
             except json.JSONDecodeError:
-                continue
+                pass
     return messages
 
 
@@ -227,15 +248,25 @@ class MCPClient:
         params: dict[str, Any] = {"cursor": cursor} if cursor else {}
         return self.post({"jsonrpc": "2.0", "id": request_id, "method": "tools/list", "params": params})
 
-    def list_all_tools(self, *, max_pages: int = 50) -> list[dict[str, Any]]:
+    def list_all_tools(
+        self,
+        *,
+        max_pages: int = 50,
+        initial_tools: list[dict[str, Any]] | None = None,
+        start_cursor: str | None = None,
+    ) -> list[dict[str, Any]]:
         """Return every tool across all ``tools/list`` pages, following ``nextCursor``.
 
         Paginating matters for conformance: a server can place a malformed tool on
         a later page, so validating only page one would miss it. ``max_pages``
         bounds a server that returns an endless or self-repeating cursor.
+
+        When ``initial_tools`` and ``start_cursor`` are provided, pagination
+        resumes from that cursor instead of re-fetching page one (avoids a
+        redundant request and duplicate tools).
         """
-        tools: list[dict[str, Any]] = []
-        cursor: str | None = None
+        tools: list[dict[str, Any]] = list(initial_tools) if initial_tools else []
+        cursor: str | None = start_cursor
         seen_cursors: set[str] = set()
         for page in range(max_pages):
             resp = self.list_tools(request_id=2 + page, cursor=cursor)
