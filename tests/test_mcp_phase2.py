@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+from unittest.mock import Mock
 
 import pytest
 
@@ -17,7 +18,7 @@ from abevalflow.gates.base import GateMode
 from abevalflow.mcp.checks import phase2_conformance_checks as phase2_probe
 from abevalflow.mcp.gates import PHASE2_CHECKS, Phase2Gate, run_phase2
 from abevalflow.mcp.helpers import write_check_result
-from abevalflow.mcp.mcp_client import RpcResponse, _parse_sse_messages, _select_response
+from abevalflow.mcp.mcp_client import MCPClient, RpcResponse, _parse_sse_messages, _select_response
 from abevalflow.mcp.types import STATUS_FAIL, STATUS_NOT_EVALUATED, STATUS_PASS, CheckOutcome
 from abevalflow.schemas import GatePolicy
 from scripts.mcp.probes import phase2_compass_probe as compass_fetch
@@ -97,6 +98,26 @@ def test_select_response_matches_string_id_against_int_request():
         {"jsonrpc": "2.0", "id": "2", "result": {"tools": []}},
     ]
     assert _select_response(messages, 2) == {"jsonrpc": "2.0", "id": "2", "result": {"tools": []}}
+
+
+def test_post_raw_string_does_not_read_id_as_mapping():
+    client = MCPClient.__new__(MCPClient)
+    client.endpoint_url = "http://mcp.test/mcp"
+    client.protocol_version = "2025-06-18"
+    client.negotiated_version = None
+    client.session_id = None
+    client._client = Mock()
+    response = Mock()
+    response.status_code = 200
+    response.headers = {"content-type": "application/json"}
+    response.text = '{"jsonrpc":"2.0","id":7,"result":{}}'
+    client._client.post.return_value = response
+
+    raw_body = '{"jsonrpc":"2.0","id":7,"method":"tools/list"}'
+    result = client.post(raw_body, raw=True)
+
+    assert result.message == {"jsonrpc": "2.0", "id": 7, "result": {}}
+    assert client._client.post.call_args.kwargs["content"] == raw_body
 
 
 def test_list_all_tools_follows_pagination():
