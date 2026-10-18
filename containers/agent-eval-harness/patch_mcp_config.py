@@ -25,49 +25,46 @@ Anchored on exact source strings (not line numbers) so a future AEH_SHA
 bump either patches cleanly or fails the build loudly -- never silently
 no-ops.
 """
+
 import sys
 from pathlib import Path
 
-TARGET = Path(sys.argv[1] if len(sys.argv) > 1 else
-              "/opt/agent-eval-harness/agent_eval/harbor/run.py")
+TARGET = Path(sys.argv[1] if len(sys.argv) > 1 else "/opt/agent-eval-harness/agent_eval/harbor/run.py")
 
 FUNC_ANCHOR = (
-    "            print(f\"WARNING: plugin exports no skills; not forwarding {path} \"\n"
-    "                  f\"to the Harbor {agent_name} agent\", file=sys.stderr)\n"
+    '            print(f"WARNING: plugin exports no skills; not forwarding {path} "\n'
+    '                  f"to the Harbor {agent_name} agent", file=sys.stderr)\n'
     "    return roots\n"
 )
 
 NEW_FUNC = (
     "\n\n"
     "def _resolve_harbor_mcp_configs(config: EvalConfig) -> list[Path]:\n"
-    "    \"\"\"Resolve per-pack mcps.json files for Harbor's ``--mcp-config`` option.\n"
+    '    """Resolve per-pack mcps.json files for Harbor\'s ``--mcp-config`` option.\n'
     "\n"
     "    Mirrors _resolve_harbor_skill_roots above: each runner.plugin_dirs entry\n"
     "    is a pack root (e.g. rh-sre/) that may commit its own mcps.json --\n"
-    "    already in the \"Claude-style .mcp.json\" shape ({\"mcpServers\": {...}})\n"
+    '    already in the "Claude-style .mcp.json" shape ({"mcpServers": {...}})\n'
     "    harbor run --help documents for --mcp-config. Packs with no mcps.json\n"
     "    (no MCP servers declared) are silently skipped, same tolerance as the\n"
     "    skill-roots resolver for plugins that export no skills.\n"
-    "    \"\"\"\n"
+    '    """\n'
     "    configs: list[Path] = []\n"
     "    for configured in config.runner.plugin_dirs:\n"
     "        path = resolve_plugin_dir(config, configured)\n"
-    "        mcps_path = path / \"mcps.json\"\n"
+    '        mcps_path = path / "mcps.json"\n'
     "        if mcps_path.is_file():\n"
     "            configs.append(mcps_path)\n"
     "    return configs\n"
 )
 
-CMD_ANCHOR = (
-    "    for root in _resolve_harbor_skill_roots(config, agent_name):\n"
-    "        cmd += [\"--skill\", str(root)]\n"
-)
+CMD_ANCHOR = '    for root in _resolve_harbor_skill_roots(config, agent_name):\n        cmd += ["--skill", str(root)]\n'
 
 CMD_INSERT = (
     "    for root in _resolve_harbor_skill_roots(config, agent_name):\n"
-    "        cmd += [\"--skill\", str(root)]\n"
+    '        cmd += ["--skill", str(root)]\n'
     "    for mcp_config in _resolve_harbor_mcp_configs(config):\n"
-    "        cmd += [\"--mcp-config\", str(mcp_config)]\n"
+    '        cmd += ["--mcp-config", str(mcp_config)]\n'
 )
 
 MARKER = "_resolve_harbor_mcp_configs"

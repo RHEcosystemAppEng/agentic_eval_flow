@@ -55,6 +55,7 @@ def _disable_ssl_verification() -> None:
         def _patched_init(self, *args, **kwargs):
             kwargs["verify"] = False
             return orig(self, *args, **kwargs)
+
         return _patched_init
 
     # Patch both httpx and httpx2 (the anthropic SDK vendors/depends on a

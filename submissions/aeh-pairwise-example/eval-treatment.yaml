@@ -1,68 +1,51 @@
-# AEH Treatment configuration (with skill)
-# This represents the agent with skill enhancements that we're testing
-
 skill: aeh-pairwise-example
-
-# Runner configuration - Claude Code with skill loaded
 runner:
   type: claude-code
   effort: low
   settings:
     permission_mode: bypassPermissions
-  # Plugin directories load the skill being tested (relative to submission root)
   plugin_dirs:
-    - skills
-
-# Model configuration
+  - skills
 models:
   skill: claude-sonnet-4-5
   judge: claude-sonnet-4-5
-
-# Dataset location (relative to submission)
 dataset:
   path: cases
-
-# Case artifact path required by score.py pairwise comparison
 outputs:
-  - path: output
-
-# Judges evaluate each case - same judges as control for fair comparison
+- path: output
 judges:
-  - name: task_completion
-    type: check
-    check: |
-      exit_code = outputs.get("exit_code", 1)
-      return exit_code == 0, f"Exit code: {exit_code}"
-  
-  - name: output_quality
-    type: llm
-    prompt: |
-      Rate the quality of the agent's output on a scale of 1-5.
-      
-      Task: {input}
-      Output: {output}
-      
-      Consider correctness, completeness, and clarity.
-      Respond with a JSON object: {"score": <1-5>, "reason": "<explanation>"}
-  
-  # Explicit pairwise comparison judge for A/B testing
-  # Used by score.py pairwise --judge pairwise to determine winner
-  # Note: score.py builds its own "Output A / Output B" message format;
-  # this prompt provides evaluation criteria only
-  - name: pairwise
-    type: llm
-    prompt: |
-      Compare the two agent outputs and determine which better accomplishes the task.
-      
-      Evaluation criteria:
-      - Correctness: Does it solve the problem accurately?
-      - Completeness: Does it fully address all requirements?
-      - Quality: Is the solution well-structured and clear?
-      - Efficiency: Is it concise without sacrificing correctness?
-      
-      Prefer the output that scores higher across these criteria.
+- name: task_completion
+  type: check
+  check: |
+    exit_code = outputs.get("exit_code", 1)
+    return exit_code == 0, f"Exit code: {exit_code}"
+- name: output_quality
+  type: llm
+  prompt: |
+    Rate the quality of the agent's output on a scale of 1-5.
 
-# Thresholds for pass/fail
+    Task: {{ inputs }}
+    Output: {{ conversation }}
+    {{ outputs }}
+
+    Consider correctness, completeness, and clarity.
+    Respond with a JSON object: {"score": <1-5>, "reason": "<explanation>"}
+  score_range:
+  - 1
+  - 5
+- name: pairwise
+  type: llm
+  prompt: |
+    Compare the two agent outputs and determine which better accomplishes the task.
+    Use this case ground truth: {{ annotations }}
+
+    Evaluation criteria:
+    - Correctness: Does it solve the problem accurately?
+    - Completeness: Does it fully address all requirements?
+    - Quality: Is the solution well-structured and clear?
+    - Efficiency: Is it concise without sacrificing correctness?
+
+    Prefer the output that scores higher across these criteria.
 thresholds:
   task_completion:
     min_pass_rate: 0.8

@@ -9,7 +9,7 @@ Extends agent-eval-harness KubernetesEnvironment with:
    directory is missing, the redirect fails, ``test.sh`` never executes, and
    ``download_dir`` returns empty stdout → ``DownloadVerifierDirError``.
 
-Usage (classic Harbor A/B and AEH):
+AEH environment configuration:
 
     environment:
       import_path: abevalflow.harbor_extensions.openshift_environment:OpenShiftEnvironment

@@ -17,7 +17,7 @@ Usage::
         --results-dir /workspace/eval-results/my-submission \\
         --reports-dir /workspace/reports/my-submission \\
         --workspace-root /workspace \\
-        --eval-engine harbor \\
+        --eval-engine aeh \\
         --pipeline-run-id abc123
 """
 
@@ -42,8 +42,7 @@ from abevalflow.compass_facts import (
     validate_push_facts_config,
 )
 from abevalflow.engines import get_engine
-from abevalflow.gates.base import GateResult, GateType
-from abevalflow.gates.behavioral import get_all_behavioral_gates
+from abevalflow.gates.base import GateResult
 from abevalflow.gates.quality import get_all_quality_gates
 from abevalflow.gates.security import get_all_security_gates
 from abevalflow.operational_policy import check_operational_policy
@@ -82,6 +81,27 @@ def load_gate_policy(submission_dir: Path) -> GatePolicy:
         return GatePolicy()
 
 
+def _has_eval_assets(submission_dir: Path) -> bool:
+    """Whether a submission contains single or pairwise AEH evaluation assets."""
+    if (submission_dir / "eval.yaml").exists() or (submission_dir / "cases").is_dir():
+        return True
+
+    control_name = "eval-control.yaml"
+    treatment_name = "eval-treatment.yaml"
+    metadata_path = submission_dir / "metadata.yaml"
+    if metadata_path.is_file():
+        try:
+            data = yaml.safe_load(metadata_path.read_text()) or {}
+            if isinstance(data, dict):
+                metadata = SubmissionMetadata(**data)
+                control_name = metadata.aeh_control_config
+                treatment_name = metadata.aeh_treatment_config
+        except Exception as e:  # noqa: BLE001 — best-effort; fall back to defaults
+            logger.debug("Failed to read aeh_control_config/aeh_treatment_config: %s", e)
+
+    return (submission_dir / control_name).exists() or (submission_dir / treatment_name).exists()
+
+
 def load_certification_policy(
     submission_dir: Path,
     profile_name: str | None = None,
@@ -95,7 +115,7 @@ def load_certification_policy(
 
     Args:
         submission_dir: Path to submission directory
-        profile_name: Optional profile name (e.g., 'skill', 'agent')
+        profile_name: Optional profile name (skill)
 
     Returns:
         CertificationPolicy or None for defaults
@@ -191,19 +211,7 @@ def _extract_behavioral_data(
     reports_dir: Path,
     gates: list[GateResult],
 ) -> dict | None:
-    """Extract behavioral testing data for certification.
-
-    Assembles behavioral_data from two sources:
-    - std_reward: read from report.json (trial variance for consistency check)
-    - edge_cases: extracted from the EdgeCaseGate result in gates list
-      (single source of truth — avoids re-reading report.json)
-
-    Stability sub-check data is not extracted here because no pipeline
-    component currently produces it. The sub-check function in
-    certification.py is ready and will activate when upstream producers exist.
-    TODO: Add stability extraction here once get_historical_variance()
-    in monitor.py is wired into the pipeline.
-    """
+    """Read AEH trial variance for the certification consistency check."""
     behavioral_data: dict = {}
 
     # Extract trial variance from report.json
@@ -218,15 +226,6 @@ def _extract_behavioral_data(
                 behavioral_data["std_reward"] = std_reward
         except (json.JSONDecodeError, OSError) as e:
             logger.warning("Failed to parse report.json for behavioral data: %s", e)
-
-    # Extract edge case counts from the EdgeCaseGate result
-    for gate in gates:
-        if gate.gate_type == GateType.BEHAVIORAL and gate.details.get("total") is not None:
-            behavioral_data["edge_cases"] = {
-                "total": gate.details["total"],
-                "passed": gate.details.get("passed", 0),
-            }
-            break
 
     return behavioral_data if behavioral_data else None
 
@@ -247,9 +246,9 @@ def aggregate_scorecard(
         results_dir: Path to eval-results/{submission-name}/
         reports_dir: Path to reports/{submission-name}/
         workspace_root: Path to workspace root (for _ai_review.json)
-        eval_engine: Primary evaluation engine name (or "both" for Harbor+ASE)
+        eval_engine: Evaluation engine (aeh)
         pipeline_run_id: Tekton PipelineRun ID
-        certification_profile: Optional profile name (e.g., 'skill', 'agent').
+        certification_profile: Optional profile name (skill).
             If provided and submission has no certification_policy in metadata.yaml,
             the profile's checks are used instead of hardcoded defaults.
 
@@ -267,16 +266,7 @@ def aggregate_scorecard(
     gates: list[GateResult] = []
     fact_push_results: list[FactPushResult] = []
 
-    # Determine which engines to process and their report directories
-    # In 'both' mode, Harbor reports are in reports_dir/harbor/, ASE in reports_dir/
-    if eval_engine == "both":
-        engine_configs = [
-            ("harbor", reports_dir / "harbor"),
-            ("ase", reports_dir),
-        ]
-        logger.info("'both' engine mode: processing Harbor and ASE")
-    else:
-        engine_configs = [(eval_engine, reports_dir)]
+    engine_configs = [(eval_engine, reports_dir)]
 
     # Process all requested engines
     for engine_name, engine_reports_dir in engine_configs:
@@ -326,120 +316,6 @@ def aggregate_scorecard(
             fact_push_results.append(push_result)
         logger.info("Quality %s: passed=%s, score=%.3f", quality_gate.name, gate_result.passed, gate_result.score)
 
-    for behavioral_gate in get_all_behavioral_gates():
-        if not policy.is_enabled(behavioral_gate.name):
-            logger.info("Behavioral gate %s is disabled, skipping", behavioral_gate.name)
-            continue
-
-        logger.info("Processing behavioral gate: %s", behavioral_gate.name)
-        gate_result = behavioral_gate.evaluate(reports_dir, policy)
-        gates.append(gate_result)
-        push_result = _maybe_push_fact(gate_result, policy)
-        if push_result:
-            fact_push_results.append(push_result)
-        logger.info(
-            "Behavioral %s: passed=%s, score=%.3f",
-            behavioral_gate.name,
-            gate_result.passed,
-            gate_result.score,
-        )
-
-    # Red team gate: Promptfoo + optional PyRIT Crescendo (combined)
-    redteam_results_path = reports_dir / "redteam-results.json"
-    pyrit_results_path = reports_dir / "pyrit-crescendo-results.json"
-    if redteam_results_path.exists() or pyrit_results_path.exists():
-        logger.info(
-            "Processing red team gate (promptfoo=%s, pyrit=%s)",
-            redteam_results_path.exists(),
-            pyrit_results_path.exists(),
-        )
-        try:
-            from abevalflow.gates.base import Finding, Severity
-
-            pf_finding_objects: list[Finding] = []
-            pf_total = 0
-            pf_num = 0
-            if redteam_results_path.exists():
-                redteam_data = json.loads(redteam_results_path.read_text())
-                results_list = redteam_data.get("results", {}).get("results", [])
-                pf_total = len(results_list)
-                failed = [
-                    r
-                    for r in results_list
-                    if r.get("gradingResult")
-                    and not r["gradingResult"].get("pass", True)
-                    and "fetch failed" not in (r["gradingResult"].get("reason") or "")
-                ]
-                pf_num = len(failed)
-                pf_finding_objects = [
-                    Finding(
-                        severity=Severity.HIGH,
-                        message=(f.get("gradingResult", {}).get("reason") or "")[:200],
-                        rule_id=f"promptfoo:{f.get('test', {}).get('metadata', {}).get('pluginId', 'unknown')}",
-                    )
-                    for f in failed[:15]
-                ]
-
-            crescendo_finding_objects: list[Finding] = []
-            crescendo_total = 0
-            crescendo_num = 0
-            if pyrit_results_path.exists():
-                pyrit_data = json.loads(pyrit_results_path.read_text())
-                if not pyrit_data.get("skipped"):
-                    cres_results = pyrit_data.get("crescendo_results") or []
-                    crescendo_total = len(cres_results)
-                    achieved = [r for r in cres_results if r.get("objective_achieved")]
-                    crescendo_num = len(achieved)
-                    crescendo_finding_objects = [
-                        Finding(
-                            severity=Severity.HIGH,
-                            message=f"{(r.get('objective') or '')[:80]} — {(r.get('judge_reason') or '')[:80]}",
-                            rule_id="crescendo",
-                        )
-                        for r in achieved[:10]
-                    ]
-
-            num_findings = pf_num + crescendo_num
-            total = pf_total + crescendo_total
-            passed = num_findings == 0
-            score = 1.0 - (num_findings / max(total, 1)) if total else 1.0
-            details_parts = []
-            if redteam_results_path.exists():
-                details_parts.append(f"promptfoo={pf_num}/{pf_total}")
-            if pyrit_results_path.exists() and crescendo_total:
-                details_parts.append(f"crescendo={crescendo_num}/{crescendo_total}")
-
-            redteam_gate = GateResult(
-                gate_name="security",
-                policy_key="red_team",
-                gate_type=GateType.SECURITY,
-                passed=passed,
-                score=round(score, 4),
-                details={
-                    "promptfoo_findings": pf_num,
-                    "promptfoo_total": pf_total,
-                    "crescendo_findings": crescendo_num,
-                    "crescendo_total": crescendo_total,
-                    "total_findings": num_findings,
-                    "total_tests": total,
-                },
-                findings=(pf_finding_objects + crescendo_finding_objects)[:20],
-                message=(
-                    f"{num_findings} vulnerabilities in {total} adversarial tests "
-                    f"({', '.join(details_parts) or 'no tests'})"
-                ),
-            )
-            gates.append(redteam_gate)
-            logger.info(
-                "Red team: passed=%s, score=%.3f, findings=%d/%d",
-                passed,
-                score,
-                num_findings,
-                total,
-            )
-        except Exception as e:
-            logger.warning("Failed to process red team results: %s", e, exc_info=True)
-
     recommendation, reason = apply_combination_logic(gates, policy)
     logger.info("Final recommendation: %s (%s)", recommendation, reason)
 
@@ -473,7 +349,7 @@ def aggregate_scorecard(
         validation_passed = False
         metadata_valid = False
 
-    has_eval_assets = (submission_dir / "evals" / "evals.json").exists() or (submission_dir / "tests").exists()
+    has_eval_assets = _has_eval_assets(submission_dir)
 
     operational_limits = certification_policy.get_operational_limits() if certification_policy else OperationalLimits()
     operational_policy_result = check_operational_policy(submission_dir, limits=operational_limits)
@@ -627,7 +503,7 @@ def main() -> int:
         "--eval-engine",
         type=str,
         required=True,
-        choices=["harbor", "ase", "a2a", "mcpchecker", "aeh", "aeh_openshell_openclaw", "both"],
+        choices=["aeh"],
         help="Primary evaluation engine",
     )
     parser.add_argument(
@@ -646,7 +522,7 @@ def main() -> int:
         "--certification-profile",
         type=str,
         default=None,
-        help="Certification profile name (e.g., 'skill', 'agent', 'mcp_server'). "
+        help="Skill certification profile. "
         "Provides default checks per artifact type. Overridden by submission's metadata.yaml.",
     )
 

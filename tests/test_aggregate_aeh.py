@@ -259,6 +259,189 @@ class TestAggregatePairwiseRun:
         assert report["pairwise"]["win_rate"] == pytest.approx(0.1)
         assert report["recommendation"] == "fail"
 
+    def test_summary_pass_rate_is_grounded_not_pairwise_wins(self, tmp_path: Path):
+        """Regression test for the exact bug pattern seen in production:
+
+        treatment's own judges score it a perfect reward on every case,
+        control's own judges score it well below passing on every case, but
+        the pairwise LLM judge (comparing only the two final reports, with
+        no access to ground truth) prefers control on both. Before this fix,
+        ``summary.treatment.pass_rate``/``n_passed`` were set from the
+        pairwise win count (0, here), directly contradicting
+        ``summary.treatment.mean_reward`` (1.0) two keys below in the same
+        object. They must now agree: pass_rate reflects each arm's own
+        grounded reward, and the pairwise win/loss stays only under
+        ``report["pairwise"]``.
+        """
+        treatment = tmp_path / "skill" / "treatment-1"
+        control = tmp_path / "skill" / "control-1"
+        _write_summary(
+            treatment,
+            {
+                "run_id": "treatment-1",
+                "mean_reward": 1.0,
+                "per_case": {
+                    "case-001": {"validation_accuracy": {"value": 1.0, "judge_type": "llm"}},
+                    "case-002": {"validation_accuracy": {"value": 1.0, "judge_type": "llm"}},
+                },
+                "pairwise": {
+                    "run_a": "treatment-1",
+                    "run_b": "control-1",
+                    "cases_compared": 2,
+                    "wins_a": 0,
+                    "wins_b": 2,
+                    "ties": 0,
+                    "errors": 0,
+                    "per_case": [
+                        {"case_id": "case-001", "winner": "B"},
+                        {"case_id": "case-002", "winner": "B"},
+                    ],
+                },
+            },
+        )
+        _write_summary(
+            control,
+            {
+                "run_id": "control-1",
+                "mean_reward": 0.0,
+                "per_case": {
+                    "case-001": {"validation_accuracy": {"value": 0.0, "judge_type": "llm"}},
+                    "case-002": {"validation_accuracy": {"value": 0.0, "judge_type": "llm"}},
+                },
+            },
+        )
+        report = aggregate_pairwise_run(treatment, control)
+
+        # The win/loss signal is intact under "pairwise" ...
+        assert report["pairwise"]["wins_a"] == 0
+        assert report["pairwise"]["wins_b"] == 2
+        assert report["recommendation"] == "fail"  # pairwise still gates recommendation, by design
+
+        # ... but "summary" no longer contradicts "mean_reward" with it.
+        t_summary = report["summary"]["treatment"]
+        c_summary = report["summary"]["control"]
+        assert t_summary["mean_reward"] == 1.0
+        assert t_summary["pass_rate"] == 1.0  # grounded: both of treatment's own cases scored 1.0
+        assert t_summary["n_passed"] == 2
+        assert c_summary["mean_reward"] == 0.0
+        assert c_summary["pass_rate"] == 0.0  # grounded: both of control's own cases scored 0.0
+        assert c_summary["n_passed"] == 0
+        assert report["summary"]["uplift"] == 1.0  # grounded pass-rate gap, not a pairwise win-rate gap
+
+    def test_bare_int_one_uses_declared_score_range_from_config(self, tmp_path: Path):
+        """Regression test for the production cve-validation bug: a
+
+        ``validation_accuracy`` judge declared ``score_range: [0, 1]`` in
+        eval-treatment.yaml/eval-control.yaml scored a perfect response as
+        the bare JSON int ``1``. Without the judge's declared score_range,
+        that ``1`` was misread as a 1-5 Likert floor (reward 0.0) for every
+        trial, even though Harbor's own declared ``mean_reward`` was 1.0 --
+        producing a report.json that contradicted itself in the same
+        ``summary.treatment`` block. Passing --treatment-config/
+        --control-config (-> treatment_config_path/control_config_path)
+        must resolve the ambiguity so trial-level rewards agree with
+        mean_reward.
+        """
+        treatment = tmp_path / "cve-validation" / "treatment-1"
+        control = tmp_path / "cve-validation" / "control-1"
+        treatment_config = tmp_path / "eval-treatment.yaml"
+        control_config = tmp_path / "eval-control.yaml"
+        treatment_config.write_text(
+            yaml.dump(
+                {
+                    "judges": [
+                        {"name": "wrote_report", "type": "check"},
+                        {"name": "used_mcp_tool", "type": "check"},
+                        {"name": "validation_accuracy", "type": "llm", "score_range": [0, 1]},
+                    ]
+                }
+            )
+        )
+        control_config.write_text(
+            yaml.dump(
+                {
+                    "judges": [
+                        {"name": "wrote_report", "type": "check"},
+                        {"name": "validation_accuracy", "type": "llm", "score_range": [0, 1]},
+                    ]
+                }
+            )
+        )
+        _write_summary(
+            treatment,
+            {
+                "run_id": "treatment-1",
+                "mean_reward": 1.0,
+                "per_case": {
+                    "case-001": {
+                        "used_mcp_tool": {"value": True, "judge_type": "check"},
+                        "validation_accuracy": {"value": 1, "judge_type": "llm"},
+                        "wrote_report": {"value": True, "judge_type": "check"},
+                    },
+                    "case-002": {
+                        "used_mcp_tool": {"value": True, "judge_type": "check"},
+                        "validation_accuracy": {"value": 1, "judge_type": "llm"},
+                        "wrote_report": {"value": True, "judge_type": "check"},
+                    },
+                },
+                "pairwise": {
+                    "run_a": "treatment-1",
+                    "run_b": "control-1",
+                    "cases_compared": 2,
+                    "wins_a": 0,
+                    "wins_b": 2,
+                    "ties": 0,
+                    "errors": 0,
+                    "per_case": [
+                        {"case_id": "case-001", "winner": "B"},
+                        {"case_id": "case-002", "winner": "B"},
+                    ],
+                },
+            },
+        )
+        _write_summary(
+            control,
+            {
+                "run_id": "control-1",
+                "mean_reward": 1.0,
+                "per_case": {
+                    "case-001": {
+                        "wrote_report": {"value": True, "judge_type": "check"},
+                        "validation_accuracy": {"value": 1, "judge_type": "llm"},
+                    },
+                    "case-002": {
+                        "wrote_report": {"value": True, "judge_type": "check"},
+                        "validation_accuracy": {"value": 1, "judge_type": "llm"},
+                    },
+                },
+            },
+        )
+
+        report = aggregate_pairwise_run(
+            treatment,
+            control,
+            treatment_config_path=treatment_config,
+            control_config_path=control_config,
+        )
+
+        # Every trial's reward must now agree with mean_reward=1.0, not 0.0.
+        for trial in report["trials"]["treatment"] + report["trials"]["control"]:
+            assert trial["reward"] == 1.0
+
+        t_summary = report["summary"]["treatment"]
+        c_summary = report["summary"]["control"]
+        assert t_summary["mean_reward"] == 1.0
+        assert t_summary["n_passed"] == 2
+        assert t_summary["pass_rate"] == 1.0
+        assert t_summary["median_reward"] == 1.0
+        assert c_summary["mean_reward"] == 1.0
+        assert c_summary["n_passed"] == 2
+        assert c_summary["pass_rate"] == 1.0
+
+        # The pairwise win/loss signal (a separate, legitimate question) is untouched.
+        assert report["pairwise"]["wins_b"] == 2
+        assert report["recommendation"] == "fail"
+
     def test_submission_name_override(self, tmp_path: Path):
         run_dir = tmp_path / "skill-from-path" / "run-1"
         _write_summary(
@@ -292,14 +475,14 @@ class TestAggregatePairwiseRun:
 
 
 class TestLoadExecutionMetadata:
-    def test_openshell_fields(self, tmp_path: Path):
+    def test_harbor_fields(self, tmp_path: Path):
         run_dir = tmp_path / "run"
         run_dir.mkdir()
         (run_dir / "run_result.json").write_text(
             json.dumps(
                 {
-                    "execution_mode": "openshell",
-                    "agent": "openshell:openclaw",
+                    "execution_mode": "harbor",
+                    "agent": "claude-code",
                     "n_cases": 2,
                     "n_failed": 0,
                     "wall_clock_s": 277.1,
@@ -314,8 +497,8 @@ class TestLoadExecutionMetadata:
             )
         )
         meta = _load_execution_metadata(run_dir)
-        assert meta["execution_mode"] == "openshell"
-        assert meta["agent"] == "openshell:openclaw"
+        assert meta["execution_mode"] == "harbor"
+        assert meta["agent"] == "claude-code"
         assert meta["n_cases"] == 2
         assert meta["n_failed"] == 0
         assert meta["wall_clock_s"] == 277.1
@@ -328,12 +511,12 @@ class TestLoadExecutionMetadata:
         (run_dir / "summary.yaml").write_text(
             yaml.dump({"run_id": "run", "mean_reward": 0.0, "per_case": {}, "judges": {}})
         )
-        report = aggregate_single_run(run_dir, eval_engine="aeh_openshell_openclaw")
-        assert report["eval_engine"] == "aeh_openshell_openclaw"
-        assert report["execution"]["execution_mode"] == "openshell"
+        report = aggregate_single_run(run_dir, eval_engine="aeh")
+        assert report["eval_engine"] == "aeh"
+        assert report["execution"]["execution_mode"] == "harbor"
         result = AnalysisResult.model_validate(report)
         assert result.execution is not None
-        assert result.execution["execution_mode"] == "openshell"
+        assert result.execution["execution_mode"] == "harbor"
 
     def test_harbor_fields_unchanged(self, tmp_path: Path):
         run_dir = tmp_path / "run"
@@ -384,7 +567,7 @@ class TestExtractMeanReward:
             },
         )
         assert _extract_mean_reward(run_dir) is None
-        report = aggregate_single_run(run_dir, eval_engine="aeh_openshell_openclaw")
+        report = aggregate_single_run(run_dir, eval_engine="aeh")
         assert report["mean_reward"] is None
         assert report["summary"]["treatment"]["mean_reward"] is None
         assert report["summary"]["treatment"]["n_errors"] == 1
@@ -446,6 +629,33 @@ class TestExtractMeanReward:
         assert report["passed_cases"] == 1
         assert report["recommendation"] == "pass"
 
+    def test_single_mode_uses_config_score_range(self, tmp_path: Path):
+        """``--config`` (-> config_path) disambiguates a bare unit-scale ``1``
+
+        in single mode the same way --treatment-config/--control-config do
+        in pairwise mode.
+        """
+        run_dir = tmp_path / "run"
+        config = tmp_path / "eval.yaml"
+        config.write_text(yaml.dump({"judges": [{"name": "quality", "type": "llm", "score_range": [0, 1]}]}))
+        _write_summary(
+            run_dir,
+            {
+                "run_id": "run-1",
+                "per_case": {
+                    "case-001": {"quality": {"value": 1, "judge_type": "llm"}},
+                },
+                "judges": {"quality": {"mean": 1.0}},
+            },
+        )
+        assert _extract_mean_reward(run_dir) == 0.0  # no config: Likert-floor heuristic
+        assert _extract_mean_reward(run_dir, score_ranges={"quality": (0.0, 1.0)}) == 1.0
+
+        report = aggregate_single_run(run_dir, config_path=config)
+        assert report["mean_reward"] == 1.0
+        assert report["trials"]["treatment"][0]["reward"] == 1.0
+        assert report["recommendation"] == "pass"
+
     def test_likert_floor_without_mean_reward_is_fail_not_perfect(self, tmp_path: Path):
         """vf668 shape: int 1 LLM scores + passing booleans, no top-level mean_reward.
 
@@ -456,7 +666,7 @@ class TestExtractMeanReward:
         _write_summary(
             run_dir,
             {
-                "run_id": "aeh-openshell-openclaw-vf668",
+                "run_id": "aeh-harbor-openclaw-vf668",
                 "per_case": {
                     "analysis-panel": {
                         "analysis_accuracy": {"value": 1, "judge_type": "llm"},
@@ -483,7 +693,7 @@ class TestExtractMeanReward:
             },
         )
         assert _extract_mean_reward(run_dir) == 0.0
-        report = aggregate_single_run(run_dir, eval_engine="aeh_openshell_openclaw")
+        report = aggregate_single_run(run_dir, eval_engine="aeh")
         assert report["mean_reward"] == 0.0
         assert report["summary"]["treatment"]["n_passed"] == 0
         assert report["summary"]["treatment"]["n_failed"] == 2

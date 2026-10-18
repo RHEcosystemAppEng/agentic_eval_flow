@@ -1,171 +1,72 @@
-# Agentic Eval Flow
+# AEH runtime for Konflux skill evaluation
 
-Automated Tekton-orchestrated pipeline on OpenShift for evaluating AI artifacts:
+This repository supplies the images and Python code used by
+`konflux-shared-tasks/task/aeh-skill-eval`. That shared Tekton Task owns the
+workflow and fans out once per catalog skill. AEH runs through Harbor on
+Kubernetes/OpenShift, in single or control/treatment pairwise mode.
 
-- **Skills** -- Measures skill efficacy by comparing agent performance with and without skills (A/B "gap" testing)
-- **MCP Servers** -- Validates MCP server implementations via task-based verification
-- **Agents** -- Evaluates full agent behavior using Harbor (general agents) or A2A protocol (A2A-compliant agents)
+The supported flow is:
 
-Produces statistical reports with pass rates, uplift metrics, significance tests, and a unified scorecard.
+1. Materialize the caller's trusted source artifact into a private workspace per skill.
+2. Always scan the skill with Cisco Skill Scanner and harness-eval.
+3. Validate and review an opted-in, changed skill with an AEH submission.
+4. Run AEH in separate trial pods and aggregate its judge results.
+5. Optionally produce scorecards, push Compass Facts, attach OCI reports, and store results in Postgres/MinIO.
+6. Emit independent Tier A and Tier B Konflux results. Tier B is `SKIPPED` when evaluation does not apply.
 
-## Pipelines
+Persistence is independently gated by `enable-persistence`. It can store
+scan-only scorecards for skills without AEH submissions or without an opted-in
+evaluation. Scanner findings remain available even when a scan exits nonzero.
 
-| Pipeline | Purpose | Key Differences |
-|----------|---------|-----------------|
-| **CI Pipeline** | Full evaluation for new submissions | Includes security scan, quality review, artifact generation |
-| **Monitoring Pipeline** | Regression detection for deployed artifacts | Includes degradation check against historical baseline, Slack alerts |
+## Images
 
-## How It Works
+All five images share `quay.io/ecosystem-appeng/agent-eval-harness`; each
+purpose has its own tag. Build them from this repository's root:
 
-The pipeline executes in six main stages, with engine-specific steps within each:
-
-### 1. Prepare
-- Clone submission repository
-- Validate structure and `metadata.yaml` schema
-- AI-assisted generation of missing test artifacts (optional)
-
-### 2. Test (CI Pipeline only)
-- **Quality Review** -- AI-powered review of skill/test coherence (advisory)
-- **Security Scan** -- [Cisco AI Defense](https://github.com/cisco-ai-defense/skill-scanner) scan for prompt injection, data exfiltration risks
-- **Security & Quality Scan** -- [harness-eval](https://github.com/redhat-community-ai-tools/harness-eval) deterministic scan (27 rule categories covering prompt injection, credential access, obfuscation, coercive overrides, stealth persistence, data exfiltration, description quality, broken references, and more)
-
-### 3. Evaluate
-
-Six evaluation engines, each suited for different artifact types:
-
-| Engine | Evaluates | Comparison Mode | Container Isolation |
-|--------|-----------|-----------------|---------------------|
-| **Harbor** | Skills, general agents | A/B (treatment vs control) | Yes |
-| **ASE** | Skills only | A/B (treatment vs control) | No |
-| **A2A** | A2A-protocol agents | A/B (treatment vs control) | Yes |
-| **MCPChecker** | MCP servers | Single-agent task verification | No |
-| **AEH** | Agents, skills | Judge-based evaluation | Yes (K8s Harbor pods) |
-| **AEH OpenShell OpenClaw** | OpenClaw agents via forge-saw | Judge-based (AEH scoring) | Yes (SAW VM + inner sandbox) |
-
-Engines are implemented in `abevalflow/engines/` using a registry pattern.
-
-### 4. Analyze
-- Compute pass rates, uplift (gap), statistical significance (p-value)
-- Generate `report.json` and `report.md`
-- Aggregate gate results into unified `scorecard.json`
-- **Monitoring only:** Check for degradation against historical baseline
-
-### 5. Store
-- Upload reports and artifacts to MinIO
-- Record results to PostgreSQL for historical analysis
-
-### 6. Cleanup
-- Remove temporary workspaces and artifacts
-
-## Configuration
-
-Submission routing and gate configuration are defined in `metadata.yaml`. For
-AEH, `eval.yaml` defines execution, the dataset and judges; PipelineRun parameters
-and installed Tekton resources define infrastructure and source revisions:
-
-```yaml
-name: my-submission
-eval_engine: harbor              # harbor, ase, a2a, mcpchecker, aeh, or aeh_openshell_openclaw
-persona: general                 # Agent persona for Harbor/A2A
-
-experiment:
-  n_trials: 20                   # Number of evaluation attempts
-
-gate_policy:
-  default_mode: warn
-  combination: all_pass
-  gates:
-    evaluation:
-      mode: block
-      threshold: 0.0
-    security:
-      mode: warn
+```sh
+make images IMAGE_REPOSITORY=quay.io/ecosystem-appeng/agent-eval-harness VERSION=v3.0
 ```
 
-See [Gate Policy Configuration](Docs/gates-architecture.md#gate-policy-configuration) for full options.
+| Purpose tag suffix | Containerfile | Used by |
+|---|---|---|
+| `-task` | [task utilities](containers/aeh-task/Containerfile) | Source preparation, validation, MCP configuration rewriting, advisory review, reporting, scorecards, storage, result serialization |
+| `-security-scan` | [Cisco scanner](containers/security-scan/Containerfile) | `security-scan` step |
+| `-skillmd-scan` | [SKILL.md scanner](containers/skillmd-scan/Containerfile) | `skillmd-scan` step |
+| `-runner` | [orchestrator](containers/agent-eval-harness/Containerfile) | `run-eval` step; creates trial pods and performs suite-level scoring |
+| `-trial` | [trial runtime](containers/aeh-trial/Containerfile) | Trial pods; Claude Code, stdio mock MCP server, AEH reward verifier |
 
-## Repository Structure
+The shared task selects these independently through `task-image`,
+`security-scan-image`, `skillmd-scan-image`, `runner-image`, and `aeh-image`.
+`aeh-image` means the **trial pod image**. External trusted-artifact and ORAS
+steps retain their Konflux images.
 
+See [the published test release](Docs/test-release-20261019.md),
+[image builds and release wiring](Docs/images.md),
+[the shared task contract](Docs/konflux-integration-guide.md),
+[submission files](Docs/submission-formats.md), and
+[persistence](Docs/persistence.md).
+
+## Development
+
+```sh
+uv sync --extra dev --extra observability --locked
+uv run --locked --extra dev --extra observability pytest tests/ -q
+uv run --locked --extra dev ruff check abevalflow scripts tests containers
+uv run --locked --extra dev ruff format --check abevalflow scripts tests containers
 ```
-agentic_eval_flow/
-├── Docs/                    # ADR, implementation plan, guides
-├── pipeline/
-│   ├── pipeline.yaml        # Main pipeline definition
-│   ├── triggers/            # EventListener, TriggerTemplate, TriggerBinding
-│   └── tasks/               # Tekton task definitions (phases, components, post)
-├── templates/               # Jinja2 templates (Dockerfiles, test.sh, task.toml)
-├── scripts/                 # Python scripts invoked by pipeline tasks
-├── config/                  # K8s manifests (RBAC, PostgreSQL, LiteLLM)
-└── tests/                   # Unit and integration tests
+
+Validate a local submission:
+
+```sh
+uv run --locked python scripts/validate.py submissions/aeh-hello-world --eval-engine aeh
+uv run --locked python scripts/validate.py submissions/aeh-pairwise-example \
+  --eval-engine aeh --aeh-mode pairwise
 ```
 
-## Related Repositories
-
-| Repository | Purpose |
-|---|---|
-| [skill-submissions](https://github.com/RHEcosystemAppEng/skill-submissions) | Submission intake -- users push skills, MCP evals, and agent evals here |
-| [laude-institute/harbor](https://github.com/laude-institute/harbor) | Harbor upstream (PyPI `harbor==0.20.0`) -- classic A/B uses stock Harbor + OpenShift custom env |
-| [opendatahub-io/agent-eval-harness](https://github.com/opendatahub-io/agent-eval-harness) | AEH -- KubernetesEnvironment base for the OpenShift custom env plugin |
-| [cisco-ai-defense/skill-scanner](https://github.com/cisco-ai-defense/skill-scanner) | Security scanner for prompt injection and data exfiltration detection |
-| [harness-eval](https://github.com/redhat-community-ai-tools/harness-eval) | Deterministic security and quality scanner for skill submissions (27 rule categories, 97 rules) |
-
-## LLM Access
-
-The pipeline is LLM-agnostic. Three modes are supported:
-
-| Mode | Proxy Required? |
-|---|---|
-| Direct API key (Anthropic, OpenAI, etc.) | No |
-| opencode + self-hosted model (vLLM, Ollama) | No |
-| Google Vertex AI + LiteLLM proxy | Yes |
-
-## Prerequisites
-
-- OpenShift cluster with Pipelines operator (Tekton)
-- For Harbor/build-based flows: a container registry with push credentials and the Harbor fork with OpenShift backend
-- For AEH OpenShell: an existing Forge SAW deployment and the namespace setup below
-- LLM access (one of the three modes above)
-- Python 3.11+
-
-## AEH OpenShell: set up a new namespace
-
-Assume Forge SAW is already deployed by the user in `[NAMESPACE]`. Do not redeploy
-the platform or use another namespace's credentials. Follow the complete
-[namespace setup and trigger guide](Docs/manual_trigger_guide.md#aeh-openshell-ci-in-an-existing-forge-saw-namespace)
-before creating a PipelineRun:
-
-1. Install the matching OpenShell Pipeline, Tasks and pipeline ServiceAccount/RBAC
-   in `[NAMESPACE]`; choose explicit Flow and OpenShell-capable harness revisions.
-2. Reuse Forge's native mTLS gateway on TCP 17670, matching client certificates
-   and upstream CA. Map a certificate-valid hostname to the discovered Service IP
-   in CI pods. Keep verification enabled; no external Route or TLS bridge is needed.
-3. Configure namespace-local ingress/egress and EgressFirewall allows for the
-   gateway, DNS, GitHub/releases, Python packages, model endpoints, results services
-   and Kubernetes API cleanup. Preserve existing Forge rules and persist additions.
-4. Provision/configure LiteLLM, MLflow, PostgreSQL and MinIO plus their Secrets.
-   Apply results DB migrations; verify MinIO S3 access on 9000 and MLflow artifacts.
-5. Validate a temporary sandbox's skills and a real GLM response, then trigger
-   `abevalflow-pipeline-openshell` and confirm evaluate and store succeed.
-
-The validated template uses an explicit GHCR image digest, not `latest`. Use the
-image/profile/providers validated for your Forge deployment. Cases and judges
-come from `submissions/openclaw-forge/eval.yaml` and its `cases/` directory in
-the chosen Flow revision, not an automatically executed harness bootstrap script.
-This profile skips the test cube; MLflow publication occurs within evaluate,
-while store writes `evaluation_runs` and MinIO artifacts. A green TCP probe alone
-does not validate the agent, judging or storage.
-
-## Documentation
-
-- [Manual Trigger Guide](Docs/manual_trigger_guide.md) -- New-namespace AEH OpenShell setup, credentials, networking, validation and manual runs
-- [Trigger Guide](Docs/trigger_guide.md) -- How to submit skills, configure gate policies, and interpret scorecard results
-- [Gates Architecture](Docs/gates-architecture.md) -- Gate types, modes, GateResult schema, scorecard, and gate policy configuration
-- [Submission Formats](Docs/submission-formats.md) -- Directory layouts for skill, agent, MCP, and AEH submissions
-- [Extensibility](Docs/extensibility.md) -- How to add new engines, security gates, quality gates, and gate categories
-- [Persistence](Docs/persistence.md) -- MinIO object storage layout and PostgreSQL results database
-- [Compass Integration](Docs/compass_facts_integration.md) -- Pushing gate results to Red Hat Compass
-- [ADR: Skill Evaluation Pipeline](Docs/ADR_Skill_Evaluation_Pipeline_and_Harbor_Execution_Strategy.txt)
-
-## License
-
-Apache License 2.0
+`abevalflow/` holds the AEH score adapter, OpenShift environment and task
+enrichment, metadata/report contracts, gates, certification, telemetry, and DB
+models. `scripts/` contains the entry points called by the shared task.
+`containers/` defines the five runtime purposes. `config/` contains the skill
+certification profile and optional persistence secret templates. Examples are
+AEH submissions; the shared task and its bundle release live in
+`konflux-shared-tasks`.

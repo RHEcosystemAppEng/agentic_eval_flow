@@ -28,12 +28,6 @@ class TestIsOtelEnabled:
 
             assert is_otel_enabled() is True
 
-    def test_enabled_with_mlflow_uri(self):
-        with patch.dict(os.environ, {"MLFLOW_TRACKING_URI": "http://mlflow:5000"}):
-            from abevalflow.observability.otel import is_otel_enabled
-
-            assert is_otel_enabled() is True
-
 
 class TestGetTracer:
     def test_returns_tracer_with_otel_installed(self):
@@ -76,18 +70,6 @@ class TestSetupTracerProvider:
             otel_mod.setup_tracer_provider()
             otel_mod.setup_tracer_provider()
             assert otel_mod._provider_initialized is True
-
-    def test_mlflow_dual_export_sets_env_var(self):
-        import abevalflow.observability.otel as otel_mod
-
-        otel_mod._provider_initialized = False
-        env = {
-            "MLFLOW_TRACKING_URI": "http://mlflow:5000",
-            "OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:4317",
-        }
-        with patch.dict(os.environ, env, clear=True):
-            otel_mod.setup_tracer_provider()
-            assert os.environ.get("MLFLOW_TRACE_ENABLE_OTLP_DUAL_EXPORT") == "true"
 
 
 class TestShutdownTracerProvider:

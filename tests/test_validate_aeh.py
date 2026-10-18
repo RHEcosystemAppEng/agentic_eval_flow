@@ -16,7 +16,10 @@ VALID_METADATA = {
 VALID_EVAL_YAML = {
     "models": {"skill": "claude-sonnet-4-5", "judge": "claude-opus-4-6"},
     "judges": [
-        {"name": "correctness", "type": "llm", "prompt": "Is this correct?"},
+        # Ground truth: {{ annotations }} satisfies the pairwise grounding
+        # check in _check_aeh_pairwise_contract for submissions whose cases
+        # have annotations.yaml (the default in create_aeh_submission below).
+        {"name": "correctness", "type": "llm", "prompt": "Is this correct? Ground truth: {{ annotations }}"},
     ],
     "thresholds": {"correctness": 0.7},
     # Pairwise score.py needs case artifact paths under cases/<id>/<path>/
@@ -277,6 +280,73 @@ class TestAEHPairwiseValidation:
             aeh_mode="pairwise",
         )
         assert any("cases/ directory is required" in e for e in errors)
+
+    def test_pairwise_judge_must_reference_annotations_when_cases_have_ground_truth(self, tmp_path):
+        """Regression test: a pairwise judge blind to ground truth should fail validation.
+
+        ``create_aeh_submission`` gives every case an ``annotations.yaml`` by
+        default. A pairwise judge prompt that never references
+        ``{{ annotations }}`` can only compare the two output artifacts on
+        general plausibility, so for a case whose documented correct answer
+        contradicts what a model would guess from training-data priors, it
+        can side with the wrong answer and still gate the whole submission --
+        exactly the production failure mode this check exists to catch
+        before a submission reaches that stage.
+        """
+        submission = create_aeh_submission(tmp_path, include_eval_yaml=False)
+        ungrounded = {
+            "models": {"skill": "claude-sonnet", "judge": "claude-sonnet"},
+            "judges": [{"name": "pairwise", "type": "llm", "prompt": "Which output is better, A or B?"}],
+            "outputs": [{"path": "output"}],
+        }
+        (submission / "eval-control.yaml").write_text(yaml.dump(VALID_EVAL_YAML))
+        (submission / "eval-treatment.yaml").write_text(yaml.dump(ungrounded))
+
+        errors = validate_submission(submission, eval_engine=EvalEngine.AEH, aeh_mode="pairwise")
+
+        assert any("does not reference '{{ annotations }}'" in e for e in errors)
+
+    def test_pairwise_judge_grounded_in_annotations_passes(self, tmp_path):
+        """A pairwise judge whose prompt references {{ annotations }} is accepted."""
+        submission = create_aeh_submission(tmp_path, include_eval_yaml=False)
+        grounded = {
+            "models": {"skill": "claude-sonnet", "judge": "claude-sonnet"},
+            "judges": [
+                {
+                    "name": "pairwise",
+                    "type": "llm",
+                    "prompt": "Ground truth: {{ annotations }}. Which output is better, A or B?",
+                }
+            ],
+            "outputs": [{"path": "output"}],
+        }
+        (submission / "eval-control.yaml").write_text(yaml.dump(VALID_EVAL_YAML))
+        (submission / "eval-treatment.yaml").write_text(yaml.dump(grounded))
+
+        errors = validate_submission(submission, eval_engine=EvalEngine.AEH, aeh_mode="pairwise")
+
+        assert not any("{{ annotations }}" in e for e in errors)
+
+    def test_pairwise_judge_ungrounded_ok_without_case_annotations(self, tmp_path):
+        """No grounding is required when no case has ground truth to ground against."""
+        submission = create_aeh_submission(tmp_path, include_eval_yaml=False, include_cases=False)
+        cases_dir = submission / "cases"
+        cases_dir.mkdir()
+        case_dir = cases_dir / "case-001"
+        case_dir.mkdir()
+        (case_dir / "input.yaml").write_text(yaml.dump(VALID_INPUT_YAML))
+        # Deliberately no annotations.yaml in this case.
+        ungrounded = {
+            "models": {"skill": "claude-sonnet", "judge": "claude-sonnet"},
+            "judges": [{"name": "pairwise", "type": "llm", "prompt": "Which output is better, A or B?"}],
+            "outputs": [{"path": "output"}],
+        }
+        (submission / "eval-control.yaml").write_text(yaml.dump(VALID_EVAL_YAML))
+        (submission / "eval-treatment.yaml").write_text(yaml.dump(ungrounded))
+
+        errors = validate_submission(submission, eval_engine=EvalEngine.AEH, aeh_mode="pairwise")
+
+        assert not any("annotations" in e for e in errors)
 
     def test_single_mode_ignores_pairwise_configs(self, tmp_path):
         """Single mode should look for eval.yaml, not pairwise configs."""

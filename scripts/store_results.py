@@ -39,15 +39,11 @@ from abevalflow.db.models import (
     CertificationRow,
     EvaluationRun,
     GateResultRow,
-    MCPCheckerRun,
-    MCPCheckerTask,
     ObservabilityMetricsRow,
     ScorecardRow,
     SecurityScan,
     Trial,
 )
-from abevalflow.db.observer import discover_observers, notify_observers
-from abevalflow.mcpchecker_report import MCPCheckerResult
 from abevalflow.observability.context import MetricsContext
 from abevalflow.report import AnalysisResult
 from abevalflow.scorecard import Scorecard
@@ -210,113 +206,6 @@ def map_certifications(scorecard: Scorecard, scorecard_row: ScorecardRow) -> lis
     return rows
 
 
-def map_mcpchecker_result(result: MCPCheckerResult, run_id: str) -> MCPCheckerRun:
-    """Create MCPCheckerRun row from MCPCheckerResult."""
-    return MCPCheckerRun(
-        pipeline_run_id=run_id,
-        submission_name=result.submission_name,
-        eval_name=result.eval_name,
-        overall_score=result.overall_score,
-        passed_tasks=result.passed_tasks,
-        failed_tasks=result.failed_tasks,
-        error_tasks=result.error_tasks,
-        skipped_tasks=result.skipped_tasks,
-        total_tasks=result.total_tasks,
-        total_duration_ms=result.total_duration_ms,
-        raw_output_json=json.loads(result.model_dump_json()),
-    )
-
-
-def map_mcpchecker_tasks(result: MCPCheckerResult, run: MCPCheckerRun) -> list[MCPCheckerTask]:
-    """Create MCPCheckerTask rows from task results."""
-    tasks: list[MCPCheckerTask] = []
-    for task in result.tasks:
-        llm_judge_passed = sum(1 for r in task.llm_judge_results if r.passed)
-        llm_judge_total = len(task.llm_judge_results)
-
-        tasks.append(
-            MCPCheckerTask(
-                run=run,
-                task_id=task.task_id,
-                task_name=task.task_name,
-                status=task.status,
-                tool_calls=task.tool_calls,
-                duration_ms=task.duration_ms,
-                error_message=task.error_message,
-                llm_judge_passed=llm_judge_passed,
-                llm_judge_total=llm_judge_total,
-                details_json=task.model_dump() if task.llm_judge_results or task.tool_call_records else None,
-            )
-        )
-    return tasks
-
-
-def store_mcpchecker(
-    report_dir: Path,
-    database_url: str | None = None,
-    run_id: str | None = None,
-) -> bool:
-    """Load, validate, and persist an MCPChecker report. Returns True on success."""
-    report_path = report_dir / "mcpchecker-report.json"
-    if not report_path.exists():
-        logger.error("MCPChecker report not found: %s", report_path)
-        return False
-
-    raw = report_path.read_bytes()
-    try:
-        result = MCPCheckerResult.model_validate_json(raw)
-    except Exception:
-        logger.exception("Failed to validate MCPChecker report JSON")
-        return False
-
-    effective_run_id = run_id or _compute_content_hash(raw)
-    logger.info("MCPChecker Run ID: %s", effective_run_id)
-
-    engine = get_engine(database_url)
-    init_db(engine)
-    session_factory = make_session(engine)
-
-    with session_factory() as session:
-        existing = session.execute(
-            select(MCPCheckerRun).where(MCPCheckerRun.pipeline_run_id == effective_run_id)
-        ).scalar_one_or_none()
-
-        if existing is not None:
-            logger.warning(
-                "MCPChecker run %s already exists (id=%s) — skipping",
-                effective_run_id,
-                existing.id,
-            )
-            return True
-
-        mcp_run = map_mcpchecker_result(result, effective_run_id)
-        mcp_tasks = map_mcpchecker_tasks(result, mcp_run)
-
-        session.add(mcp_run)
-        session.add_all(mcp_tasks)
-        try:
-            session.commit()
-        except IntegrityError as e:
-            session.rollback()
-            logger.warning(
-                "Concurrent insert for MCPChecker run %s — treating as idempotent: %s",
-                effective_run_id,
-                str(e)[:100],
-            )
-            return True
-
-        logger.info(
-            "Stored MCPChecker: submission=%s run_id=%s tasks=%d score=%.2f recommendation=%s",
-            result.submission_name,
-            effective_run_id,
-            len(mcp_tasks),
-            result.overall_score,
-            result.recommendation,
-        )
-
-    return True
-
-
 def store_scorecard_only(
     report_dir: Path,
     database_url: str | None = None,
@@ -404,26 +293,19 @@ def store(
 ) -> bool:
     """Load, validate, and persist a report. Returns True on success.
 
-    Supports A/B reports (report.json), MCPChecker reports
-    (mcpchecker-report.json), and scorecard-only runs (scorecard.json with
+    Supports AEH reports (report.json) and scorecard-only runs (scorecard.json with
     no report.json -- see store_scorecard_only). Checks in that order and
     stores whichever is found.
     """
     report_path = report_dir / "report.json"
-    mcpchecker_report_path = report_dir / "mcpchecker-report.json"
     scorecard_path = report_dir / "scorecard.json"
-
-    if mcpchecker_report_path.exists():
-        logger.info("Found MCPChecker report, storing to mcpchecker_results table")
-        return store_mcpchecker(report_dir, database_url, run_id)
 
     if not report_path.exists():
         if not scorecard_path.exists():
             logger.error("Neither report.json nor scorecard.json found in %s", report_dir)
             return False
         logger.info(
-            "No report.json (no LLM evaluation ran this leg) -- storing scorecard-only "
-            "run from %s",
+            "No report.json (no LLM evaluation ran this leg) -- storing scorecard-only run from %s",
             scorecard_path,
         )
         return store_scorecard_only(report_dir, database_url, run_id)
@@ -528,16 +410,6 @@ def store(
             len(security_scans),
             result.summary.recommendation.value,
         )
-
-        observers = discover_observers()
-        if observers:
-            notify_observers(
-                observers,
-                result,
-                ev_run.id,
-                report_dir=report_dir,
-                pipeline_run_id=effective_run_id,
-            )
 
     return True
 

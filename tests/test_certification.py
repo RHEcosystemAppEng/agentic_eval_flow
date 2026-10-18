@@ -761,7 +761,7 @@ class TestBothModeCheckMerging:
             passed=False,
             score=0.45,
             mode=GateMode.BLOCK,
-            message="ASE failed",
+            message="AEH failed",
         )
         result = compute_certification(
             gates=[harbor_gate, ase_gate],
@@ -1027,28 +1027,7 @@ class TestProfileLoading:
         assert "valid_skill_structure" in policy.foundational.checks
         assert "basic_execution_validation" in policy.foundational.checks
 
-    def test_load_profile_agent(self) -> None:
-        """Load the 'agent' profile with agent-specific checks."""
-        from abevalflow.certification import clear_profiles_cache, load_profile
-
-        clear_profiles_cache()
-        policy = load_profile("agent")
-
-        assert policy is not None
-        assert policy.certified is not None
-        assert "advanced_agent_validation" in policy.certified.checks
         # safety_toxicity_bias_guardrails not yet implemented, commented out in profile
-
-    def test_load_profile_mcp_server(self) -> None:
-        """Load the 'mcp_server' profile with API-focused checks."""
-        from abevalflow.certification import clear_profiles_cache, load_profile
-
-        clear_profiles_cache()
-        policy = load_profile("mcp_server")
-
-        assert policy is not None
-        assert policy.certified is not None
-        assert "enterprise_security_review" in policy.certified.checks
 
     def test_load_profile_invalid_raises(self) -> None:
         """Loading a non-existent profile raises ValueError."""
@@ -1066,9 +1045,7 @@ class TestProfileLoading:
         profiles = get_available_profiles()
 
         assert "skill" in profiles
-        assert "agent" in profiles
-        assert "mcp_server" in profiles
-        assert "plugin" in profiles
+        assert profiles == ["skill"]
 
     def test_get_default_profile_name(self) -> None:
         """Get the default profile name from configuration."""

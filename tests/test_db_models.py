@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy import create_engine, select
@@ -12,19 +11,6 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from abevalflow.db.engine import get_engine, init_db, make_session
 from abevalflow.db.models import Base, EvaluationRun, Trial
-from abevalflow.db.observer import (
-    ResultsObserver,
-    discover_observers,
-    notify_observers,
-)
-from abevalflow.report import (
-    AnalysisResult,
-    AnalysisSummary,
-    Provenance,
-    Recommendation,
-    TrialResult,
-    VariantSummary,
-)
 
 
 @pytest.fixture()
@@ -239,59 +225,3 @@ class TestEngine:
 # ---------------------------------------------------------------------------
 # Observer protocol
 # ---------------------------------------------------------------------------
-
-
-def _sample_result() -> AnalysisResult:
-    return AnalysisResult(
-        submission_name="obs-test",
-        provenance=Provenance(),
-        summary=AnalysisSummary(
-            treatment=VariantSummary(n_trials=10, n_passed=8, n_failed=2, pass_rate=0.8),
-            control=VariantSummary(n_trials=10, n_passed=5, n_failed=5, pass_rate=0.5),
-            uplift=0.3,
-            recommendation=Recommendation.PASS,
-        ),
-        trials={
-            "treatment": [TrialResult(trial_name="t1", reward=0.9)],
-            "control": [TrialResult(trial_name="c1", reward=0.4)],
-        },
-    )
-
-
-class TestObserverProtocol:
-    def test_notify_calls_observer(self):
-        obs = MagicMock(spec=ResultsObserver)
-        result = _sample_result()
-        run_id = uuid.uuid4()
-        notify_observers([obs], result, run_id)
-        obs.on_evaluation_stored.assert_called_once_with(result, run_id)
-
-    def test_notify_multiple_observers(self):
-        obs1 = MagicMock(spec=ResultsObserver)
-        obs2 = MagicMock(spec=ResultsObserver)
-        result = _sample_result()
-        run_id = uuid.uuid4()
-        notify_observers([obs1, obs2], result, run_id)
-        obs1.on_evaluation_stored.assert_called_once()
-        obs2.on_evaluation_stored.assert_called_once()
-
-    def test_observer_failure_does_not_propagate(self):
-        failing = MagicMock(spec=ResultsObserver)
-        failing.on_evaluation_stored.side_effect = RuntimeError("boom")
-        healthy = MagicMock(spec=ResultsObserver)
-
-        result = _sample_result()
-        run_id = uuid.uuid4()
-        notify_observers([failing, healthy], result, run_id)
-
-        failing.on_evaluation_stored.assert_called_once()
-        healthy.on_evaluation_stored.assert_called_once()
-
-    def test_empty_observers(self):
-        notify_observers([], _sample_result(), uuid.uuid4())
-
-    def test_discover_no_env_vars(self, monkeypatch):
-        monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
-        monkeypatch.delenv("LANGFUSE_PUBLIC_KEY", raising=False)
-        observers = discover_observers()
-        assert observers == []

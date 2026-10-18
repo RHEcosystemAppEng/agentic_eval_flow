@@ -8,10 +8,8 @@ from unittest.mock import patch
 import yaml
 
 from abevalflow.llm_client import LLMResult
-from abevalflow.schemas import SubmissionMetadata
 from scripts.test_quality_review import (
     _advisory_aeh_missing_files,
-    _is_aeh_submission,
     review_submission,
 )
 
@@ -24,35 +22,9 @@ def _write_meta(submission: Path, **extra) -> None:
         "version": "0.1.0",
         "cpus": 1,
         "memory_mb": 512,
-        "storage_mb": 1024,
         **extra,
     }
     (submission / "metadata.yaml").write_text(yaml.dump(data))
-
-
-class TestAehDetection:
-    def test_detect_via_eval_yaml(self, tmp_path: Path):
-        sub = tmp_path / "sub"
-        sub.mkdir()
-        _write_meta(sub)
-        (sub / "eval.yaml").write_text("skill: x\n")
-        meta = SubmissionMetadata(**yaml.safe_load((sub / "metadata.yaml").read_text()))
-        assert _is_aeh_submission(sub, meta) is True
-
-    def test_detect_via_metadata_engine(self, tmp_path: Path):
-        sub = tmp_path / "sub"
-        sub.mkdir()
-        _write_meta(sub, eval_engine="aeh")
-        meta = SubmissionMetadata(**yaml.safe_load((sub / "metadata.yaml").read_text()))
-        assert _is_aeh_submission(sub, meta) is True
-
-    def test_harbor_not_aeh(self, tmp_path: Path):
-        sub = tmp_path / "sub"
-        sub.mkdir()
-        _write_meta(sub)
-        (sub / "instruction.md").write_text("do the thing")
-        meta = SubmissionMetadata(**yaml.safe_load((sub / "metadata.yaml").read_text()))
-        assert _is_aeh_submission(sub, meta) is False
 
 
 class TestAehAdvisoryMissing:

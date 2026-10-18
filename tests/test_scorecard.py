@@ -321,7 +321,7 @@ class TestScorecard:
         scorecard = Scorecard(
             submission_name="test-submission",
             pipeline_run_id="run-123",
-            eval_engine="harbor",
+            eval_engine="aeh",
             gates=gates,
             policy=policy,
             recommendation=Recommendation.PASS,
@@ -363,7 +363,7 @@ class TestScorecard:
         scorecard = Scorecard(
             submission_name="test",
             pipeline_run_id="run-456",
-            eval_engine="harbor",
+            eval_engine="aeh",
             gates=gates,
             policy=GatePolicy(),
             recommendation=Recommendation.FAIL,
@@ -388,7 +388,7 @@ class TestScorecard:
         scorecard = Scorecard(
             submission_name="test",
             pipeline_run_id="run-789",
-            eval_engine="harbor",
+            eval_engine="aeh",
             gates=gates,
             policy=GatePolicy(),
             recommendation=Recommendation.PASS,
@@ -401,78 +401,6 @@ class TestScorecard:
         assert data["recommendation"] == "pass"
         assert data["gates_passed"] == 1
         assert len(data["gates"]) == 1
-
-
-class TestBothModeAggregation:
-    """Tests for 'both' engine mode in aggregate_scorecard."""
-
-    def test_both_mode_reads_correct_reports(self, tmp_path):
-        """In 'both' mode, Harbor reads from harbor/ subdir, ASE from root."""
-        from scripts.aggregate_scorecard import aggregate_scorecard
-
-        # Setup submission dir with metadata
-        submission_dir = tmp_path / "submissions" / "test-skill"
-        submission_dir.mkdir(parents=True)
-        (submission_dir / "metadata.yaml").write_text("name: test-skill\n")
-
-        # Setup reports dir with distinct Harbor and ASE reports
-        reports_dir = tmp_path / "reports" / "test-skill"
-        reports_dir.mkdir(parents=True)
-
-        # Harbor report in harbor/ subdir with gap=0.3
-        harbor_dir = reports_dir / "harbor"
-        harbor_dir.mkdir()
-        harbor_report = {
-            "summary": {
-                "treatment": {"mean_reward": 0.9},
-                "control": {"mean_reward": 0.6},
-                "mean_reward_gap": 0.3,
-                "recommendation": "pass",
-            }
-        }
-        (harbor_dir / "report.json").write_text(json.dumps(harbor_report))
-
-        # ASE report in root with gap=0.1
-        ase_report = {
-            "summary": {
-                "treatment": {"mean_reward": 0.7},
-                "control": {"mean_reward": 0.6},
-                "mean_reward_gap": 0.1,
-                "recommendation": "pass",
-            }
-        }
-        (reports_dir / "report.json").write_text(json.dumps(ase_report))
-
-        # Run aggregation in 'both' mode
-        scorecard = aggregate_scorecard(
-            submission_dir=submission_dir,
-            results_dir=tmp_path / "results",
-            reports_dir=reports_dir,
-            workspace_root=tmp_path,
-            eval_engine="both",
-            pipeline_run_id="test-run",
-        )
-
-        # Should have 2 engine gates
-        engine_gates = [g for g in scorecard.gates if g.gate_type == GateType.ENGINE]
-        assert len(engine_gates) == 2
-
-        # Find each engine's gate by policy_key (implementation name)
-        harbor_gate = next(g for g in engine_gates if g.policy_key == "harbor")
-        ase_gate = next(g for g in engine_gates if g.policy_key == "ase")
-
-        # Both should have category-based gate_name
-        assert harbor_gate.gate_name == "evaluation"
-        assert ase_gate.gate_name == "evaluation"
-
-        # Verify each read the correct report (different gaps)
-        # Harbor should have 0.9 treatment mean (score), ASE should have 0.7
-        assert harbor_gate.score == 0.9  # Harbor's treatment mean_reward
-        assert ase_gate.score == 0.7  # ASE's treatment mean_reward
-
-        # Both should pass with default threshold 0.0
-        assert harbor_gate.passed is True  # gap 0.3 >= 0.0
-        assert ase_gate.passed is True  # gap 0.1 >= 0.0
 
 
 class TestValidationJsonHandling:
@@ -504,7 +432,7 @@ class TestValidationJsonHandling:
             results_dir=tmp_path / "results",
             reports_dir=reports_dir,
             workspace_root=tmp_path,
-            eval_engine="harbor",
+            eval_engine="aeh",
             pipeline_run_id="test-run",
         )
 
@@ -544,7 +472,7 @@ class TestValidationJsonHandling:
             results_dir=tmp_path / "results",
             reports_dir=reports_dir,
             workspace_root=tmp_path,
-            eval_engine="harbor",
+            eval_engine="aeh",
             pipeline_run_id="test-run",
         )
 
@@ -584,7 +512,7 @@ class TestValidationJsonHandling:
             results_dir=tmp_path / "results",
             reports_dir=reports_dir,
             workspace_root=tmp_path,
-            eval_engine="harbor",
+            eval_engine="aeh",
             pipeline_run_id="test-run",
         )
 
@@ -594,3 +522,99 @@ class TestValidationJsonHandling:
             c for c in scorecard.certification.foundational.checks if c.check_id == CheckId.VALID_SKILL_STRUCTURE
         )
         assert valid_structure_check.passed is False
+
+
+class TestHasEvalAssets:
+    """``evaluation_assets`` (Trusted level) must recognize AEH-style submissions.
+
+    Regression tests for a production false negative: a submission that ran a
+    full AEH pairwise A/B evaluation (``eval-treatment.yaml``/
+    ``eval-control.yaml`` + ``cases/``, no ``evals/evals.json`` or ``tests/``)
+    was reported as "Missing evaluation assets" because the detection only
+    looked for the two legacy paths.
+    """
+
+    def test_aeh_single_eval_yaml_detected(self, tmp_path):
+        from scripts.aggregate_scorecard import _has_eval_assets
+
+        submission_dir = tmp_path / "submission"
+        submission_dir.mkdir(parents=True)
+        (submission_dir / "eval.yaml").write_text("judges: []\n")
+        assert _has_eval_assets(submission_dir) is True
+
+    def test_aeh_cases_dir_detected(self, tmp_path):
+        from scripts.aggregate_scorecard import _has_eval_assets
+
+        submission_dir = tmp_path / "submission"
+        (submission_dir / "cases" / "case-001").mkdir(parents=True)
+        assert _has_eval_assets(submission_dir) is True
+
+    def test_aeh_pairwise_default_filenames_detected(self, tmp_path):
+        from scripts.aggregate_scorecard import _has_eval_assets
+
+        submission_dir = tmp_path / "submission"
+        submission_dir.mkdir(parents=True)
+        (submission_dir / "eval-treatment.yaml").write_text("judges: []\n")
+        (submission_dir / "eval-control.yaml").write_text("judges: []\n")
+        assert _has_eval_assets(submission_dir) is True
+
+    def test_aeh_pairwise_custom_filenames_from_metadata_detected(self, tmp_path):
+        from scripts.aggregate_scorecard import _has_eval_assets
+
+        submission_dir = tmp_path / "submission"
+        submission_dir.mkdir(parents=True)
+        (submission_dir / "my-treatment.yaml").write_text("judges: []\n")
+        (submission_dir / "metadata.yaml").write_text(
+            "name: test-skill\naeh_control_config: my-control.yaml\naeh_treatment_config: my-treatment.yaml\n"
+        )
+        assert _has_eval_assets(submission_dir) is True
+
+    def test_no_eval_assets_at_all_is_false(self, tmp_path):
+        from scripts.aggregate_scorecard import _has_eval_assets
+
+        submission_dir = tmp_path / "submission"
+        submission_dir.mkdir(parents=True)
+        (submission_dir / "metadata.yaml").write_text("name: test-skill\n")
+        assert _has_eval_assets(submission_dir) is False
+
+    def test_aeh_submission_passes_evaluation_assets_check_end_to_end(self, tmp_path):
+        """Full aggregate_scorecard() run with an AEH-style submission dir
+
+        must mark the Trusted-level ``evaluation_assets`` check as passed.
+        """
+        from scripts.aggregate_scorecard import aggregate_scorecard
+
+        submission_dir = tmp_path / "submissions" / "cve-validation"
+        submission_dir.mkdir(parents=True)
+        (submission_dir / "metadata.yaml").write_text("name: cve-validation\n")
+        (submission_dir / "eval-treatment.yaml").write_text("judges: []\n")
+        (submission_dir / "eval-control.yaml").write_text("judges: []\n")
+
+        reports_dir = tmp_path / "reports" / "cve-validation"
+        reports_dir.mkdir(parents=True)
+        (reports_dir / "validation.json").write_text(json.dumps({"valid": True, "errors": []}))
+        harbor_report = {
+            "summary": {
+                "treatment": {"mean_reward": 1.0},
+                "control": {"mean_reward": 1.0},
+                "mean_reward_gap": 0.0,
+                "recommendation": "pass",
+            }
+        }
+        (reports_dir / "report.json").write_text(json.dumps(harbor_report))
+
+        scorecard = aggregate_scorecard(
+            submission_dir=submission_dir,
+            results_dir=tmp_path / "results",
+            reports_dir=reports_dir,
+            workspace_root=tmp_path,
+            eval_engine="aeh",
+            pipeline_run_id="test-run",
+        )
+
+        from abevalflow.certification import CheckId
+
+        eval_assets_check = next(
+            c for c in scorecard.certification.trusted.checks if c.check_id == CheckId.EVALUATION_ASSETS
+        )
+        assert eval_assets_check.passed is True

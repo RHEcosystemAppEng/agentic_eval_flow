@@ -32,7 +32,13 @@ import yaml
 
 from abevalflow.aeh_scoring import (
     DEFAULT_AEH_THRESHOLD,
+    _is_llm_or_numeric_judge,
+    _judge_errored,
+    load_judge_score_ranges,
     pairwise_outcome,
+)
+from abevalflow.aeh_scoring import (
+    case_reward_from_judges as _case_reward,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -41,13 +47,13 @@ logger = logging.getLogger(__name__)
 
 # Top-level run_result.json keys surfaced in report.json execution metadata.
 # Never copy per_case / response_text (those can be huge).
-_OPENSHELL_EXECUTION_KEYS = ("execution_mode", "agent", "n_cases", "n_failed", "wall_clock_s")
+_EXECUTION_KEYS = ("execution_mode", "agent", "n_cases", "n_failed", "wall_clock_s")
 
 
 def _load_execution_metadata(run_dir: Path) -> dict[str, Any]:
     """Load execution metadata from run_result.json.
 
-    Harbor and OpenShell share this block. OpenShell fields (execution_mode,
+    AEH execution fields (execution_mode,
     agent, n_cases, n_failed, wall_clock_s) are included when present.
     """
     run_result_path = run_dir / "run_result.json"
@@ -68,7 +74,7 @@ def _load_execution_metadata(run_dir: Path) -> dict[str, Any]:
             "n_infra_errors": run_result.get("n_infra_errors"),
             "n_trial_errors": run_result.get("n_trial_errors"),
         }
-        for key in _OPENSHELL_EXECUTION_KEYS:
+        for key in _EXECUTION_KEYS:
             if key in run_result:
                 meta[key] = run_result[key]
         if "n_cases" not in meta and run_result.get("num_cases") is not None:
@@ -116,26 +122,6 @@ def _compact_per_case(per_case: Any) -> dict[str, Any]:
     return out
 
 
-def _normalize_numeric_value(value: int | float) -> float:
-    """Map a numeric judge onto [0, 1] using the same Likert vs unit scale as aeh_scoring.
-
-    Integer 1–5 is a Likert score (Harbor ``score_range: [1, 5]``): 1 is the
-    floor (reward 0.0), 5 is the ceiling (reward 1.0). A unit-scale perfect
-    score must be the float ``1.0``, not the integer ``1`` — YAML ``value: 1``
-    from ``feedback_type: int`` is the worst rubric bucket, not 100%.
-    """
-    if isinstance(value, bool):
-        return 1.0 if value else 0.0
-    if isinstance(value, int) and 1 <= value <= 5:
-        return (value - 1) / 4.0
-    v = float(value)
-    if 0.0 <= v <= 1.0:
-        return v
-    if 1.0 < v <= 5.0:
-        return (v - 1.0) / 4.0
-    return v
-
-
 def _is_likert_int(value: Any) -> bool:
     """True for a 1–5 integer rubric score (not bool, not unit-scale 1.0)."""
     return isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 5
@@ -166,73 +152,13 @@ def _fmt_judge_mean_for_log(mean: Any, pass_rate: Any) -> str:
     return f"{mean:.3f}"
 
 
-def _judge_errored(result: Any) -> bool:
-    return isinstance(result, dict) and bool(result.get("error")) and result.get("value") is None
-
-
-def _is_llm_or_numeric_judge(result: Any) -> bool:
-    if not isinstance(result, dict):
-        return False
-    jt = result.get("judge_type")
-    if jt == "llm":
-        return True
-    if jt == "check":
-        return False
-    value = result.get("value")
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
-
-
-def _case_reward(case_data: Any) -> float | None:
-    """Derive a single reward from an AEH per_case entry.
-
-    Successful numeric judges are normalized to [0, 1] and averaged. Failed
-    boolean judges gate the case to 0.0. Errored judges are skipped — they are
-    not treated as 0.0. If the only remaining signal is booleans but an LLM
-    judge errored, return None so operational checks cannot masquerade as a
-    quality score.
-    """
-    if not isinstance(case_data, dict):
-        return None
-
-    if isinstance(case_data.get("reward"), (int, float)) and not isinstance(case_data.get("reward"), bool):
-        return float(case_data["reward"])
-
-    numeric: list[float] = []
-    bools: list[bool] = []
-    scoring_judge_errored = False
-    for key, result in case_data.items():
-        if key == "reward":
-            continue
-        if _judge_errored(result):
-            if _is_llm_or_numeric_judge(result) or (isinstance(result, dict) and result.get("judge_type") == "llm"):
-                scoring_judge_errored = True
-            elif isinstance(result, dict) and result.get("judge_type") not in ("check", "builtin"):
-                scoring_judge_errored = True
-            continue
-        if isinstance(result, dict) and "value" in result:
-            value = result.get("value")
-        else:
-            value = result
-        if isinstance(value, bool):
-            bools.append(value)
-        elif isinstance(value, (int, float)):
-            numeric.append(_normalize_numeric_value(value))
-
-    if numeric:
-        if bools and not all(bools):
-            return 0.0
-        return sum(numeric) / len(numeric)
-    if bools:
-        if scoring_judge_errored:
-            return None
-        return 1.0 if all(bools) else 0.0
-    return None
-
-
-def _mean_reward_from_per_case(per_case: Any) -> float | None:
+def _mean_reward_from_per_case(
+    per_case: Any,
+    score_ranges: dict[str, tuple[float, float]] | None = None,
+) -> float | None:
     if not isinstance(per_case, dict) or not per_case:
         return None
-    rewards = [_case_reward(case_data) for case_data in per_case.values()]
+    rewards = [_case_reward(case_data, score_ranges) for case_data in per_case.values()]
     scored = [r for r in rewards if r is not None]
     if not scored:
         return None
@@ -269,16 +195,22 @@ def _parse_optional_float(value: Any) -> float | None:
         return None
 
 
-def _extract_mean_reward(run_dir: Path) -> float | None:
+def _extract_mean_reward(
+    run_dir: Path,
+    score_ranges: dict[str, tuple[float, float]] | None = None,
+) -> float | None:
     """Extract mean_reward from run_result.json, summary.yaml, or per-case judges.
 
     Missing or all-errored scoring judges yield None — never a silent 0.0 quality
     score. Declared mean_reward is used when present unless judge errors made
     quality scoring unavailable (OpenShell often omits mean_reward entirely).
+
+    ``score_ranges`` (see :func:`abevalflow.aeh_scoring.load_judge_score_ranges`)
+    disambiguates bare numeric judge values when recomputing from per-case data.
     """
     summary = _load_summary(run_dir)
     per_case = summary.get("per_case")
-    from_cases = _mean_reward_from_per_case(per_case)
+    from_cases = _mean_reward_from_per_case(per_case, score_ranges=score_ranges)
     unavailable = _scoring_unavailable_from_errors(per_case)
 
     declared = _parse_optional_float(summary.get("mean_reward"))
@@ -303,7 +235,10 @@ def _extract_mean_reward(run_dir: Path) -> float | None:
     return from_cases
 
 
-def _trials_from_per_case(per_case: Any) -> list[dict[str, Any]]:
+def _trials_from_per_case(
+    per_case: Any,
+    score_ranges: dict[str, tuple[float, float]] | None = None,
+) -> list[dict[str, Any]]:
     """Map AEH per_case dict → TrialResult-shaped list for report.json."""
     if not isinstance(per_case, dict):
         return []
@@ -315,7 +250,7 @@ def _trials_from_per_case(per_case: Any) -> list[dict[str, Any]]:
         trials.append(
             {
                 "trial_name": str(case_id),
-                "reward": _case_reward(case_data),
+                "reward": _case_reward(case_data, score_ranges),
                 "judges": judges,
             }
         )
@@ -384,12 +319,48 @@ def _log_judge_tables(report: dict[str, Any]) -> None:
         logger.info(header, str(case_id)[:22], *cells)
 
 
+def _grounded_variant_stats(trials: list[dict[str, Any]]) -> dict[str, Any]:
+    """Compute one variant's pass/fail stats from its own trials' grounded rewards.
+
+    "Passed" here always means "this trial's own judges scored it > 0.0" --
+    never a pairwise win/loss outcome against the other arm. Pairwise
+    win-rate is a separate signal, reported only under ``report["pairwise"]``;
+    conflating the two in this same-named field is exactly what made a past
+    report.json self-contradicting (treatment showed ``pass_rate: 0.0`` here
+    while ``mean_reward: 1.0`` sat two keys below it, because this field was
+    being set from pairwise wins instead of from grounded reward).
+    """
+    n_passed = 0
+    n_errors = 0
+    case_rewards: list[float] = []
+    for trial in trials:
+        reward = trial.get("reward")
+        if reward is None:
+            n_errors += 1
+        else:
+            case_rewards.append(float(reward))
+            if reward > 0.0:
+                n_passed += 1
+    n_total = len(trials)
+    n_failed = n_total - n_passed - n_errors
+    return {
+        "n_trials": n_total,
+        "n_passed": n_passed,
+        "n_failed": n_failed,
+        "n_errors": n_errors,
+        "pass_rate": (n_passed / n_total) if n_total > 0 else 0.0,
+        "median_reward": statistics.median(case_rewards) if case_rewards else None,
+        "std_reward": statistics.stdev(case_rewards) if len(case_rewards) > 1 else None,
+    }
+
+
 def aggregate_single_run(
     run_dir: Path,
     *,
     submission_name: str | None = None,
     threshold: float = DEFAULT_AEH_THRESHOLD,
     eval_engine: str = "aeh",
+    config_path: Path | None = None,
 ) -> dict[str, Any]:
     """Read one AEH harness run directory and produce report dict.
 
@@ -402,6 +373,10 @@ def aggregate_single_run(
         run_dir: Path to the AEH run output directory
         submission_name: Override for report submission_name (Tekton param)
         threshold: Pass/fail threshold for mean_reward (matches GatePolicy default)
+        config_path: Path to this run's eval.yaml, used to read each judge's
+            declared ``score_range`` so a bare numeric value like ``1`` is
+            normalized unambiguously instead of guessed (see
+            ``abevalflow.aeh_scoring.load_judge_score_ranges``)
 
     Returns:
         Dict in Agentic Eval Flow report format with full judge metadata
@@ -412,30 +387,19 @@ def aggregate_single_run(
         raise FileNotFoundError(f"summary.yaml not found in {run_dir}")
 
     summary = yaml.safe_load(summary_path.read_text()) or {}
-    mean_reward = _extract_mean_reward(run_dir)
+    score_ranges = load_judge_score_ranges(config_path)
+    mean_reward = _extract_mean_reward(run_dir, score_ranges=score_ranges)
 
     judges_full = summary.get("judges", {}) or {}
     per_case_full = summary.get("per_case", {}) or {}
     per_case_compact = _compact_per_case(per_case_full)
     run_metrics = summary.get("run_metrics")
-    trials = _trials_from_per_case(per_case_full)
+    trials = _trials_from_per_case(per_case_full, score_ranges=score_ranges)
 
     total_cases = len(per_case_full) if isinstance(per_case_full, dict) else 0
-    n_passed = 0
-    n_failed = 0
-    n_errors = 0
-    case_rewards: list[float] = []
+    stats = _grounded_variant_stats(trials)
+    n_passed = stats["n_passed"]
     warnings: list[str] = []
-    for trial in trials:
-        reward = trial.get("reward")
-        if reward is None:
-            n_errors += 1
-        else:
-            case_rewards.append(float(reward))
-            if reward > 0.0:
-                n_passed += 1
-            else:
-                n_failed += 1
 
     judge_error_count = 0
     if isinstance(per_case_full, dict):
@@ -450,11 +414,9 @@ def aggregate_single_run(
     if mean_reward is None and judge_error_count:
         warnings.append("mean_reward unavailable because scoring judges errored")
 
-    pass_rate = n_passed / total_cases if total_cases > 0 else 0.0
+    pass_rate = stats["pass_rate"]
     recommendation = "pass" if (mean_reward is not None and mean_reward >= threshold) else "fail"
     resolved_name = submission_name or (run_dir.parent.name if run_dir.parent != run_dir else run_dir.name)
-    median_reward = statistics.median(case_rewards) if case_rewards else None
-    std_reward = statistics.stdev(case_rewards) if len(case_rewards) > 1 else None
 
     # Single-sided: empty control with None rewards, not a fake 0.0 A/B arm.
     return {
@@ -466,13 +428,13 @@ def aggregate_single_run(
         "summary": {
             "treatment": {
                 "n_trials": total_cases,
-                "n_passed": n_passed,
-                "n_failed": n_failed,
-                "n_errors": n_errors,
+                "n_passed": stats["n_passed"],
+                "n_failed": stats["n_failed"],
+                "n_errors": stats["n_errors"],
                 "pass_rate": pass_rate,
                 "mean_reward": mean_reward,
-                "median_reward": median_reward,
-                "std_reward": std_reward,
+                "median_reward": stats["median_reward"],
+                "std_reward": stats["std_reward"],
             },
             "control": _empty_control_summary(),
             "uplift": pass_rate,
@@ -506,6 +468,8 @@ def aggregate_pairwise_run(
     submission_name: str | None = None,
     threshold: float = DEFAULT_AEH_THRESHOLD,
     eval_engine: str = "aeh",
+    treatment_config_path: Path | None = None,
+    control_config_path: Path | None = None,
 ) -> dict[str, Any]:
     """Read pairwise AEH run directories and produce report dict.
 
@@ -518,6 +482,10 @@ def aggregate_pairwise_run(
         control_dir: Path to the control (B) run directory
         submission_name: Override for report submission_name (Tekton param)
         threshold: Pass/fail win-rate threshold (matches GatePolicy / engine)
+        treatment_config_path: Path to eval-treatment.yaml, used to read each
+            judge's declared ``score_range`` for unambiguous reward
+            normalization (see ``abevalflow.aeh_scoring.load_judge_score_ranges``)
+        control_config_path: Path to eval-control.yaml, same purpose as above
 
     Returns:
         Dict in Agentic Eval Flow report format with pairwise results
@@ -529,13 +497,20 @@ def aggregate_pairwise_run(
         raise FileNotFoundError(f"summary.yaml not found in {treatment_dir}")
 
     treatment_summary = yaml.safe_load(treatment_summary_path.read_text())
-    treatment_mean_reward = _extract_mean_reward(treatment_dir)
+    # Both arms typically declare the same judges (e.g. validation_accuracy),
+    # so merge both configs' score_ranges into one lookup shared by both
+    # arms' per-case reward recomputation below.
+    score_ranges = {
+        **load_judge_score_ranges(control_config_path),
+        **load_judge_score_ranges(treatment_config_path),
+    }
+    treatment_mean_reward = _extract_mean_reward(treatment_dir, score_ranges=score_ranges)
 
     control_summary = {}
     control_mean_reward = 0.0
     if control_summary_path.exists():
         control_summary = yaml.safe_load(control_summary_path.read_text())
-        control_mean_reward = _extract_mean_reward(control_dir)
+        control_mean_reward = _extract_mean_reward(control_dir, score_ranges=score_ranges)
 
     # Extract pairwise results from treatment summary
     pairwise = treatment_summary.get("pairwise", {})
@@ -567,8 +542,23 @@ def aggregate_pairwise_run(
     )
     t_mean = treatment_mean_reward if treatment_mean_reward is not None else 0.0
     c_mean = control_mean_reward if control_mean_reward is not None else 0.0
-    treatment_cases = len(treatment_per_case) if isinstance(treatment_per_case, dict) else 0
-    control_cases = len(control_per_case) if isinstance(control_per_case, dict) else 0
+    treatment_trials = _trials_from_per_case(treatment_per_case, score_ranges=score_ranges)
+    control_trials = _trials_from_per_case(control_per_case, score_ranges=score_ranges)
+
+    # IMPORTANT: n_passed/n_failed/pass_rate below are each arm's own grounded
+    # per-case reward (same meaning as aggregate_single_run and as the
+    # mean_reward/judges fields a few keys below) -- NOT the pairwise win/loss
+    # outcome against the other arm. Those two are genuinely different
+    # questions ("did this arm's own judges pass this case?" vs. "did an LLM
+    # judge prefer this arm's output over the other arm's?") and conflating
+    # them here previously made treatment.pass_rate/n_passed read as 0.0/0
+    # even when treatment.mean_reward was a perfect 1.0, because pass_rate
+    # was silently wins_a/win_rate instead of a reward-based pass rate. The
+    # pairwise win/loss signal is reported in full, correctly, under the
+    # "pairwise" key below (wins_a, wins_b, win_rate) -- nothing is lost by
+    # no longer duplicating it here under a misleading name.
+    treatment_stats = _grounded_variant_stats(treatment_trials)
+    control_stats = _grounded_variant_stats(control_trials)
 
     return {
         "submission_name": resolved_name,
@@ -578,26 +568,20 @@ def aggregate_pairwise_run(
         },
         "summary": {
             "treatment": {
-                "n_trials": treatment_cases,
-                "n_passed": wins_a,
-                "n_failed": max(treatment_cases - wins_a, 0),
-                "pass_rate": win_rate,
+                **treatment_stats,
                 "mean_reward": treatment_mean_reward,
             },
             "control": {
-                "n_trials": control_cases,
-                "n_passed": wins_b,
-                "n_failed": max(control_cases - wins_b, 0),
-                "pass_rate": (wins_b / total) if total > 0 else 0.0,
+                **control_stats,
                 "mean_reward": control_mean_reward,
             },
-            "uplift": win_rate - ((wins_b / total) if total > 0 else 0.0),
+            "uplift": treatment_stats["pass_rate"] - control_stats["pass_rate"],
             "mean_reward_gap": t_mean - c_mean,
             "recommendation": recommendation,
         },
         "trials": {
-            "treatment": _trials_from_per_case(treatment_per_case),
-            "control": _trials_from_per_case(control_per_case),
+            "treatment": treatment_trials,
+            "control": control_trials,
         },
         "eval_engine": eval_engine,
         "mode": "pairwise",
@@ -645,6 +629,9 @@ def aggregate_aeh_results(
     submission_name: str | None = None,
     threshold: float = DEFAULT_AEH_THRESHOLD,
     eval_engine: str = "aeh",
+    config_path: Path | None = None,
+    treatment_config_path: Path | None = None,
+    control_config_path: Path | None = None,
 ) -> dict[str, Any]:
     """Aggregate AEH results into Agentic Eval Flow report format.
 
@@ -654,6 +641,9 @@ def aggregate_aeh_results(
         control_dir: Path to control directory (required for pairwise mode)
         submission_name: Override for report submission_name
         threshold: Pass/fail threshold aligned with AEHEngine / GatePolicy default
+        config_path: Path to eval.yaml (single mode only), for judge score_range lookup
+        treatment_config_path: Path to eval-treatment.yaml (pairwise mode only)
+        control_config_path: Path to eval-control.yaml (pairwise mode only)
 
     Returns:
         Dict in Agentic Eval Flow report format
@@ -667,12 +657,15 @@ def aggregate_aeh_results(
             submission_name=submission_name,
             threshold=threshold,
             eval_engine=eval_engine,
+            treatment_config_path=treatment_config_path,
+            control_config_path=control_config_path,
         )
     return aggregate_single_run(
         run_dir,
         submission_name=submission_name,
         threshold=threshold,
         eval_engine=eval_engine,
+        config_path=config_path,
     )
 
 
@@ -742,7 +735,29 @@ def main(argv: list[str] | None = None) -> int:
         "--eval-engine",
         type=str,
         default="aeh",
-        help="Stamp eval_engine in report.json (aeh or aeh_openshell_openclaw)",
+        choices=["aeh"],
+        help="Stamp the AEH engine in report.json",
+    )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help=(
+            "Path to eval.yaml (single mode). Used to read each judge's declared "
+            "score_range so bare numeric values like 1 are normalized unambiguously."
+        ),
+    )
+    parser.add_argument(
+        "--treatment-config",
+        type=Path,
+        default=None,
+        help="Path to eval-treatment.yaml (pairwise mode). Same purpose as --config.",
+    )
+    parser.add_argument(
+        "--control-config",
+        type=Path,
+        default=None,
+        help="Path to eval-control.yaml (pairwise mode). Same purpose as --config.",
     )
     args = parser.parse_args(argv)
 
@@ -767,6 +782,9 @@ def main(argv: list[str] | None = None) -> int:
             submission_name=args.submission_name,
             threshold=args.threshold,
             eval_engine=args.eval_engine,
+            config_path=args.config,
+            treatment_config_path=args.treatment_config,
+            control_config_path=args.control_config,
         )
     except FileNotFoundError as e:
         logger.error(str(e))

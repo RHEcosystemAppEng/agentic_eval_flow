@@ -11,7 +11,7 @@ Current schema version: 1.0
 import re
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 CURRENT_SCHEMA_VERSION = "1.0"
 
@@ -19,22 +19,10 @@ _SCHEMA_VERSION_RE = re.compile(r"\d+\.\d+")
 _OCI_NAME_RE = re.compile(r"[a-z0-9]+(?:[._-][a-z0-9]+)*")
 
 
-class GenerationMode(StrEnum):
-    MANUAL = "manual"
-    AI = "ai"
-
-
 class EvalEngine(StrEnum):
-    HARBOR = "harbor"
-    ASE = "ase"
-    MCPCHECKER = "mcpchecker"
-    A2A = "a2a"
-    AEH = "aeh"  # Agent-Eval-Harness (Harbor / kubernetes)
-    AEH_OPENSHELL_OPENCLAW = "aeh_openshell_openclaw"  # AEH OpenShell + OpenClaw
-    BOTH = "both"  # Harbor + ASE
+    AEH = "aeh"
 
 
-AEH_FAMILY = (EvalEngine.AEH, EvalEngine.AEH_OPENSHELL_OPENCLAW)
 EVAL_ENGINE_CLI_CHOICES = tuple(e.value for e in EvalEngine)
 
 
@@ -61,45 +49,6 @@ class AehMode(StrEnum):
 
     SINGLE = "single"
     PAIRWISE = "pairwise"
-
-
-class RedTeamMode(StrEnum):
-    SMOKE = "smoke"
-    FULL = "full"
-
-
-class RedTeamConfig(BaseModel):
-    """Optional red-team adversarial testing configuration in metadata.yaml."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    enabled: bool = Field(
-        default=True,
-        description="Whether red-team evaluation is enabled for this submission",
-    )
-    mode: RedTeamMode | None = Field(
-        default=None,
-        description="Override pipeline red-team mode: smoke (fast) or full (comprehensive)",
-    )
-    purpose: str | None = Field(
-        default=None,
-        description="What the agent/server does; drives domain-aware attack generation",
-    )
-    auth_context: str | None = Field(
-        default=None,
-        description="Assumed authenticated user context for nuanced policy grading",
-    )
-    policy: str | None = Field(
-        default=None,
-        description="Security policy the agent must uphold under adversarial probing",
-    )
-    crescendo_objectives: list[str] | None = Field(
-        default=None,
-        description=(
-            "Optional explicit PyRIT Crescendo objectives. If omitted, objectives "
-            "are auto-derived from purpose/policy/auth_context at runtime."
-        ),
-    )
 
 
 # Import GateMode from canonical location to avoid duplication
@@ -241,60 +190,6 @@ class GatePolicy(BaseModel):
     def get_gates_with_push_fact(self) -> list[str]:
         """Return list of gate names configured to push facts."""
         return [name for name, policy in self.gates.items() if policy.push_fact]
-
-
-class LlmConfig(BaseModel):
-    """Optional per-submission LLM overrides.
-
-    When set in metadata.yaml, these override the pipeline-level defaults
-    from the pipeline-defaults ConfigMap.  ``None`` means "use pipeline
-    default" -- only explicitly set fields override.
-    """
-
-    model: str | None = Field(
-        default=None,
-        description="LLM model name (e.g. claude-sonnet, or openai/llama3 with a wrapper)",
-    )
-    api_base: str | None = Field(
-        default=None,
-        description="Base URL of the LLM API proxy",
-    )
-    api_key: str | None = Field(
-        default=None,
-        description="API key for the LLM provider (mock for LiteLLM proxy)",
-    )
-    agent_wrapper: str | None = Field(
-        default=None,
-        description=(
-            "Agent wrapper for non-Claude models (e.g. opencode, qwen-coder). "
-            "Empty or None uses claude-code agent directly."
-        ),
-    )
-
-
-class McpConfig(BaseModel):
-    """MCP server configuration for MCPChecker evaluations.
-
-    Users must create the referenced secret in the ab-eval-flow namespace
-    before submitting. The secret should contain:
-    - MCP_URL: The MCP server endpoint URL
-    - MCP_BEARER_TOKEN: Authentication token (optional, if server requires auth)
-    """
-
-    credentials_secret: str = Field(
-        description=(
-            "Name of the Kubernetes secret containing MCP server credentials. "
-            "The secret must exist in the ab-eval-flow namespace and contain "
-            "MCP_URL (required) and MCP_BEARER_TOKEN (optional) keys."
-        ),
-    )
-
-
-class ExperimentType(StrEnum):
-    SKILL = "skill"
-    MODEL = "model"
-    PROMPT = "prompt"
-    CUSTOM = "custom"
 
 
 class OperationalLimits(BaseModel):
@@ -439,75 +334,11 @@ class CertificationPolicy(BaseModel):
         return self.operational_limits or OperationalLimits()
 
 
-class CopySpec(BaseModel):
-    """A source directory and its destination path inside the container."""
-
-    src: str = Field(description="Directory name in submission (e.g. 'skills')")
-    dest: str = Field(description="Absolute path in container (e.g. '/skills')")
-
-    @field_validator("src")
-    @classmethod
-    def _validate_src(cls, v: str) -> str:
-        v = v.rstrip("/")
-        if ".." in v or v.startswith("/"):
-            raise ValueError("src must be a relative top-level directory name")
-        if not v:
-            raise ValueError("src must not be empty")
-        return v
-
-    @field_validator("dest")
-    @classmethod
-    def _validate_dest(cls, v: str) -> str:
-        v = v.rstrip("/")
-        if not v:
-            raise ValueError("dest must not be empty")
-        if ".." in v:
-            raise ValueError("dest must not contain '..'")
-        if not v.startswith("/"):
-            raise ValueError("dest must be an absolute path (start with '/')")
-        return v
-
-
-class VariantSpec(BaseModel):
-    """Describes what goes into a single variant (treatment or control)."""
-
-    model_config = ConfigDict(populate_by_name=True)
-
-    copy_dirs: list[CopySpec] = Field(default_factory=list, alias="copy")
-    env_from_secrets: dict[str, str] = Field(
-        default_factory=dict,
-        description=(
-            "Env vars to inject at runtime via OpenShift Secrets. "
-            "Keys are env var names, values are secret references "
-            "(e.g. 'secret-name/key'). Raw values are NOT allowed."
-        ),
-    )
-
-    @model_validator(mode="after")
-    def _no_duplicate_src(self) -> "VariantSpec":
-        srcs = [c.src for c in self.copy_dirs]
-        if len(srcs) != len(set(srcs)):
-            raise ValueError("Duplicate src directories in copy spec")
-        return self
-
-
 class ExperimentConfig(BaseModel):
-    """A/B experiment configuration embedded in metadata.yaml."""
+    """Trial count retained for existing catalog metadata; AEH config controls execution."""
 
-    type: ExperimentType = Field(
-        default=ExperimentType.SKILL,
-        description="Experiment type: skill, model, prompt, custom",
-    )
-    n_trials: int = Field(default=20, gt=0, le=100, description="Number of trials per variant")
-    treatment: VariantSpec = Field(
-        default_factory=lambda: VariantSpec(
-            copy=[
-                CopySpec(src="skills", dest="/skills"),
-                CopySpec(src="docs", dest="/docs"),
-            ]
-        ),
-    )
-    control: VariantSpec = Field(default_factory=VariantSpec)
+    model_config = ConfigDict(extra="forbid")
+    n_trials: int = Field(default=20, gt=0, le=100)
 
 
 class SubmissionMetadata(BaseModel):
@@ -559,19 +390,6 @@ class SubmissionMetadata(BaseModel):
     version: str = Field(default="0.1.0", min_length=1, description="Version string")
     author: str | None = Field(default=None, description="Author or team name")
     tags: list[str] | None = Field(default=None, description="Optional classification tags")
-    generation_mode: GenerationMode = Field(
-        default=GenerationMode.MANUAL,
-        description=(
-            "'manual' requires submitter-provided instruction.md and tests. "
-            "'ai' generates those files from skills/SKILL.md using an LLM."
-        ),
-    )
-    skip_llm_judge: bool = Field(
-        default=False,
-        description=(
-            "Set to true to skip LLM judge generation in AI mode. By default the pipeline generates tests/llm_judge.py."
-        ),
-    )
 
     experiment: ExperimentConfig = Field(
         default_factory=ExperimentConfig,
@@ -582,21 +400,10 @@ class SubmissionMetadata(BaseModel):
 
     # Harbor timeout and resource configuration (all optional with defaults)
     agent_timeout_sec: float = Field(default=600.0, gt=0, description="Agent solving timeout")
-    agent_setup_timeout_sec: float = Field(default=600.0, gt=0, description="Agent install timeout")
-    verifier_timeout_sec: float = Field(default=120.0, gt=0, description="Test runner timeout")
-    build_timeout_sec: float = Field(default=600.0, gt=0, description="Image build timeout")
     cpus: int = Field(default=1, gt=0, description="CPU cores for trial container")
     memory_mb: int = Field(default=2048, gt=0, description="Memory in MB for trial container")
-    storage_mb: int = Field(default=10240, gt=0, description="Storage in MB for trial container")
 
-    eval_engine: EvalEngine = Field(
-        default=EvalEngine.HARBOR,
-        description=(
-            "Evaluation engine: 'harbor' for full containerized A/B evaluation, "
-            "'ase' for lightweight LLM-as-a-judge via agent-skills-eval, "
-            "'both' to run both engines. Pipeline param takes precedence."
-        ),
-    )
+    eval_engine: EvalEngine = Field(default=EvalEngine.AEH, description="AEH evaluation engine")
 
     aeh_mode: AehMode = Field(
         default=AehMode.SINGLE,
@@ -607,7 +414,7 @@ class SubmissionMetadata(BaseModel):
             "Matrix leg, so a catalog-wide .tekton/*.yaml default (always "
             "'single') never has to flip for every other skill just to let "
             "one submission run pairwise. Only meaningful when eval_engine "
-            "is 'aeh' (or 'aeh_openshell_openclaw'); requires "
+            "is 'aeh'; requires "
             "aeh_control_config / aeh_treatment_config files alongside this "
             "metadata.yaml when set to 'pairwise'."
         ),
@@ -632,54 +439,14 @@ class SubmissionMetadata(BaseModel):
     security_scan: SecurityScanMode = Field(
         default=SecurityScanMode.WARN,
         description=(
-            "Security scan mode for all scanners (Cisco, Snyk, etc.): 'disabled' "
-            "skips all security scanning, 'warn' reports findings but continues, "
-            "'block' fails the pipeline on HIGH/CRITICAL findings. "
-            "Pipeline param takes precedence if set."
+            "Accepted for existing catalog metadata. The shared task always runs "
+            "deterministic Tier A scans; gate_policy controls scorecard treatment."
         ),
     )
 
     skip_quality_review: bool = Field(
         default=False,
-        description=(
-            "Skip the LLM-based test quality review step. "
-            "Useful for A2A evaluations or when quality review is not needed."
-        ),
-    )
-
-    security_scan_use_llm: bool = Field(
-        default=False,
-        description=(
-            "Enable LLM-based semantic analysis in security scanning. "
-            "Uses the pipeline's LLM proxy to detect sophisticated threats "
-            "like semantic prompt injection. Adds latency and cost."
-        ),
-    )
-
-    llm: LlmConfig | None = Field(
-        default=None,
-        description=(
-            "Optional LLM config overrides for Harbor evaluation agents. "
-            "Overrides pipeline-level defaults from the pipeline-defaults ConfigMap."
-        ),
-    )
-
-    mcp: McpConfig | None = Field(
-        default=None,
-        description=(
-            "MCP server configuration for MCPChecker evaluations. "
-            "Required when eval_engine is 'mcpchecker'. The referenced secret "
-            "must be created by the user in the ab-eval-flow namespace."
-        ),
-    )
-
-    red_team: RedTeamConfig | None = Field(
-        default=None,
-        description=(
-            "Optional red-team adversarial testing configuration. "
-            "When present, drives Promptfoo attack generation and PyRIT "
-            "Crescendo objectives (purpose, policy, auth_context, crescendo_objectives)."
-        ),
+        description=("Skip the LLM-based test quality review step. Use when advisory quality review is not needed."),
     )
 
     gate_policy: GatePolicy | None = Field(

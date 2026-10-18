@@ -25,9 +25,6 @@ spec:
     value: quay.io/ecosystem-appeng/agent-eval-harness:{{revision}}
   - name: dockerfile
     value: /containers/agent-eval-harness/Containerfile
-  - name: build-args
-    value:
-      - AEH_SHA=75f7188299f6594425175ef71ec41a7a6a6f6ffd
   pipelineSpec:
     description: |
       This pipeline is ideal for building container images from a Containerfile while maintaining trust after pipeline customization.

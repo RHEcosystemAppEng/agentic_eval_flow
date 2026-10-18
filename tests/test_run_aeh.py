@@ -12,7 +12,6 @@ from scripts.run_aeh import (
     BaseRunner,
     HarborRunner,
     RunnerError,
-    VanillaRunner,
     get_runner,
     materialize_aeh_case_outputs,
 )
@@ -26,20 +25,10 @@ class TestRunnerRegistry:
         assert "harbor" in RUNNERS
         assert RUNNERS["harbor"] is HarborRunner
 
-    def test_vanilla_runner_registered(self):
-        """Vanilla runner should be registered."""
-        assert "vanilla" in RUNNERS
-        assert RUNNERS["vanilla"] is VanillaRunner
-
     def test_get_runner_harbor(self):
         """get_runner should return HarborRunner for 'harbor'."""
         runner = get_runner("harbor")
         assert isinstance(runner, HarborRunner)
-
-    def test_get_runner_vanilla(self):
-        """get_runner should return VanillaRunner for 'vanilla'."""
-        runner = get_runner("vanilla")
-        assert isinstance(runner, VanillaRunner)
 
     def test_get_runner_unknown_raises(self):
         """get_runner should raise ValueError for unknown runner."""
@@ -49,7 +38,6 @@ class TestRunnerRegistry:
         except ValueError as e:
             assert "unknown" in str(e).lower()
             assert "harbor" in str(e).lower()
-            assert "vanilla" in str(e).lower()
 
     def test_get_runner_passes_kwargs(self):
         """get_runner should pass kwargs to runner constructor."""
@@ -205,9 +193,7 @@ class TestHarborRunner:
         unless --regenerate is also passed, and enrich_harbor_tasks() already
         baked judge_model into the packages directly."""
         mock_run.return_value = MagicMock(returncode=0)
-        runner = HarborRunner(
-            model="test-model", judge_model="judge-model", image="quay.io/test/image:v1"
-        )
+        runner = HarborRunner(model="test-model", judge_model="judge-model", image="quay.io/test/image:v1")
         config = tmp_path / "eval.yaml"
         config.write_text(yaml.dump({"skill": "demo", "models": {"skill": "m"}}))
         output = tmp_path / "output"
@@ -250,31 +236,6 @@ class TestHarborRunner:
             assert False, "Should have raised RunnerError"
         except RunnerError as e:
             assert "model" in str(e).lower()
-
-
-class TestVanillaRunner:
-    """Test VanillaRunner execution."""
-
-    def test_vanilla_runner_name(self):
-        """Vanilla runner should have correct name."""
-        runner = VanillaRunner()
-        assert runner.name == "vanilla"
-
-    def test_vanilla_runner_raises_runner_error(self, tmp_path):
-        """Vanilla runner should raise RunnerError with helpful message."""
-        runner = VanillaRunner()
-        config = tmp_path / "eval.yaml"
-        config.write_text("skill: test")
-        output = tmp_path / "output"
-
-        try:
-            runner.run_single(config, output)
-            assert False, "Should have raised RunnerError"
-        except RunnerError as e:
-            # Verify helpful message
-            msg = str(e).lower()
-            assert "not yet implemented" in msg
-            assert "harbor" in msg  # Should suggest using harbor instead
 
 
 class TestBaseRunner:
@@ -326,10 +287,10 @@ class TestBaseRunner:
 
     def test_read_skill_name_prefers_skill_over_name(self, tmp_path):
         config_path = tmp_path / "eval.yaml"
-        config_path.write_text(yaml.dump({"skill": "openclaw-forge", "name": "forge-eval-rubrics"}))
+        config_path.write_text(yaml.dump({"skill": "sample-skill", "name": "forge-eval-rubrics"}))
 
         runner = HarborRunner()
-        assert runner._read_skill_name(config_path) == "openclaw-forge"
+        assert runner._read_skill_name(config_path) == "sample-skill"
 
     def test_read_skill_name_uses_execution_skill(self, tmp_path):
         config_path = tmp_path / "eval.yaml"
@@ -352,7 +313,7 @@ class TestEvalDirName:
 
         config_path = tmp_path / "eval.yaml"
         config_path.write_text(yaml.dump({"execution": {"prompt": "hi"}}))
-        assert eval_dir_name(config_path, fallback="openclaw-forge") == "openclaw-forge"
+        assert eval_dir_name(config_path, fallback="sample-skill") == "sample-skill"
 
     def test_sanitizes_name(self, tmp_path):
         from scripts.run_aeh import eval_dir_name
@@ -365,17 +326,17 @@ class TestEvalDirName:
         from scripts.run_aeh import resolve_aeh_run_dir
 
         reports = tmp_path / "reports"
-        run_id = "aeh-openshell-forge-nsenter-nfz69"
+        run_id = "aeh-harbor-forge-nsenter-nfz69"
         actual = reports / "forge-eval-rubrics" / run_id
         actual.mkdir(parents=True)
         (actual / "summary.yaml").write_text("mean_reward: 1.0\n")
-        (reports / "openclaw-forge" / run_id).mkdir(parents=True)
+        (reports / "sample-skill" / run_id).mkdir(parents=True)
 
         found = resolve_aeh_run_dir(
             reports,
             run_id,
             eval_name="forge-eval-rubrics",
-            submission_name="openclaw-forge",
+            submission_name="sample-skill",
         )
         assert found == actual
 
@@ -384,7 +345,7 @@ class TestEvalDirName:
 
         reports = tmp_path / "reports"
         run_id = "run-1"
-        sub = reports / "openclaw-forge" / run_id
+        sub = reports / "sample-skill" / run_id
         sub.mkdir(parents=True)
         (sub / "run_result.json").write_text("{}")
 
@@ -392,7 +353,7 @@ class TestEvalDirName:
             reports,
             run_id,
             eval_name="forge-eval-rubrics",
-            submission_name="openclaw-forge",
+            submission_name="sample-skill",
         )
         assert found == sub
 

@@ -1,9 +1,0 @@
-apiVersion: triggers.tekton.dev/v1beta1
-kind: TriggerBinding
-metadata:
-  name: litellm-config-binding
-  namespace: ab-eval-flow
-spec:
-  params:
-    - name: _unused
-      value: "litellm-config-change"

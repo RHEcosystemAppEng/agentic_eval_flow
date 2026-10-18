@@ -1,0 +1,46 @@
+# Trial pod: Claude Code, fixture-backed stdio MCP, and AEH's reward verifier.
+# No task scripts, scanners, reporting, or database clients.
+FROM registry.access.redhat.com/ubi9/python-312:latest
+USER 0
+RUN dnf install -y nodejs npm git tar && dnf clean all
+ARG CLAUDE_CODE_VERSION=2.1.228
+RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
+# The same AEH revision is used by orchestration and the in-pod verifier.
+ARG AEH_REPO=https://github.com/opendatahub-io/agent-eval-harness.git
+ARG AEH_SHA=2a10e504242b42f508ecbfe813080abe1e16a501
+RUN echo "${AEH_SHA}" | grep -qE '^[0-9a-fA-F]{40}$' \
+    && git init /tmp/aeh \
+    && git -C /tmp/aeh remote add origin "${AEH_REPO}" \
+    && git -C /tmp/aeh fetch --depth 1 origin "${AEH_SHA}" \
+    && git -C /tmp/aeh checkout --detach FETCH_HEAD \
+    && mkdir -p /opt/agent-eval-harness/skills \
+    && cp -r /tmp/aeh/agent_eval /opt/agent-eval-harness/ \
+    && cp -r /tmp/aeh/skills/eval-run /opt/agent-eval-harness/skills/ \
+    && cp /tmp/aeh/pyproject.toml /opt/agent-eval-harness/ \
+    && rm -rf /tmp/aeh
+COPY containers/agent-eval-harness/patch_pairwise_warning.py /tmp/patch_pairwise_warning.py
+RUN python3 /tmp/patch_pairwise_warning.py /opt/agent-eval-harness/agent_eval/config.py \
+    && rm /tmp/patch_pairwise_warning.py
+ARG MOCK_REPO=https://github.com/nemerna/generic-mock-mcp-server.git
+ARG MOCK_SHA=f68734ac68e504f4856c7a1d25e01919b95b3bb7
+RUN echo "${MOCK_SHA}" | grep -qE '^[0-9a-fA-F]{40}$' \
+    && git init /opt/mock-mcp \
+    && git -C /opt/mock-mcp remote add origin "${MOCK_REPO}" \
+    && git -C /opt/mock-mcp fetch --depth 1 origin "${MOCK_SHA}" \
+    && git -C /opt/mock-mcp checkout --detach FETCH_HEAD \
+    && rm -rf /opt/mock-mcp/.git
+RUN pip install --no-cache-dir pyyaml "anthropic[vertex]" jinja2 "truststore>=0.9,<1" \
+    -r /opt/mock-mcp/requirements.txt
+COPY containers/agent-eval-harness/sitecustomize.py /tmp/sitecustomize.py
+RUN python3 -c "import shutil, site; shutil.copy('/tmp/sitecustomize.py', site.getsitepackages()[0] + '/sitecustomize.py')" \
+    && rm /tmp/sitecustomize.py
+RUN PYTHONPATH=/opt/agent-eval-harness python3 -c "import agent_eval.harbor.reward" \
+    && python3 /opt/mock-mcp/src/server.py --help >/dev/null \
+    && claude --version \
+    && chgrp -R 0 /opt/mock-mcp && chmod -R g=u /opt/mock-mcp
+ENV PYTHONPATH=/opt/agent-eval-harness HOME=/workspace
+RUN mkdir -p /workspace /logs /tests /solution /harbor /installed-agent \
+    && chgrp -R 0 /workspace /logs /tests /solution /harbor /installed-agent /opt/agent-eval-harness \
+    && chmod -R g=u /workspace /logs /tests /solution /harbor /installed-agent /opt/agent-eval-harness
+WORKDIR /workspace
+USER 1001

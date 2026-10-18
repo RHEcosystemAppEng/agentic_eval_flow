@@ -19,32 +19,13 @@ jobs:
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          python -m pip install uv
+          uv sync --locked --extra dev --extra observability
 
       - name: Run linter (ruff)
         run: |
-          ruff check abevalflow/ scripts/ tests/
-          ruff format --check abevalflow/ scripts/ tests/
+          uv run --locked --extra dev --extra observability ruff check abevalflow/ scripts/ tests/ containers/
+          uv run --locked --extra dev --extra observability ruff format --check abevalflow/ scripts/ tests/ containers/
 
       - name: Run tests
-        run: pytest tests/ -v --tb=short --ignore=tests/test_mlflow_observer.py
-
-  test-observability:
-    name: test (observability)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev,observability]"
-
-      - name: Run MLflow observer tests
-        run: pytest tests/test_mlflow_observer.py -v --tb=short
+        run: uv run --locked --extra dev --extra observability pytest tests/ -v --tb=short

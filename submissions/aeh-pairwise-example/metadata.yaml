@@ -5,6 +5,7 @@ persona: rh-developer
 version: "0.1.0"
 author: Agentic Eval Flow Team
 eval_engine: aeh
+aeh_mode: pairwise
 tags:
   - sample
   - aeh

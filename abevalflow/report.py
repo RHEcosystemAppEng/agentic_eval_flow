@@ -126,19 +126,9 @@ class Provenance(BaseModel):
     control_image_ref: str | None = None
     harbor_fork_revision: str | None = None
     eval_engine: str = Field(
-        default="harbor",
-        description="Evaluation engine used: 'harbor', 'ase', or 'both'",
+        default="aeh",
+        description="Evaluation engine used: aeh",
     )
-
-
-class DegradationResult(BaseModel):
-    """Historical degradation check against previous evaluation runs."""
-
-    degraded: bool
-    message: str
-    threshold: float | None = None
-    previous_pass_rate: float | None = None
-    current_pass_rate: float | None = None
 
 
 class AnalysisSummary(BaseModel):
@@ -170,19 +160,6 @@ class AnalysisSummary(BaseModel):
     recommendation: Recommendation
 
 
-class EdgeCaseResult(BaseModel):
-    """Result of a single edge case evaluation."""
-
-    name: str = Field(description="Edge case name (derived from filename)")
-    summary: VariantSummary | None = Field(
-        default=None,
-        description="Trial stats (present for Harbor-based eval, absent for ASE-based eval)",
-    )
-    passed: bool = Field(description="Whether the edge case passed verification")
-    score: float | None = Field(default=None, description="Edge case score (0.0-1.0)")
-    source: str | None = Field(default=None, description="Origin: 'generated' or 'submitter'")
-
-
 class PairwiseComparisonResult(BaseModel):
     """AEH pairwise LLM-judge comparison (from score.py pairwise)."""
 
@@ -211,14 +188,6 @@ class AnalysisResult(BaseModel):
         default_factory=list,
         description="Results from security scanners. Empty if scanning disabled.",
     )
-    degradation: DegradationResult | None = Field(
-        default=None,
-        description="Historical degradation check result. Present when monitoring ran.",
-    )
-    edge_case_results: list[EdgeCaseResult] = Field(
-        default_factory=list,
-        description="Results from edge case evaluations. Empty if no edge cases defined.",
-    )
     pairwise: PairwiseComparisonResult | None = Field(
         default=None,
         description="AEH pairwise comparison results. Present for aeh-mode=pairwise.",
@@ -226,13 +195,12 @@ class AnalysisResult(BaseModel):
     execution: dict[str, Any] | None = Field(
         default=None,
         description=(
-            "AEH/OpenShell run_result metadata (duration, tokens, execution_mode). "
-            "Does not include per-case response_text."
+            "AEH run_result metadata (duration, tokens, execution_mode). Does not include per-case response_text."
         ),
     )
     mode: str | None = Field(
         default=None,
-        description="AEH aggregation mode: 'single' or 'pairwise'. None for Harbor/ASE A/B.",
+        description="AEH aggregation mode: 'single' or 'pairwise'. ",
     )
     judges: dict[str, Any] | None = Field(
         default=None,

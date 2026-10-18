@@ -30,6 +30,20 @@ different ``fixture.json`` into each task here makes the identical mcps.json
 stdio command resolve different mock data per case, with zero per-task
 mcps.json/Harbor-level plumbing needed. See
 ``_mock_mcp_server_names``/``_stage_mock_mcp_files`` below.
+
+NOTE on pairwise control arms wanting MCP access without a skill: this was
+tried here first, as a ``runner.load_skills: false`` flag that skipped
+step 4 below -- but that alone does NOT prevent Claude Code from loading
+the skill, since ``agent_eval/harbor/run.py``'s ``_resolve_harbor_skill_roots``
+(vendored, patched) forwards ``--skill`` purely on a per-plugin_dirs-entry
+``SKILL.md`` filesystem check, with no knowledge of any flag in this repo's
+own YAML. Confirmed empirically (both arms' init events showed the full
+skill/slash-command list regardless of this flag). The actual fix lives in
+``scripts/swap_mock_mcp.py``: a pairwise control arm points
+``runner.plugin_dirs`` at a sibling pack named ``"<real-pack>-mcp-only"``
+that genuinely has no ``SKILL.md`` anywhere (generated fresh from the real
+pack's own ``mcps.json`` at run time, never hand-authored) -- the per-
+directory check that actually works.
 """
 
 from __future__ import annotations
@@ -320,8 +334,7 @@ def _stage_mock_mcp_files(
     for server in server_names:
         if mcp_schema_root is None:
             raise FileNotFoundError(
-                f"mock-mcps references server '{server}' but no mcp-servers/ "
-                "root could be resolved for this submission"
+                f"mock-mcps references server '{server}' but no mcp-servers/ root could be resolved for this submission"
             )
         schema_src = mcp_schema_root / server / "schema.json"
         if not schema_src.is_file():
@@ -414,9 +427,7 @@ def _resolve_skill_source(root: Path) -> Path | None:
     if any(child.is_dir() and (child / "SKILL.md").is_file() for child in root.iterdir()):
         return root
     skills_sub = root / "skills"
-    if skills_sub.is_dir() and any(
-        child.is_dir() and (child / "SKILL.md").is_file() for child in skills_sub.iterdir()
-    ):
+    if skills_sub.is_dir() and any(child.is_dir() and (child / "SKILL.md").is_file() for child in skills_sub.iterdir()):
         return skills_sub
     return None
 

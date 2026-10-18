@@ -1,23 +1,8 @@
 #!/usr/bin/env python3
-"""Unified AEH runner - abstracts execution backend (harbor, vanilla, future).
+"""Run AEH single and pairwise evaluations through Harbor on Kubernetes.
 
-This dispatcher provides a consistent interface for running AEH evaluations
-regardless of the underlying execution mode. The pairwise comparison logic
-is shared across all runners since score.py is execution-mode agnostic.
-
-Usage:
-    # Single run
-    python run_aeh.py single --runner harbor --config eval.yaml --output /path/to/output
-
-    # Pairwise run
-    python run_aeh.py pairwise --runner harbor \
-        --control-config eval-control.yaml \
-        --treatment-config eval-treatment.yaml \
-        --output /path/to/output
-
-Environment variables (for kubernetes/harbor mode):
-    AGENT_EVAL_K8S_CREDENTIALS_SECRET: Secret name for LLM credentials
-    AGENT_EVAL_RUNS_DIR: Base directory for run outputs
+Stages enriched tasks, invokes AEH, and bridges trial output into the run
+layout consumed by AEH's suite-level pairwise scoring and HTML reports.
 """
 
 from __future__ import annotations
@@ -46,7 +31,7 @@ def eval_dir_name(config_path: Path, fallback: str | None = None) -> str:
     Order: ``execution.skill`` / top-level ``skill``, then sanitized ``name``,
     then ``fallback`` (pipeline submission-name) or the config filename stem.
 
-    Prompt-mode evals (no skill) such as openclaw-forge use ``name:
+    Prompt-mode evals (no skill) use ``name:
     forge-eval-rubrics``. The Tekton wrapper must use this leaf, not the
     submission directory name.
     """
@@ -652,6 +637,21 @@ class HarborRunner(BaseRunner):
         else:
             tasks_dir.mkdir(parents=True, exist_ok=True)
 
+        # Swap mocked MCP server entries into this submission's committed
+        # (and any auto-generated MCP-only sibling) mcps.json pack(s) BEFORE
+        # Harbor resolves plugin_dirs below -- same function the Tekton
+        # pipeline's swap-mock-mcp step calls, so local dev runs get
+        # identical, idempotent behavior with no separate manual step to
+        # remember. See scripts/swap_mock_mcp.py's module docstring.
+        try:
+            from scripts.swap_mock_mcp import swap_mock_mcp_servers
+
+            swapped = swap_mock_mcp_servers(config.parent)
+            if swapped:
+                print(f"Swapped mock MCP server entries: {swapped}")
+        except Exception as exc:  # noqa: BLE001 — best-effort; don't block a run over this
+            print(f"WARN: failed to swap mock MCP servers: {exc}")
+
         eval_config = EvalConfig.from_yaml(config)
         print(f"Generating Harbor tasks into {tasks_dir}")
         tasks_mod.generate_tasks(
@@ -703,8 +703,7 @@ class HarborRunner(BaseRunner):
         runner_cfg = eval_config.get("runner", {})
         if isinstance(runner_cfg.get("plugin_dirs"), list):
             runner_cfg["plugin_dirs"] = [
-                str((config_dir / p).resolve()) if not Path(p).is_absolute() else p
-                for p in runner_cfg["plugin_dirs"]
+                str((config_dir / p).resolve()) if not Path(p).is_absolute() else p for p in runner_cfg["plugin_dirs"]
             ]
 
         patched_config = config.parent / f"{config.stem}-openshift.yaml"
@@ -715,145 +714,9 @@ class HarborRunner(BaseRunner):
         return patched_config
 
 
-class VanillaRunner(BaseRunner):
-    """Vanilla (direct/local) execution backend.
-
-    NOT YET IMPLEMENTED. Agent-eval-harness does not currently have a
-    standalone CLI for local execution. The eval-run skill is designed
-    to be driven by an LLM agent, not invoked directly.
-
-    This runner exists as a placeholder for future local execution support.
-    Use 'harbor' runner with --env podman for local containerized execution.
-    """
-
-    name = "vanilla"
-
-    def _execute(
-        self,
-        config: Path,
-        output: Path,
-        run_id: str | None = None,
-        **opts: Any,
-    ) -> int:
-        """Execute via vanilla mode - NOT YET IMPLEMENTED."""
-        raise RunnerError(
-            "Vanilla runner is not yet implemented. "
-            "Agent-eval-harness does not have a standalone local CLI. "
-            "Use 'harbor' runner instead:\n"
-            "  - For Kubernetes: --runner harbor --env-type kubernetes\n"
-            "  - For local containers: --runner harbor --env-type podman\n"
-            "  - For OpenShell/OpenClaw: --runner openshell\n"
-            "\n"
-            "See: https://github.com/agent-eval-harness for AEH documentation."
-        )
-
-
-class OpenShellRunner(BaseRunner):
-    """OpenShell execution backend (cluster OpenShell gateway + inner OpenClaw sandbox).
-
-    Invokes ``python -m agent_eval.openshell.run``. Does not patch eval.yaml
-    for OpenShift emptyDir and does not call harbor.run.
-
-    OpenShell writes ``$AGENT_EVAL_RUNS_DIR/<eval-name>/<run-id>/`` where
-    eval-name is EvalConfig.eval_name() (skill, else ``name``). The pipeline
-    passes ``--output`` as that run directory (``reports/<eval-name>/<run-id>``),
-    so AGENT_EVAL_RUNS_DIR is set to the grandparent (``reports/``). If
-    ``--output``'s leaf does not match eval_name(), results are copied into
-    ``--output`` after the run so callers still find summary.yaml there.
-    """
-
-    name = "openshell"
-
-    def _config_with_judge_model(self, config: Path) -> Path:
-        """Write a sibling eval.yaml with models.judge overridden for LiteLLM.
-
-        Harbor applies ``--judge-model`` by rewriting the bundled eval.yaml.
-        OpenShell scores in-process via score.py, which prefers models.judge
-        over EVAL_JUDGE_MODEL, so the override must land in the config file.
-        Dataset paths stay relative to the original parent directory.
-        """
-        if not self.judge_model:
-            return config
-        try:
-            raw = yaml.safe_load(config.read_text()) or {}
-        except (OSError, yaml.YAMLError):
-            raw = {}
-        if not isinstance(raw, dict):
-            raw = {}
-        models = raw.get("models")
-        if not isinstance(models, dict):
-            models = {}
-            raw["models"] = models
-        models["judge"] = self.judge_model
-        patched = config.parent / f".eval.judge-override.{os.getpid()}.yaml"
-        patched.write_text(yaml.safe_dump(raw, sort_keys=False))
-        print(f"OpenShell judge override: models.judge={self.judge_model} ({patched})")
-        return patched
-
-    def _execute(
-        self,
-        config: Path,
-        output: Path,
-        run_id: str | None = None,
-        **opts: Any,
-    ) -> int:
-        if not self.model:
-            raise RunnerError(
-                "OpenShell runner requires --model. Pass --model explicitly via CLI or pipeline parameter."
-            )
-        if not os.environ.get("AGENT_EVAL_OPENSHELL_IMAGE"):
-            raise RunnerError(
-                "OpenShell runner requires AGENT_EVAL_OPENSHELL_IMAGE (sandbox image the forge-saw gateway can pull)."
-            )
-        if not os.environ.get("OPENSHELL_GATEWAY_ENDPOINT"):
-            raise RunnerError(
-                "OpenShell runner requires OPENSHELL_GATEWAY_ENDPOINT (in-cluster forge-saw gateway URL)."
-            )
-
-        rid = run_id or output.name
-        # Prefer an existing AGENT_EVAL_RUNS_DIR (Tekton sets reports/).
-        # Otherwise --output is reports/<eval-name>/<run-id> → grandparent.
-        env_runs = os.environ.get("AGENT_EVAL_RUNS_DIR")
-        runs_dir = Path(env_runs) if env_runs else output.parent.parent
-        env = os.environ.copy()
-        env["AGENT_EVAL_RUNS_DIR"] = str(runs_dir)
-        if self.judge_model:
-            env["EVAL_JUDGE_MODEL"] = self.judge_model
-        actual = runs_dir / eval_dir_name(config, fallback=output.parent.name) / rid
-        patched = self._config_with_judge_model(config)
-
-        cmd = [
-            sys.executable,
-            "-m",
-            "agent_eval.openshell.run",
-            "--config",
-            str(patched),
-            "--model",
-            self.model,
-            "--run-id",
-            rid,
-        ]
-
-        print(f"Running: {' '.join(cmd)}")
-        print(f"  AGENT_EVAL_RUNS_DIR={runs_dir}")
-        print(f"  --output={output}")
-        print(f"  actual run dir={actual}")
-        print(f"  OPENSHELL_GATEWAY_ENDPOINT={env.get('OPENSHELL_GATEWAY_ENDPOINT')}")
-        print(f"  AGENT_EVAL_OPENSHELL_IMAGE={env.get('AGENT_EVAL_OPENSHELL_IMAGE')}")
-        try:
-            result = subprocess.run(cmd, env=env)
-        finally:
-            if patched != config:
-                patched.unlink(missing_ok=True)
-        _sync_output_dir(output, actual)
-        return result.returncode
-
-
 # Registry of available runners
 RUNNERS: dict[str, type[BaseRunner]] = {
     "harbor": HarborRunner,
-    "vanilla": VanillaRunner,
-    "openshell": OpenShellRunner,
 }
 
 
@@ -861,7 +724,7 @@ def get_runner(name: str, **kwargs: Any) -> BaseRunner:
     """Get a runner instance by name.
 
     Args:
-        name: Runner name (harbor, vanilla, etc.)
+        name: Runner name (harbor)
         **kwargs: Arguments passed to runner constructor
 
     Returns:
@@ -887,11 +750,7 @@ def main() -> int:
         "--runner",
         choices=list(RUNNERS.keys()),
         default="harbor",
-        help=(
-            "Execution backend (default: harbor). "
-            "'openshell' talks to a forge-saw gateway. "
-            "'vanilla' raises RunnerError."
-        ),
+        help="AEH execution backend (Harbor on Kubernetes).",
     )
     common.add_argument("--model", help="Model for skill execution")
     common.add_argument("--judge-model", help="Model for LLM judges")

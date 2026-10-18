@@ -1,121 +1,22 @@
-# Certification Profiles
-#
-# Defines which checks apply to each certification level for different artifact types.
-# Profiles are selected at pipeline deployment level, not per-submission.
-# Individual submissions can override via metadata.yaml if needed.
-#
-# Maintained by: Compass PM / Governance team
-# Used by: abevalflow/certification.py
-
 default_profile: skill
-
 profiles:
-  # Skills (Prompt + Code) - A/B gap testing and execution isolation
   skill:
-    description: "Skills with prompts and code - focus on A/B testing and execution"
+    description: Skills with prompts and code - focus on A/B testing and execution
     foundational:
       checks:
-        - valid_skill_structure
-        - basic_security_validation
-        - basic_execution_validation
-        - content_quality_review
-        - metadata_compliance
+      - valid_skill_structure
+      - basic_security_validation
+      - basic_execution_validation
+      - content_quality_review
+      - metadata_compliance
     trusted:
       checks:
-        - evaluation_assets
-        - functional_validation
-        - instruction_quality
-        - operational_policy_compliance
+      - evaluation_assets
+      - functional_validation
+      - instruction_quality
+      - operational_policy_compliance
     certified:
       checks:
-        - enterprise_structure_validation
-        - enterprise_behavioral_testing
-        - advanced_agent_validation
-
-  # MCP Servers (Standardized Tool APIs) - API contracts and stability
-  mcp_server:
-    description: "MCP tool servers - focus on API contracts and operational stability"
-    foundational:
-      checks:
-        - valid_skill_structure
-        - basic_security_validation
-        - metadata_compliance
-    trusted:
-      checks:
-        - evaluation_assets
-        - functional_validation
-    certified:
-      checks:
-        - enterprise_structure_validation
-        - enterprise_security_review
-        # - resilience_chaos_testing  # Not yet implemented
-
-  # Plugins (REST APIs + Manifests) - OpenAPI and authentication
-  plugin:
-    description: "REST API plugins - focus on OpenAPI validation and auth flows"
-    foundational:
-      checks:
-        - valid_skill_structure
-        - basic_security_validation
-        - metadata_compliance
-    trusted:
-      checks:
-        - evaluation_assets
-        - advanced_security_validation
-        - functional_validation
-    certified:
-      checks:
-        - enterprise_structure_validation
-        - enterprise_security_review
-
-  # Agent Evals (Autonomous Loops) - Reasoning and multi-turn
-  agent:
-    description: "Autonomous agents - focus on reasoning, safety, and multi-turn behavior"
-    foundational:
-      checks:
-        - valid_skill_structure
-        - basic_security_validation
-        - basic_execution_validation
-        - metadata_compliance
-    trusted:
-      checks:
-        - evaluation_assets
-        - functional_validation
-        - instruction_quality
-        - operational_policy_compliance
-    certified:
-      checks:
-        - enterprise_structure_validation
-        # - enterprise_behavioral_testing  # Enabled for skill profile only
-        - advanced_agent_validation
-        # - safety_toxicity_bias_guardrails  # Not yet implemented
-
-  # Full profile - all implemented checks enabled
-  full:
-    description: "All implemented checks enabled - matches FOUNDATIONAL/TRUSTED/CERTIFIED_CHECKS"
-    foundational:
-      checks:
-        - valid_skill_structure
-        - basic_security_validation
-        - basic_execution_validation
-        - content_quality_review
-        - metadata_compliance
-    trusted:
-      checks:
-        - evaluation_assets
-        - advanced_security_validation
-        - functional_validation
-        - instruction_quality
-        # Not yet implemented:
-        # - registry_governance
-        - operational_policy_compliance
-    certified:
-      checks:
-        - enterprise_structure_validation
-        - enterprise_security_review
-        # - enterprise_behavioral_testing  # Enabled for skill profile only
-        - advanced_agent_validation
-        # Not yet implemented:
-        # - continuous_optimization
-        # - safety_toxicity_bias_guardrails
-        # - resilience_chaos_testing
+      - enterprise_structure_validation
+      - enterprise_behavioral_testing
+      - advanced_agent_validation

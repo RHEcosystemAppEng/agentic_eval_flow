@@ -23,145 +23,6 @@ from abevalflow.schemas import SubmissionMetadata
 
 logger = logging.getLogger(__name__)
 
-REVIEW_SYSTEM_PROMPT_HARBOR = """\
-You are a senior QA engineer reviewing AI skill evaluation submissions.
-You must assess the quality of a submission that consists of:
-- A skill definition (SKILL.md)
-- A task instruction (instruction.md)
-- Verification tests (test_outputs.py)
-- Optionally an LLM judge (llm_judge.py)
-
-Evaluate the following dimensions and assign each a score from 0.0 to 1.0:
-
-1. **coherence** — Does the instruction faithfully test what the skill describes?
-2. **coverage** — Do the tests adequately verify the instruction requirements?
-3. **clarity** — Are the instruction and tests clear and unambiguous?
-4. **feasibility** — Can an AI agent reasonably complete the task in a single session?
-5. **robustness** — Do the tests cover edge cases and failure modes?
-6. **specificity** — Is the instruction concrete enough that an agent knows what to do, or vague?
-7. **completeness** — Does the instruction cover everything SKILL.md claims? Any gaps?
-8. **testability** — Can the instruction's requirements be verified by the provided tests?
-9. **alignment** — Do the tests actually verify what the instruction asks for?
-10. **output_clarity** — Does the instruction specify what the output should look like?
-
-For each dimension, provide a brief finding (1-2 sentences).
-
-Then provide an overall recommendation:
-- "pass" — Submission is ready for evaluation (all scores >= 0.6)
-- "warn" — Minor issues but can proceed (some scores 0.4-0.6)
-- "fail" — Significant problems, should not proceed (any score < 0.4)
-
-Output ONLY valid JSON with this structure:
-{
-  "dimensions": {
-    "coherence": {"score": 0.0, "finding": "..."},
-    "coverage": {"score": 0.0, "finding": "..."},
-    "clarity": {"score": 0.0, "finding": "..."},
-    "feasibility": {"score": 0.0, "finding": "..."},
-    "robustness": {"score": 0.0, "finding": "..."},
-    "specificity": {"score": 0.0, "finding": "..."},
-    "completeness": {"score": 0.0, "finding": "..."},
-    "testability": {"score": 0.0, "finding": "..."},
-    "alignment": {"score": 0.0, "finding": "..."},
-    "output_clarity": {"score": 0.0, "finding": "..."}
-  },
-  "overall_score": 0.0,
-  "recommendation": "pass|warn|fail",
-  "summary": "One paragraph overall assessment"
-}
-"""
-
-REVIEW_SYSTEM_PROMPT_ASE = """\
-You are a senior QA engineer reviewing AI skill evaluation submissions.
-You must assess the quality of a submission that uses the ASE (Agent Skills Eval) format:
-- A skill definition (SKILL.md)
-- Evaluation definitions (evals.json with prompts and assertions)
-
-Evaluate the following dimensions and assign each a score from 0.0 to 1.0:
-
-1. **coherence** — Do the eval prompts faithfully test what the skill describes?
-2. **coverage** — Do the assertions adequately verify the expected behavior?
-3. **clarity** — Are the prompts and assertions clear and unambiguous?
-4. **feasibility** — Can an AI agent reasonably complete the tasks?
-5. **robustness** — Do the evals cover different scenarios and edge cases?
-6. **specificity** — Are the eval prompts concrete enough, or do they rely on vague language?
-7. **completeness** — Do the evals cover all capabilities described in SKILL.md, or are some untested?
-8. **testability** — Can the eval assertions actually verify the expected behavior?
-9. **alignment** — Do the eval prompts test what SKILL.md describes?
-10. **output_clarity** — Do the evals specify expected output format?
-
-For each dimension, provide a brief finding (1-2 sentences).
-
-Then provide an overall recommendation:
-- "pass" — Submission is ready for evaluation (all scores >= 0.6)
-- "warn" — Minor issues but can proceed (some scores 0.4-0.6)
-- "fail" — Significant problems, should not proceed (any score < 0.4)
-
-Output ONLY valid JSON with this structure:
-{
-  "dimensions": {
-    "coherence": {"score": 0.0, "finding": "..."},
-    "coverage": {"score": 0.0, "finding": "..."},
-    "clarity": {"score": 0.0, "finding": "..."},
-    "feasibility": {"score": 0.0, "finding": "..."},
-    "robustness": {"score": 0.0, "finding": "..."},
-    "specificity": {"score": 0.0, "finding": "..."},
-    "completeness": {"score": 0.0, "finding": "..."},
-    "testability": {"score": 0.0, "finding": "..."},
-    "alignment": {"score": 0.0, "finding": "..."},
-    "output_clarity": {"score": 0.0, "finding": "..."}
-  },
-  "overall_score": 0.0,
-  "recommendation": "pass|warn|fail",
-  "summary": "One paragraph overall assessment"
-}
-"""
-
-REVIEW_USER_TEMPLATE_HARBOR = """\
-Review the following submission.
-
-## Skill Name
-{skill_name}
-
-## skills/SKILL.md
-```
-{skill_content}
-```
-
-## instruction.md
-```
-{instruction_content}
-```
-
-## tests/test_outputs.py
-```python
-{test_content}
-```
-
-{llm_judge_section}
-
-Respond with the JSON assessment.
-"""
-
-REVIEW_USER_TEMPLATE_ASE = """\
-Review the following ASE submission.
-
-## Skill Name
-{skill_name}
-
-## skills/SKILL.md
-```
-{skill_content}
-```
-
-## evals/evals.json
-```json
-{evals_content}
-```
-
-Respond with the JSON assessment.
-"""
-
 REVIEW_SYSTEM_PROMPT_AEH = """\
 You are a senior QA engineer reviewing Agent-Eval-Harness (AEH) submissions.
 You must assess the quality of a submission that consists of:
@@ -255,17 +116,6 @@ def _find_skill_md(submission_dir: Path) -> Path | None:
     return matches[0] if matches else None
 
 
-def _is_aeh_submission(submission_dir: Path, metadata: SubmissionMetadata) -> bool:
-    """Detect AEH submissions via metadata or eval config files."""
-    if getattr(metadata, "eval_engine", None) == "aeh":
-        return True
-    return (
-        (submission_dir / "eval.yaml").is_file()
-        or (submission_dir / "eval-treatment.yaml").is_file()
-        or (submission_dir / "eval-control.yaml").is_file()
-    )
-
-
 def _aeh_eval_configs_section(submission_dir: Path) -> str:
     parts: list[str] = []
     for name in ("eval.yaml", "eval-control.yaml", "eval-treatment.yaml"):
@@ -357,50 +207,18 @@ def review_submission(submission_dir: Path) -> dict:
     skill_md_path = _find_skill_md(submission_dir)
     skill_content = _read_file_safe(skill_md_path) if skill_md_path else "(file not present)"
 
-    if _is_aeh_submission(submission_dir, metadata):
-        advisory = _advisory_aeh_missing_files(submission_dir, metadata.name)
-        if advisory is not None:
-            return advisory
-        system_prompt = REVIEW_SYSTEM_PROMPT_AEH
-        user_prompt = REVIEW_USER_TEMPLATE_AEH.format(
-            skill_name=metadata.name,
-            metadata_content=_read_file_safe(meta_path),
-            eval_configs_section=_aeh_eval_configs_section(submission_dir),
-            cases_section=_aeh_cases_section(submission_dir),
-            skill_content=skill_content,
-        )
-        engine = "aeh"
-    else:
-        # Detect ASE vs Harbor format
-        evals_path = submission_dir / "evals" / "evals.json"
-        is_ase = evals_path.is_file()
-
-        if is_ase:
-            evals_content = _read_file_safe(evals_path)
-            system_prompt = REVIEW_SYSTEM_PROMPT_ASE
-            user_prompt = REVIEW_USER_TEMPLATE_ASE.format(
-                skill_name=metadata.name,
-                skill_content=skill_content,
-                evals_content=evals_content,
-            )
-        else:
-            instruction_content = _read_file_safe(submission_dir / "instruction.md")
-            test_content = _read_file_safe(submission_dir / "tests" / "test_outputs.py")
-
-            llm_judge_path = submission_dir / "tests" / "llm_judge.py"
-            llm_judge_section = ""
-            if llm_judge_path.is_file():
-                llm_judge_section = f"## tests/llm_judge.py\n```python\n{llm_judge_path.read_text()}\n```"
-
-            system_prompt = REVIEW_SYSTEM_PROMPT_HARBOR
-            user_prompt = REVIEW_USER_TEMPLATE_HARBOR.format(
-                skill_name=metadata.name,
-                skill_content=skill_content,
-                instruction_content=instruction_content,
-                test_content=test_content,
-                llm_judge_section=llm_judge_section,
-            )
-        engine = None
+    advisory = _advisory_aeh_missing_files(submission_dir, metadata.name)
+    if advisory is not None:
+        return advisory
+    system_prompt = REVIEW_SYSTEM_PROMPT_AEH
+    user_prompt = REVIEW_USER_TEMPLATE_AEH.format(
+        skill_name=metadata.name,
+        metadata_content=_read_file_safe(meta_path),
+        eval_configs_section=_aeh_eval_configs_section(submission_dir),
+        cases_section=_aeh_cases_section(submission_dir),
+        skill_content=skill_content,
+    )
+    engine = "aeh"
 
     llm_result = llm_client.chat_completion_with_usage(
         messages=[

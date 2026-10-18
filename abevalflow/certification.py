@@ -7,7 +7,7 @@ level to be achieved.
 Levels are hierarchical: Certified requires Trusted, Trusted requires Foundational.
 
 Profiles can be loaded from config/certification_profiles.yaml to provide
-artifact-type-specific check configurations (e.g., skill, agent, mcp_server).
+the skill certification profile.
 """
 
 from __future__ import annotations
@@ -134,7 +134,7 @@ def get_available_profiles(profiles_path: Path | None = None) -> list[str]:
         profiles_path: Path to profiles YAML. Defaults to config/certification_profiles.yaml
 
     Returns:
-        List of profile names (e.g., ['skill', 'agent', 'mcp_server', 'plugin'])
+        List of configured skill profile names
     """
     data = _load_profiles_yaml(profiles_path)
     return list(data.get("profiles", {}).keys())
@@ -160,7 +160,7 @@ def load_profile(
     """Load a certification profile and return it as a CertificationPolicy.
 
     Profiles define which checks apply to each certification level for different
-    artifact types (skill, agent, mcp_server, plugin). This allows pipeline
+    skill evaluation requirements. This allows pipeline
     deployments to use appropriate defaults without requiring every submission
     to specify checks in metadata.yaml.
 

@@ -295,7 +295,7 @@ class TestAEHEngine:
 
     def test_single_judge_errors_are_not_quality_zero(self):
         report = {
-            "eval_engine": "aeh_openshell_openclaw",
+            "eval_engine": "aeh",
             "mode": "single",
             "mean_reward": None,
             "summary": {
@@ -476,6 +476,89 @@ class TestAEHEngine:
         assert "aeh-judge-failed" in finding_rules
         assert "aeh-low-score" in finding_rules
         assert "aeh-judge-error" in finding_rules
+
+    def test_pairwise_grounded_disagreement_finding(self):
+        """Regression test for a pairwise verdict contradicting grounded mean_reward.
+
+        Reproduces the production pattern: treatment's own judges give it a
+        perfect mean_reward (1.0), control's own judges give it a failing one
+        (0.333), but the pairwise LLM judge -- which never sees case
+        annotations/ground truth -- prefers control on every case. This must
+        surface as a high-severity finding so a human notices the
+        contradiction, even though the pairwise outcome still drives
+        ``passed`` by design.
+        """
+        report = {
+            "eval_engine": "aeh",
+            "mode": "pairwise",
+            "pairwise": {
+                "wins_a": 0,
+                "wins_b": 2,
+                "ties": 0,
+                "errors": 0,
+                "per_case": [
+                    {"case_id": "case-001", "winner": "B", "error": None},
+                    {"case_id": "case-002", "winner": "B", "error": None},
+                ],
+            },
+            "treatment": {"mean_reward": 1.0},
+            "control": {"mean_reward": 0.3333333333333333},
+        }
+        policy = GatePolicy()
+        engine = AEHEngine()
+        gate_result = engine.to_gate_result(report, policy)
+
+        assert gate_result.passed is False  # pairwise outcome still gates, unchanged
+        disagreements = [f for f in gate_result.findings if f.rule_id == "aeh-pairwise-grounded-disagreement"]
+        assert len(disagreements) == 1
+        assert "treatment=1.000" in disagreements[0].message
+        assert "control=0.333" in disagreements[0].message
+
+    def test_pairwise_no_disagreement_finding_when_mean_reward_agrees(self):
+        """No disagreement finding when the pairwise verdict and mean_reward agree."""
+        report = {
+            "eval_engine": "aeh",
+            "mode": "pairwise",
+            "pairwise": {
+                "wins_a": 2,
+                "wins_b": 0,
+                "ties": 0,
+                "errors": 0,
+                "per_case": [
+                    {"case_id": "case-001", "winner": "A", "error": None},
+                    {"case_id": "case-002", "winner": "A", "error": None},
+                ],
+            },
+            "treatment": {"mean_reward": 1.0},
+            "control": {"mean_reward": 0.0},
+        }
+        policy = GatePolicy()
+        engine = AEHEngine()
+        gate_result = engine.to_gate_result(report, policy)
+
+        assert not any(f.rule_id == "aeh-pairwise-grounded-disagreement" for f in gate_result.findings)
+
+    def test_pairwise_no_disagreement_finding_without_mean_reward(self):
+        """No crash/false-positive when treatment/control blocks are absent."""
+        report = {
+            "eval_engine": "aeh",
+            "mode": "pairwise",
+            "pairwise": {
+                "wins_a": 0,
+                "wins_b": 2,
+                "ties": 0,
+                "errors": 0,
+                "per_case": [
+                    {"case_id": "case-001", "winner": "B", "error": None},
+                    {"case_id": "case-002", "winner": "B", "error": None},
+                ],
+            },
+        }
+        policy = GatePolicy()
+        engine = AEHEngine()
+        gate_result = engine.to_gate_result(report, policy)
+
+        assert not any(f.rule_id == "aeh-pairwise-grounded-disagreement" for f in gate_result.findings)
 
     def test_read_result_detects_pairwise_mode(self, tmp_path):
         """Test that mode is correctly detected from summary.yaml pairwise key."""

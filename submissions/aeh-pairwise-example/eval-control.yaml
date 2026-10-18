@@ -1,49 +1,36 @@
-# AEH Control configuration (baseline - without skill)
-# This represents the baseline agent without any skill enhancements
-
 skill: aeh-pairwise-example
-
-# Runner configuration - standard Claude Code without skill plugins
 runner:
   type: claude-code
   effort: low
   settings:
     permission_mode: bypassPermissions
-  # No plugin_dirs - raw Claude Code capability
-
-# Model configuration
 models:
   skill: claude-sonnet-4-5
   judge: claude-sonnet-4-5
-
-# Dataset location (relative to submission)
 dataset:
   path: cases
-
-# Case artifact path (aligned with treatment for pairwise)
 outputs:
-  - path: output
-
-# Judges evaluate each case
+- path: output
 judges:
-  - name: task_completion
-    type: check
-    check: |
-      exit_code = outputs.get("exit_code", 1)
-      return exit_code == 0, f"Exit code: {exit_code}"
-  
-  - name: output_quality
-    type: llm
-    prompt: |
-      Rate the quality of the agent's output on a scale of 1-5.
-      
-      Task: {input}
-      Output: {output}
-      
-      Consider correctness, completeness, and clarity.
-      Respond with a JSON object: {"score": <1-5>, "reason": "<explanation>"}
+- name: task_completion
+  type: check
+  check: |
+    exit_code = outputs.get("exit_code", 1)
+    return exit_code == 0, f"Exit code: {exit_code}"
+- name: output_quality
+  type: llm
+  prompt: |
+    Rate the quality of the agent's output on a scale of 1-5.
 
-# Thresholds for pass/fail
+    Task: {{ inputs }}
+    Output: {{ conversation }}
+    {{ outputs }}
+
+    Consider correctness, completeness, and clarity.
+    Respond with a JSON object: {"score": <1-5>, "reason": "<explanation>"}
+  score_range:
+  - 1
+  - 5
 thresholds:
   task_completion:
     min_pass_rate: 0.8

@@ -1,9 +1,0 @@
-# Test case: Simple hello world program
-prompt: |
-  Write a Python program that prints "Hello, World!" to the console.
-  The program should be simple and follow Python best practices.
-
-context:
-  language: python
-  difficulty: easy
-  expected_output: "Hello, World!"

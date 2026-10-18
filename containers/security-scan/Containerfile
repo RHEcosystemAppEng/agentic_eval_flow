@@ -1,0 +1,9 @@
+# skill-scanner: deterministic scanning step only.
+FROM registry.access.redhat.com/ubi9/python-312:latest
+USER 0
+RUN pip install --no-cache-dir "cisco-ai-skill-scanner==2.0.11" \
+    && command -v skill-scanner
+ENV HOME=/workspace
+RUN mkdir -p /workspace && chgrp 0 /workspace && chmod g=u /workspace
+WORKDIR /workspace
+USER 1001

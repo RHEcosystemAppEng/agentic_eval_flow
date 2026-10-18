@@ -427,7 +427,69 @@ class AEHEngine(EvalEngine):
                     )
                 )
 
+        disagreement = self._pairwise_grounded_disagreement(raw_result, pairwise)
+        if disagreement is not None:
+            findings.append(disagreement)
+
         return findings
+
+    def _pairwise_grounded_disagreement(
+        self,
+        raw_result: dict[str, Any],
+        pairwise: dict[str, Any],
+    ) -> Finding | None:
+        """Flag when the pairwise verdict contradicts each arm's own grounded mean_reward.
+
+        The pairwise LLM judge only ever sees the two runs' final output
+        artifacts — never case annotations/ground truth — so it can reliably
+        side with a plausible-sounding wrong answer over the documented
+        ground truth (e.g. a synthetic CVE ID deliberately dated in the
+        future to test whether the agent trusts a live tool call over its
+        own training-data priors). When that happens, the pairwise win/loss
+        count can flip the overall "pass"/"fail" recommendation even though
+        each arm's own grounded judges (``treatment.mean_reward`` /
+        ``control.mean_reward``, already computed independently of this
+        comparison) agree on which arm actually performed better.
+
+        Deliberately compared at the run level (mean_reward), not
+        reconstructed per case from raw judge values: an individual numeric
+        judge's bare ``value: 1`` is ambiguous between a unit-scale [0, 1]
+        "perfect" score and a 1-5 Likert "floor" score without its declared
+        ``score_range`` (see ``_normalize_numeric_value``), which the gate
+        does not have at this point. ``mean_reward`` is each arm's own
+        already-resolved, authoritative score, so comparing those two
+        numbers avoids silently re-deriving a wrong per-case reward.
+
+        This does not change ``passed`` — the pairwise outcome remains the
+        gating signal by design — it only makes the contradiction visible.
+        """
+        wins_a = pairwise.get("wins_a", 0) or 0
+        wins_b = pairwise.get("wins_b", 0) or 0
+        if wins_a == wins_b:
+            return None
+        pairwise_winner = "A" if wins_a > wins_b else "B"
+
+        t_mean = (raw_result.get("treatment") or {}).get("mean_reward")
+        c_mean = (raw_result.get("control") or {}).get("mean_reward")
+        if t_mean is None or c_mean is None or t_mean == c_mean:
+            return None
+        grounded_winner = "A" if t_mean > c_mean else "B"
+
+        if pairwise_winner == grounded_winner:
+            return None
+
+        return Finding(
+            severity=Severity.HIGH,
+            message=(
+                f"Pairwise judge favors {pairwise_winner} ({wins_a} vs {wins_b} decisive wins), but "
+                f"each arm's own grounded mean_reward favors {grounded_winner} "
+                f"(treatment={t_mean:.3f}, control={c_mean:.3f}). The pairwise judge never sees case "
+                "annotations/ground truth -- review the per-case pairwise reasoning by hand before "
+                "trusting this recommendation."
+            ),
+            location="pairwise",
+            rule_id="aeh-pairwise-grounded-disagreement",
+        )
 
     def get_default_threshold(self) -> float:
         """AEH default threshold is 0.5.

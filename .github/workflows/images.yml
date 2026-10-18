@@ -1,0 +1,19 @@
+name: Build runtime images
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [aeh-task, security-scan, skillmd-scan, agent-eval-harness, aeh-trial]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and check image
+        run: make "${{ matrix.image }}" IMAGE_REPOSITORY=localhost/aeh-ci VERSION=check

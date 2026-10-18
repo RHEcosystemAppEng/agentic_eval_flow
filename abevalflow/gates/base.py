@@ -2,7 +2,7 @@
 
 Gates are evaluation checkpoints that produce standardized results.
 Three types exist:
-- Engine gates: evaluation engines (Harbor, ASE, A2A, MCPChecker)
+- Engine gates: the AEH evaluation adapter
 - Security gates: security scanners (Cisco, Snyk)
 - Quality gates: quality reviewers (LLM review)
 

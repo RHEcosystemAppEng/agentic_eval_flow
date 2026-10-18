@@ -9,12 +9,6 @@
 .cursor/
 .claude/
 
-# Review and planning working documents (not deliverables)
-Docs/plan_suggestions/
-Docs/commit_reviews/
-Docs/plan_reviews/
-Docs/ab_testing_generalization_plan.md
-
 # Python
 __pycache__/
 *.pyc
@@ -34,3 +28,6 @@ Thumbs.db
 # Temp files
 .tmp-jira-comment.txt
 test-fact.json
+
+.pytest_cache/
+.ruff_cache/
