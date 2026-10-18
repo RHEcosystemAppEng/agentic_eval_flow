@@ -123,6 +123,145 @@ Three Tekton Tasks run inside the eval container image
 Task YAMLs: `pipeline/tasks/konflux/mcp-static-eval.yaml`,
 `mcp-conformance-eval.yaml`, and `mcp-behavioral-eval.yaml`.
 
+## Publishing results to Compass SoundCheck
+
+The evaluation writes phase summaries locally first. The Compass publisher
+converts those summaries into SoundCheck facts for the evaluated MCP catalog
+entity. The API is the delivery mechanism; the code here makes publishing
+repeatable for local and pipeline runs.
+
+```text
+Phase 1 scanners + gate ──> phase1-summary.json ─┐
+                                                 ├─> publisher ─> SoundCheck facts
+Phase 2 probes + gate ────> phase2-summary.json ─┘
+```
+
+The report model and fact mapping live in `abevalflow/mcp/eval_result.py` and
+`abevalflow/mcp/checks/compass_publish.py`. The CLI entry point is
+`scripts/mcp/runners/compass_publish.py`; the Tekton task is
+`pipeline/tasks/konflux/mcp-compass-publish.yaml`.
+
+### Track and check setup
+
+The dedicated track is **ABEvalFlow MCP Evaluation** (`abevalflow-mcp-evaluation`),
+owned by `group:redhat/ai5-marketplace` and filtered to MCP server entities.
+It separates checks into two levels:
+
+1. Phase 1 — Static Analysis
+2. Phase 2 — Conformance Testing
+
+The setup script, `scripts/mcp/bootstrap_compass_track.py`, is a manual,
+per-environment provisioning step—not part of each evaluation run. It
+registers eleven ABEvalFlow-owned check definitions, then creates the track or
+updates its levels if it already exists. Two existing Compass checks
+(`mcp-tool-schema-check` and `mcp-oauth-scope-match`) are referenced in the
+Phase 2 level; their definitions are not recreated by this script.
+
+Both setup and publishing are **dry-run by default**. Use `--no-dry-run` only
+for an explicitly authorized live write. The API key must be provided via the
+`COMPASS_API_KEY` environment variable; never put it in source, reports, or
+command examples.
+
+Preview setup requests:
+
+```bash
+python -m scripts.mcp.bootstrap_compass_track \
+  --compass-url https://compass.stage.redhat.com/api/soundcheck
+```
+
+Actually provision a permitted environment:
+
+```bash
+python -m scripts.mcp.bootstrap_compass_track \
+  --compass-url https://compass.stage.redhat.com/api/soundcheck \
+  --no-dry-run
+```
+
+The bootstrap uses `POST /checks` with `{"checks": [...]}`. If that returns
+HTTP 409 for existing check IDs, it falls back to `PUT /checks/{check-id}`.
+It creates the track using `POST /tracks` with `{"tracks": [track]}`; if the
+track already exists (HTTP 409), it updates it with `PUT /tracks/{track-id}`
+and the track definition as the body.
+
+### Preview and publish evaluation facts
+
+The runner expects `phase1-summary.json` and `phase2-summary.json` beneath the
+reports directory (it supports either a flat layout or `phase1/` and
+`phase2/` subdirectories). It publishes individual evaluated checks, one
+summary fact per phase, and one combined summary fact to the SoundCheck Facts
+API. The request shape is `POST /api/soundcheck/facts/` with a `facts` array;
+each fact contains `factRef`, `entityRef`, and `data`. For example:
+
+```json
+{
+  "facts": [{
+    "factRef": "abevalflow:default/mcp_http_support",
+    "entityRef": "mcpserver:default/my-server",
+    "data": {
+      "passed": true,
+      "score": 1.0,
+      "status": "pass",
+      "message": "Server responded correctly over HTTP.",
+      "source": "probe",
+      "evaluated_at": "<UTC timestamp>"
+    }
+  }]
+}
+```
+
+Preview (no HTTP write):
+
+```bash
+python -m scripts.mcp.runners.compass_publish \
+  --reports-dir reports/my-server \
+  --entity-ref mcpserver:default/my-server \
+  --compass-url https://compass.stage.redhat.com/api/soundcheck/facts/
+```
+
+Live publish requires explicit opt-in and the API key in the environment:
+
+```bash
+python -m scripts.mcp.runners.compass_publish \
+  --reports-dir reports/my-server \
+  --entity-ref mcpserver:default/my-server \
+  --compass-url https://compass.stage.redhat.com/api/soundcheck/facts/ \
+  --no-dry-run
+```
+
+Not-evaluated checks are omitted as individual facts. The two Compass-consumed
+checks are included in the phase summary but are not re-published individually,
+avoiding a circular write. The pipeline can read those existing results with
+`GET /api/soundcheck/results?entityRef=<url-encoded-ref>&checks=mcp-tool-schema-check&checks=mcp-oauth-scope-match`.
+
+### Phase 3 and current scope
+
+The domain model allows an optional Phase 3 result, but the CLI does not yet
+load a Phase 3 summary and there are no Phase 3 fact mappings or track level.
+When behavioral checks are ready, their report contract, loader, fact
+mappings, and track level must be added; a `phase3-summary.json` file is
+currently detected but skipped.
+
+The staging validation used
+`mcpserver:ai5-marketplace/openshift-mcp-server`. The local MCP endpoint served
+its protocol/tool surface, but cluster authentication was unavailable, so no
+Kubernetes operations were tested or performed. The publisher sent 11 facts;
+all POSTs returned HTTP 200. Read-back returned HTTP 200 with 10 result
+entries. Phase 1's secrets scan reported 112 high-severity matches (not
+triaged here, so these are scanner findings, not confirmed exposed secrets).
+Phase 2 had passing HTTP support, schema, annotations, and OpenAPI/MCP-native
+contract checks; protocol compliance failed, and rate limiting, response-size
+limit, and mandatory-timeout checks were not evaluated. The two existing
+Compass-consumed results returned errors because expected catalog metadata was
+missing; their definitions were not modified by the publisher.
+
+The dedicated track is visible at:
+<https://compass.stage.redhat.com/soundcheck/tracks/abevalflow-mcp-evaluation/overview?section=checks-by-levels>
+
+The Tekton task is prepared with dry-run enabled by default. Before automated
+live publishing, verify that the pipeline invokes it after the Phase 1 and 2
+gates and that the cluster secret `compass-api-credentials` is configured with
+appropriate access. Track/check provisioning remains a separate manual step.
+
 ## Future repo split
 
 If Tekton task YAMLs move to a separate repo, the Python code stays here (baked
