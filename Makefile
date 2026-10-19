@@ -1,6 +1,6 @@
 CONTAINER_ENGINE ?= podman
 IMAGE_REPOSITORY ?= quay.io/ecosystem-appeng/agent-eval-harness
-VERSION ?= v3.0
+VERSION ?= v4.0
 PLATFORM ?= linux/amd64
 IMAGES := agent-eval-harness aeh-task aeh-trial security-scan skillmd-scan
 PURPOSE_agent-eval-harness := runner
