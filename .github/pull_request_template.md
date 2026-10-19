@@ -12,7 +12,7 @@
 ## Test plan
 
 <!-- How was this tested? e.g.:
-- [ ] `uv run pytest` — all tests pass
+- [ ] `make test` — tests pass, coverage threshold passes, and lint is clean
 - [ ] Manual verification of ...
 -->
 

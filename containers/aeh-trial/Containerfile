@@ -7,7 +7,7 @@ ARG CLAUDE_CODE_VERSION=2.1.228
 RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
 # The same AEH revision is used by orchestration and the in-pod verifier.
 ARG AEH_REPO=https://github.com/opendatahub-io/agent-eval-harness.git
-ARG AEH_SHA=2a10e504242b42f508ecbfe813080abe1e16a501
+ARG AEH_SHA=7ec9078b621d8aa5d2c0ea3b4e61f9e60b4bed2f
 RUN echo "${AEH_SHA}" | grep -qE '^[0-9a-fA-F]{40}$' \
     && git init /tmp/aeh \
     && git -C /tmp/aeh remote add origin "${AEH_REPO}" \
@@ -18,9 +18,6 @@ RUN echo "${AEH_SHA}" | grep -qE '^[0-9a-fA-F]{40}$' \
     && cp -r /tmp/aeh/skills/eval-run /opt/agent-eval-harness/skills/ \
     && cp /tmp/aeh/pyproject.toml /opt/agent-eval-harness/ \
     && rm -rf /tmp/aeh
-COPY containers/agent-eval-harness/patch_pairwise_warning.py /tmp/patch_pairwise_warning.py
-RUN python3 /tmp/patch_pairwise_warning.py /opt/agent-eval-harness/agent_eval/config.py \
-    && rm /tmp/patch_pairwise_warning.py
 ARG MOCK_REPO=https://github.com/nemerna/generic-mock-mcp-server.git
 ARG MOCK_SHA=f68734ac68e504f4856c7a1d25e01919b95b3bb7
 RUN echo "${MOCK_SHA}" | grep -qE '^[0-9a-fA-F]{40}$' \

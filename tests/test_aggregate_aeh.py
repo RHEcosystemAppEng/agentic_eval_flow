@@ -16,6 +16,7 @@ from scripts.aggregate_aeh import (
     _trials_from_per_case,
     aggregate_pairwise_run,
     aggregate_single_run,
+    main,
 )
 from scripts.analyze import render_markdown
 
@@ -141,6 +142,35 @@ class TestAggregateSingleRun:
         assert "case-001" in md
         assert "| Metric | Treatment | Control |" not in md
         assert "exit_success" in md
+
+    def test_cli_writes_single_run_report(self, tmp_path: Path):
+        run_dir = tmp_path / "skill" / "run-1"
+        _write_summary(
+            run_dir,
+            {
+                "run_id": "run-1",
+                "mean_reward": 1.0,
+                "per_case": {"case-001": {"quality": {"value": 5, "judge_type": "llm"}}},
+                "judges": {},
+            },
+        )
+        output = tmp_path / "reports" / "report.json"
+
+        result = main([str(run_dir), "--submission-name", "skill", "--output", str(output)])
+
+        assert result == 0
+        report = json.loads(output.read_text())
+        assert report["submission_name"] == "skill"
+        assert report["mode"] == "single"
+        assert report["summary"]["treatment"]["n_trials"] == 1
+
+    def test_cli_rejects_missing_run_directory(self, tmp_path: Path):
+        assert main([str(tmp_path / "missing")]) == 1
+
+    def test_cli_requires_control_directory_in_pairwise_mode(self, tmp_path: Path):
+        run_dir = tmp_path / "treatment"
+        run_dir.mkdir()
+        assert main([str(run_dir), "--mode", "pairwise"]) == 1
 
 
 class TestAggregatePairwiseRun:

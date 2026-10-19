@@ -80,18 +80,17 @@ def test_publisher_accepts_shared_task_arguments(tmp_path):
     assert result.returncode == 0, result.stderr
 
 
-@pytest.mark.parametrize(
-    ("submission", "mode"),
-    [
-        ("submissions/aeh-hello-world", "single"),
-        ("submissions/aeh-pairwise-example", "pairwise"),
-        ("examples/aeh-skill-konflux", "single"),
-    ],
-)
-def test_documented_examples_validate(submission, mode):
+def test_repository_submissions_validate():
+    """Validate every checked-in submission, without keeping a stale path list."""
     from scripts.validate import validate_submission
 
-    assert validate_submission(ROOT / submission, aeh_mode=mode) == []
+    submissions = sorted(path for path in (ROOT / "submissions").iterdir() if path.is_dir())
+    assert submissions, "expected at least one checked-in submission"
+
+    for submission in submissions:
+        mode = "pairwise" if (submission / "eval-control.yaml").exists() else "single"
+        errors = validate_submission(submission, aeh_mode=mode)
+        assert errors == [], f"{submission.relative_to(ROOT)} failed validation: {errors}"
 
 
 @pytest.mark.parametrize("field", ["generation_mode", "red_team", "mcp", "security_scan_use_llm"])

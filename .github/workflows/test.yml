@@ -22,10 +22,5 @@ jobs:
           python -m pip install uv
           uv sync --locked --extra dev --extra observability
 
-      - name: Run linter (ruff)
-        run: |
-          uv run --locked --extra dev --extra observability ruff check abevalflow/ scripts/ tests/ containers/
-          uv run --locked --extra dev --extra observability ruff format --check abevalflow/ scripts/ tests/ containers/
-
-      - name: Run tests
-        run: uv run --locked --extra dev --extra observability pytest tests/ -v --tb=short
+      - name: Run tests, coverage, and lint
+        run: make test

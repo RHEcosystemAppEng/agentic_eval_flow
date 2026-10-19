@@ -15,6 +15,7 @@ $(IMAGES):
 	$(CONTAINER_ENGINE) build --platform $(PLATFORM) -f containers/$@/Containerfile -t $(IMAGE_REPOSITORY):$(VERSION)-$(PURPOSE_$@) .
 
 test:
-	uv run --locked --extra dev --extra observability pytest tests/ -q
+	uv run --locked --extra dev --extra observability pytest tests/ -q \
+		--cov=abevalflow --cov=scripts --cov-report=term-missing --cov-fail-under=80
 	uv run --locked --extra dev --extra observability ruff check abevalflow scripts tests containers
 	uv run --locked --extra dev --extra observability ruff format --check abevalflow scripts tests containers

@@ -50,7 +50,7 @@ See [the published test release](Docs/test-release-20261019.md),
 
 ```sh
 uv sync --extra dev --extra observability --locked
-uv run --locked --extra dev --extra observability pytest tests/ -q
+make test
 uv run --locked --extra dev ruff check abevalflow scripts tests containers
 uv run --locked --extra dev ruff format --check abevalflow scripts tests containers
 ```
@@ -58,7 +58,6 @@ uv run --locked --extra dev ruff format --check abevalflow scripts tests contain
 Validate a local submission:
 
 ```sh
-uv run --locked python scripts/validate.py submissions/aeh-hello-world --eval-engine aeh
 uv run --locked python scripts/validate.py submissions/aeh-pairwise-example \
   --eval-engine aeh --aeh-mode pairwise
 ```

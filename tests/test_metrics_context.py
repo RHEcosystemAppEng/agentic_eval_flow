@@ -85,6 +85,14 @@ class TestMetricsContext:
         assert ctx.timing_ms("test") == 5000
         assert ctx.timing_ms("missing") is None
 
+    def test_start_and_stop_timing(self) -> None:
+        ctx = MetricsContext()
+        ctx.stop_timing("missing")  # Stopping an unknown phase is a safe no-op.
+        ctx.start_timing("prepare")
+        ctx.stop_timing("prepare")
+        assert ctx.timing_ms("prepare") is not None
+        assert ctx.timing_ms("prepare") >= 0
+
     def test_checkpoint_round_trip(self, tmp_path: Path) -> None:
         ctx = MetricsContext(run_id="run-1", submission_name="test-skill", model_name="claude-sonnet")
         ctx.record_tokens("quality_review", 500, 200, "claude-sonnet")

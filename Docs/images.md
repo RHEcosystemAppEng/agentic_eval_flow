@@ -34,16 +34,19 @@ needed to run/aggregate evaluations and rewrite MCP configuration. The trial
 image contains upstream AEH's reward/scoring code, Claude Code, and the mock MCP
 server. It receives case files and skills at runtime through Harbor.
 
-Both AEH images use commit `2a10e504242b42f508ecbfe813080abe1e16a501`.
-Their `AEH_SHA` build arguments require a full commit SHA. Update both together.
+Both AEH images use AEH release `v1.53.3`, pinned to commit
+`7ec9078b621d8aa5d2c0ea3b4e61f9e60b4bed2f`. Their `AEH_SHA` build arguments
+require a full commit SHA. Update both together.
 The mock server uses commit `f68734ac68e504f4856c7a1d25e01919b95b3bb7`;
 `MOCK_SHA` also requires a full commit SHA. Claude Code is pinned through
 `CLAUDE_CODE_VERSION` in the trial Containerfile.
 
-Build-time patches forward pack `mcps.json` files to Harbor and exclude the
-categorical pairwise judge from the numeric score-range warning. Each patch
-fails when its expected upstream source changes. Revalidate these patches and
-single/pairwise execution when changing `AEH_SHA`.
+The runner applies one small build-time patch to forward pack `mcps.json` files
+to Harbor because upstream AEH does not yet do this. The patch fails when its
+expected source changes. Pairwise judge warning handling is included in this
+AEH release and no longer needs a local patch. AEH v1.53.3 also changes score
+validation and reward normalization; treat results from before and after this
+upgrade as separate baselines.
 
 All runtime images use an unprivileged user and writable group-0 directories
 for OpenShift arbitrary UIDs. Task dependencies are installed during the build;

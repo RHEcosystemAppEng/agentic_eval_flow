@@ -1,6 +1,7 @@
 """Tests for unified scorecard schemas and aggregation logic."""
 
 import json
+import sys
 from datetime import UTC, datetime
 
 import pytest
@@ -618,3 +619,61 @@ class TestHasEvalAssets:
             c for c in scorecard.certification.trusted.checks if c.check_id == CheckId.EVALUATION_ASSETS
         )
         assert eval_assets_check.passed is True
+
+
+def test_aggregate_scorecard_cli_writes_reports_and_tekton_results(tmp_path, monkeypatch):
+    from scripts.aggregate_scorecard import main
+
+    submission_dir = tmp_path / "submissions" / "demo"
+    submission_dir.mkdir(parents=True)
+    (submission_dir / "metadata.yaml").write_text("name: demo\n")
+    (submission_dir / "eval.yaml").write_text("models: {skill: model}\njudges: [{name: quality}]\n")
+
+    reports_dir = tmp_path / "reports" / "demo"
+    reports_dir.mkdir(parents=True)
+    (reports_dir / "validation.json").write_text(json.dumps({"valid": True, "errors": []}))
+    (reports_dir / "report.json").write_text(
+        json.dumps(
+            {
+                "provenance": {"commit_sha": "abc123"},
+                "summary": {
+                    "treatment": {"mean_reward": 0.9, "std_reward": 0.05},
+                    "control": {"mean_reward": 0.7},
+                    "mean_reward_gap": 0.2,
+                    "recommendation": "pass",
+                },
+            }
+        )
+    )
+    tekton_results = tmp_path / "tekton-results"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "aggregate_scorecard.py",
+            "--submission-dir",
+            str(submission_dir),
+            "--results-dir",
+            str(tmp_path / "eval-results"),
+            "--reports-dir",
+            str(reports_dir),
+            "--workspace-root",
+            str(tmp_path),
+            "--eval-engine",
+            "aeh",
+            "--pipeline-run-id",
+            "run-1",
+            "--output-tekton-results",
+            str(tekton_results),
+        ],
+    )
+
+    assert main() == 0
+
+    scorecard = json.loads((reports_dir / "scorecard.json").read_text())
+    certification = json.loads((reports_dir / "certification.json").read_text())
+    assert scorecard["submission_name"] == "demo"
+    assert scorecard["pipeline_run_id"] == "run-1"
+    assert certification["submission_name"] == "demo"
+    assert (tekton_results / "scorecard-recommendation").read_text() == scorecard["recommendation"]
+    assert (tekton_results / "highest-certification").read_text() == scorecard["highest_certification"]
