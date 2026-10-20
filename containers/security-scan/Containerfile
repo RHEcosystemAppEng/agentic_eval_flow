@@ -3,6 +3,10 @@ FROM registry.access.redhat.com/ubi9/python-312:latest
 USER 0
 RUN pip install --no-cache-dir "cisco-ai-skill-scanner==2.0.11" \
     && command -v skill-scanner
+COPY containers/security-scan/patch_allowed_tools.py containers/security-scan/verify_allowed_tools.py /tmp/
+RUN python /tmp/patch_allowed_tools.py \
+    && python /tmp/verify_allowed_tools.py \
+    && rm /tmp/patch_allowed_tools.py /tmp/verify_allowed_tools.py
 ENV HOME=/workspace
 RUN mkdir -p /workspace && chgrp 0 /workspace && chmod g=u /workspace
 WORKDIR /workspace

@@ -34,6 +34,14 @@ needed to run/aggregate evaluations and rewrite MCP configuration. The trial
 image contains upstream AEH's reward/scoring code, Claude Code, and the mock MCP
 server. It receives case files and skills at runtime through Harbor.
 
+The Cisco scanner image applies a guarded build-time compatibility patch to
+version `2.0.11`: `allowed-tools` accepts the Agent Skills specification's
+space-separated string as well as comma-separated strings and existing YAML
+lists. Spaces and commas inside scoped tool arguments are preserved. Image
+builds exercise the installed parser and CLI, including a negative case that
+must still fail the HIGH gate when Bash is undeclared. Review the patch when
+upgrading Cisco; its version and source checks deliberately fail on drift.
+
 Both AEH images use AEH release `v1.53.3`, pinned to commit
 `7ec9078b621d8aa5d2c0ea3b4e61f9e60b4bed2f`. Their `AEH_SHA` build arguments
 require a full commit SHA. Update both together.
