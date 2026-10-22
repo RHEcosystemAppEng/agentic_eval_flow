@@ -332,14 +332,14 @@ PY
   P1_PASSED="$(pyrun -c "import json,sys;print('true' if json.load(open(sys.argv[1]))['passed'] else 'false')" "$P1_REPORTS/phase1-summary.json" 2>/dev/null)"
   # Phase 1 grade = mean of the three gate scores. All three always run, so this
   # is a real 0.00-1.00 grade, not just a pass/fail bit (ADR "Check Results").
-  P1_GRADE="$(pyrun -c "import json,sys;g=json.load(open(sys.argv[1]))['gates'];s=[x['score'] for x in g];print(f'{sum(s)/len(s):.2f}')" "$P1_REPORTS/phase1-summary.json" 2>/dev/null)"
+  P1_GRADE="$(pyrun -c "import json,sys;g=json.load(open(sys.argv[1]))['checks'];s=[x['score'] for x in g];print(f'{sum(s)/len(s):.2f}')" "$P1_REPORTS/phase1-summary.json" 2>/dev/null)"
   pyrun - "$P1_REPORTS/phase1-summary.json" <<'PY' 2>/dev/null || true
 import json, sys
 s = json.load(open(sys.argv[1]))
 print("  Phase 1 overall:", "PASS" if s["passed"] else "FAIL")
-for g in s["gates"]:
-    print(f"    {g['gate']:<20} passed={str(g['passed']):<5} score={g['score']:.2f} findings={g['findings']}")
-scores = [g["score"] for g in s["gates"]]
+for g in s["checks"]:
+    print(f"    {g['check']:<20} passed={str(g['passed']):<5} score={g['score']:.2f} findings={g['findings']}")
+scores = [g["score"] for g in s["checks"]]
 print(f"    grade: {sum(scores)/len(scores):.2f}  [mean of {len(scores)} gate scores]")
 PY
 else

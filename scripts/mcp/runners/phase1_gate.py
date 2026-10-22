@@ -60,8 +60,9 @@ def main() -> int:
         (args.reports_dir / f"{gate_key}-result.json").write_text(result.model_dump_json(indent=2))
         summary.append(
             {
-                "gate": gate_key,
+                "check": gate_key,
                 "passed": result.passed,
+                "status": "pass" if result.passed else "fail",
                 "score": result.score,
                 "findings": len(result.findings),
                 "message": result.message,
@@ -78,7 +79,7 @@ def main() -> int:
     overall_passed = all(r.passed for r in results)
     (args.reports_dir / SUMMARY_FILENAME).write_text(
         json.dumps(
-            {"phase": "phase1", "passed": overall_passed, "gates": summary},
+            {"phase": "phase1", "passed": overall_passed, "checks": summary},
             indent=2,
         )
     )

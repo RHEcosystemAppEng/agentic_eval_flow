@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Publish MCP evaluation results to Compass SoundCheck.
+"""Publish supplied MCP phase summaries to Compass SoundCheck.
 
-Reads phase summary JSON files from ``--reports-dir`` (written by the Phase 1
-and Phase 2 gate runners), assembles an :class:`McpEvalResult`, and publishes
-facts to the Compass SoundCheck API.
+Pass explicit summary files with ``--summary-files`` or a scoped report
+directory with ``--reports-dir``. Directory discovery stays inside that path.
 
-**Dry-run is ON by default.**  Use ``--no-dry-run`` to actually publish.
+**Dry-run is ON by default.** Use ``--no-dry-run`` to actually publish.
 
 Usage:
     python -m scripts.mcp.runners.compass_publish \\
@@ -26,39 +25,76 @@ import os
 import sys
 from pathlib import Path
 
-from abevalflow.mcp.checks.compass_publish import (
-    McpPushConfig,
-    push_mcp_eval_facts,
-)
-from abevalflow.mcp.eval_result import (
-    build_mcp_eval_result,
-    load_phase1_summary,
-    load_phase2_summary,
-)
+from abevalflow.mcp.checks.compass_publish import McpPushConfig, push_mcp_eval_facts
+from abevalflow.mcp.eval_result import build_mcp_eval_result, load_phase_summary, validate_phase_name
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
-PHASE1_SUMMARY = "phase1-summary.json"
-PHASE2_SUMMARY = "phase2-summary.json"
-PHASE3_SUMMARY = "phase3-summary.json"
+SUMMARY_SUFFIX = "-summary.json"
 
 
-def _summary_path(reports_dir: Path, phase: str, filename: str) -> Path:
-    """Find a phase summary in the evaluator's phase subdirectory or flat layout."""
-    nested = reports_dir / phase / filename
-    if nested.is_file():
-        return nested
-    return reports_dir / filename
+def _phase_from_filename(path: Path) -> str:
+    """Extract phase name from ``<phase-name>-summary.json``."""
+    filename = path.name
+    if not filename.endswith(SUMMARY_SUFFIX):
+        raise ValueError(f"Summary filename must end with {SUMMARY_SUFFIX!r}: {filename}")
+    phase_name = filename[: -len(SUMMARY_SUFFIX)]
+    try:
+        return validate_phase_name(phase_name)
+    except ValueError as exc:
+        raise ValueError(f"Invalid phase name in summary filename: {filename}") from exc
+
+
+def _summary_files(summary_files: list[Path] | None, reports_dir: Path | None) -> list[Path]:
+    """Resolve explicit files or discover summaries inside the supplied directory."""
+    if summary_files is not None:
+        files = summary_files
+    elif reports_dir is not None:
+        if not reports_dir.is_dir():
+            raise ValueError(f"Not a directory: {reports_dir}")
+        files = sorted(reports_dir.rglob(f"*{SUMMARY_SUFFIX}"))
+    else:
+        raise ValueError("Provide --summary-files or --reports-dir")
+
+    if not files:
+        raise ValueError("No phase summary files found")
+    for path in files:
+        if not path.is_file():
+            raise ValueError(f"Summary file not found: {path}")
+    return files
+
+
+def _load_summaries(files: list[Path]):
+    phases = []
+    seen: set[str] = set()
+    for path in files:
+        filename_phase = _phase_from_filename(path)
+        phase_result = load_phase_summary(path)
+        if phase_result.phase != filename_phase:
+            raise ValueError(
+                f"Phase mismatch for {path}: filename says {filename_phase!r}, JSON says {phase_result.phase!r}"
+            )
+        if phase_result.phase in seen:
+            raise ValueError(f"Duplicate phase summary for {phase_result.phase!r}")
+        seen.add(phase_result.phase)
+        phases.append(phase_result)
+    return build_mcp_eval_result(phases)
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Publish MCP evaluation results to Compass SoundCheck")
-    parser.add_argument(
+    parser = argparse.ArgumentParser(description="Publish MCP phase summaries to Compass SoundCheck")
+    input_group = parser.add_mutually_exclusive_group(required=True)
+    input_group.add_argument(
+        "--summary-files",
+        type=Path,
+        nargs="+",
+        help="Explicit phase summary paths named <phase-name>-summary.json",
+    )
+    input_group.add_argument(
         "--reports-dir",
         type=Path,
-        required=True,
-        help="Directory holding phase summary JSON files",
+        help="Scoped report directory; recursively discovers *-summary.json files beneath it",
     )
     parser.add_argument(
         "--entity-ref",
@@ -78,32 +114,12 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    if not args.reports_dir.is_dir():
-        logger.error("Not a directory: %s", args.reports_dir)
+    try:
+        files = _summary_files(args.summary_files, args.reports_dir)
+        eval_result = _load_summaries(files)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        logger.error("Invalid phase summary input: %s", exc)
         return 1
-
-    p1_path = _summary_path(args.reports_dir, "phase1", PHASE1_SUMMARY)
-    p2_path = _summary_path(args.reports_dir, "phase2", PHASE2_SUMMARY)
-    p3_path = _summary_path(args.reports_dir, "phase3", PHASE3_SUMMARY)
-
-    if not p1_path.is_file():
-        logger.error("Phase 1 summary not found: %s", p1_path)
-        return 1
-    if not p2_path.is_file():
-        logger.error("Phase 2 summary not found: %s", p2_path)
-        return 1
-
-    phase1 = load_phase1_summary(p1_path)
-    phase2 = load_phase2_summary(p2_path)
-
-    phase3 = None
-    if p3_path.is_file():
-        logger.info("Phase 3 summary found: %s (loading)", p3_path)
-        # Phase 3 loader will be added when behavioral checks land.
-        # For now, log and skip.
-        logger.warning("Phase 3 loader not yet implemented; Phase 3 results will be reported as not available.")
-
-    eval_result = build_mcp_eval_result(phase1, phase2, phase3)
 
     dry_run = not args.no_dry_run
     api_key = os.environ.get("COMPASS_API_KEY", "")
@@ -125,8 +141,8 @@ def main() -> int:
 
     failed = [r for r in results if not r.success]
     if failed:
-        for f in failed:
-            logger.error("Failed to push %s: %s", f.fact_ref, f.error)
+        for result in failed:
+            logger.error("Failed to push %s: %s", result.fact_ref, result.error)
         return 1
 
     logger.info(

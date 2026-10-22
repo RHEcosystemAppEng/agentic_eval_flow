@@ -8,8 +8,8 @@ metadata:
 spec:
   description: >-
     Publish MCP evaluation Phase 1 + Phase 2 results to Compass SoundCheck as
-    facts on the dedicated MCP evaluation track. Reads phase1-summary.json and
-    phase2-summary.json from the reports workspace. Dry-run by default; set
+    facts on the dedicated MCP evaluation track. Discovers phase summary files
+    beneath the submission's reports directory. Dry-run by default; set
     dry-run param to "false" to actually publish.
   params:
     - name: mcp-eval-image
