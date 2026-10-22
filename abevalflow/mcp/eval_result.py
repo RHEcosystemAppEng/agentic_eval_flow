@@ -1,21 +1,6 @@
-"""Canonical MCP evaluation result model.
+"""Canonical MCP evaluation result model and phase summary loader.
 
-Defines the typed representation of an MCP evaluation across phases:
-
-- **Phase 1** — static / build-time analysis
-- **Phase 2** — deterministic contract / conformance testing
-- **Phase 3** — behavioral testing (conditional on task suite availability)
-
-Phases are **independent evaluation surfaces** — a Phase 1 failure does not
-cascade to Phase 2 or Phase 3.  Each phase reports its own pass/fail.
-
-Two Phase 2 checks (tool-name-rules, oauth-catalog-match) are *consumed* from
-existing Compass facts and marked ``publishable=False`` so downstream
-publishers know not to re-publish them.
-
-This module is backend-agnostic: it defines the domain model and summary
-loaders but has no knowledge of Compass, databases, or any specific reporting
-backend.  Publish-specific code lives in
+The domain model is backend-agnostic. Compass publishing lives in
 :mod:`abevalflow.mcp.checks.compass_publish`.
 """
 
@@ -23,49 +8,65 @@ from __future__ import annotations
 
 import json
 import logging
-from enum import StrEnum
+import re
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Literal
 
-from pydantic import BaseModel, Field, computed_field
+from pydantic import BaseModel, Field, computed_field, field_validator, model_validator
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Phase enum
+# Phase-specific interpretation config
 # ---------------------------------------------------------------------------
 
-
-class McpPhase(StrEnum):
-    PHASE1 = "phase1"
-    PHASE2 = "phase2"
-    PHASE3 = "phase3"
-
-
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-
-CONSUMED_CHECKS = frozenset({"tool-name-rules", "oauth-catalog-match"})
-
-_HUMAN_NAMES_P1: dict[str, str] = {
-    "mcp-secrets": "Secrets Management",
-    "mcp-no-user-code": "No User-Code Execution",
-    "mcp-license": "License Compliance",
+PHASE_CHECK_NAMES: dict[str, dict[str, str]] = {
+    "phase1": {
+        "mcp-secrets": "Secrets Management",
+        "mcp-no-user-code": "No User-Code Execution",
+        "mcp-license": "License Compliance",
+    },
+    "phase2": {
+        "http-support": "HTTP Support",
+        "protocol-compliance": "Protocol Compliance",
+        "schema-conformance": "Schema Conformance",
+        "tool-annotations": "Tool Annotations",
+        "rate-limiting": "Rate Limiting",
+        "response-size-limit": "Response Size Limit",
+        "mandatory-timeouts": "Mandatory Timeouts",
+        "openapi-conformance": "OpenAPI Conformance",
+        "tool-name-rules": "Tool-Name Rules",
+        "oauth-catalog-match": "OAuth Matches Catalog",
+    },
 }
 
-_HUMAN_NAMES_P2: dict[str, str] = {
-    "http-support": "HTTP Support",
-    "protocol-compliance": "Protocol Compliance",
-    "schema-conformance": "Schema Conformance",
-    "tool-annotations": "Tool Annotations",
-    "rate-limiting": "Rate Limiting",
-    "response-size-limit": "Response Size Limit",
-    "mandatory-timeouts": "Mandatory Timeouts",
-    "openapi-conformance": "OpenAPI Conformance",
-    "tool-name-rules": "Tool-Name Rules",
-    "oauth-catalog-match": "OAuth Matches Catalog",
+PHASE_CONSUMED_CHECKS: dict[str, set[str]] = {
+    "phase2": {"tool-name-rules", "oauth-catalog-match"},
 }
+
+PHASE_SOURCE_DEFAULTS: dict[str, str] = {
+    "phase1": "pipeline",
+    "phase2": "probe",
+}
+
+PHASE_CHECK_SOURCE_DEFAULTS: dict[str, dict[str, str]] = {
+    "phase2": {
+        "tool-name-rules": "compass",
+        "oauth-catalog-match": "compass",
+    },
+}
+
+DEFAULT_SOURCE = "pipeline"
+VALID_CHECK_STATUSES = frozenset({"pass", "fail", "not_evaluated"})
+PHASE_NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*\Z")
+
+
+def validate_phase_name(phase_name: str) -> str:
+    """Validate phase-name syntax without restricting names to configured phases."""
+    if not PHASE_NAME_PATTERN.fullmatch(phase_name):
+        raise ValueError("phase name must contain only letters, digits, underscores, and hyphens")
+    return phase_name
+
 
 # ---------------------------------------------------------------------------
 # Models
@@ -81,16 +82,20 @@ class McpCheckResult(BaseModel):
     score: float | None = Field(default=None, ge=0.0, le=1.0)
     status: str = Field(description="Three-state: pass / fail / not_evaluated")
     message: str = ""
-    source: str = Field(default="pipeline", description="pipeline / compass / probe")
-    publishable: bool = Field(default=True, description="False for consumed checks")
+    source: str = Field(default=DEFAULT_SOURCE, description="pipeline / compass / probe")
 
 
 class McpPhaseResult(BaseModel):
     """Aggregate result of one evaluation phase."""
 
-    phase: McpPhase
+    phase: str
     passed: bool
     checks: list[McpCheckResult]
+
+    @field_validator("phase")
+    @classmethod
+    def phase_name_has_valid_format(cls, phase_name: str) -> str:
+        return validate_phase_name(phase_name)
 
     @computed_field
     @property
@@ -117,187 +122,74 @@ class McpPhaseResult(BaseModel):
 
 
 class McpEvalResult(BaseModel):
-    """Complete MCP evaluation result across all phases.
+    """Complete MCP evaluation result across any supplied phases."""
 
-    Phases are independent — no hierarchy enforcement.
-    """
+    phases: dict[str, McpPhaseResult]
 
-    phase1: McpPhaseResult
-    phase2: McpPhaseResult
-    phase3: McpPhaseResult | None = None
+    @model_validator(mode="after")
+    def phases_are_nonempty_and_keyed_by_name(self) -> McpEvalResult:
+        if not self.phases:
+            raise ValueError("at least one phase result is required")
+        for phase_name, phase_result in self.phases.items():
+            if phase_name != phase_result.phase:
+                raise ValueError(f"phase mapping key {phase_name!r} does not match result name {phase_result.phase!r}")
+        return self
 
     @computed_field
     @property
     def phases_passed(self) -> dict[str, bool]:
-        result: dict[str, bool] = {
-            "phase1": self.phase1.passed,
-            "phase2": self.phase2.passed,
-        }
-        if self.phase3 is not None:
-            result["phase3"] = self.phase3.passed
-        return result
+        return {name: phase.passed for name, phase in self.phases.items()}
 
 
 # ---------------------------------------------------------------------------
-# Summary JSON loaders
+# Summary JSON loader
 # ---------------------------------------------------------------------------
 
-_HUMAN_NAMES_P1: dict[str, str] = {
-    "mcp-secrets": "Secrets Management",
-    "mcp-no-user-code": "No User-Code Execution",
-    "mcp-license": "License Compliance",
-}
 
-_HUMAN_NAMES_P2: dict[str, str] = {
-    "http-support": "HTTP Support",
-    "protocol-compliance": "Protocol Compliance",
-    "schema-conformance": "Schema Conformance",
-    "tool-annotations": "Tool Annotations",
-    "rate-limiting": "Rate Limiting",
-    "response-size-limit": "Response Size Limit",
-    "mandatory-timeouts": "Mandatory Timeouts",
-    "openapi-conformance": "OpenAPI Conformance",
-    "tool-name-rules": "Tool Name Rules",
-    "oauth-catalog-match": "OAuth Catalog Match",
-}
+def load_phase_summary(path: Path) -> McpPhaseResult:
+    """Load a standardized phase summary JSON file.
 
-_HUMAN_NAMES_P3: dict[str, str] = {
-    "tool-correctness": "Tool Correctness",
-    "edge-case-handling": "Edge Case Handling",
-    "sensitive-data-redaction": "Sensitive Data Redaction",
-}
-
-SummaryStatus = Literal["pass", "fail", "not_evaluated"]
-
-
-class StaticEvalGateSummary(BaseModel):
-    gate: str
-    passed: bool
-    score: float | None = Field(default=None, ge=0.0, le=1.0)
-    findings: int = Field(default=0, ge=0)
-    message: str = ""
-
-
-class StaticEvalSummary(BaseModel):
-    phase: Literal["static-eval"] | None = None
-    passed: bool
-    gates: list[StaticEvalGateSummary]
-
-
-class EvalSummaryCheck(BaseModel):
-    check: str
-    status: SummaryStatus | None = None
-    passed: bool
-    score: float | None = Field(default=None, ge=0.0, le=1.0)
-    findings: int = Field(default=0, ge=0)
-    source: str | None = None
-    message: str = ""
-
-
-class ConformanceEvalSummary(BaseModel):
-    phase: Literal["conformance-eval"] | None = None
-    passed: bool
-    counts: dict[str, int] | None = None
-    checks: list[EvalSummaryCheck]
-
-
-class BehavioralEvalSummary(BaseModel):
-    phase: Literal["behavioral-eval"] | None = None
-    passed: bool
-    counts: dict[str, int] | None = None
-    checks: list[EvalSummaryCheck]
-
-
-def load_phase1_summary(path: Path) -> McpPhaseResult:
-    """Parse a static evaluation summary into :class:`McpPhaseResult`."""
-    summary = StaticEvalSummary.model_validate(json.loads(path.read_text()))
-    checks: list[McpCheckResult] = []
-    for gate in summary.gates:
-        gate_id = gate.gate
-        checks.append(
-            McpCheckResult(
-                check_id=gate_id,
-                name=_HUMAN_NAMES_P1.get(gate_id, gate_id),
-                passed=gate.passed,
-                score=gate.score if gate.score is not None else (1.0 if gate.passed else 0.0),
-                status="pass" if gate.passed else "fail",
-                message=gate.message,
-                source="pipeline",
-                publishable=True,
-            )
-        )
-    return McpPhaseResult(phase=McpPhase.PHASE1, passed=summary.passed, checks=checks)
-
-
-def load_phase2_summary(path: Path) -> McpPhaseResult:
-    """Parse a conformance evaluation summary into :class:`McpPhaseResult`.
-
-    Consumed checks (tool-name-rules, oauth-catalog-match) are marked
-    ``publishable=False``.
+    Unconfigured phase names remain valid; config maps only add phase-specific
+    labels, defaults, and Compass fact references.
     """
-    summary = ConformanceEvalSummary.model_validate(json.loads(path.read_text()))
+    data = json.loads(path.read_text())
+    phase_name = data["phase"]
     checks: list[McpCheckResult] = []
-    for check in summary.checks:
-        check_id = check.check
-        status = check.status or ("pass" if check.passed else "fail")
-        is_consumed = check_id in CONSUMED_CHECKS
-        source = check.source or ("compass" if is_consumed else "probe")
-        passed = True if status == "pass" else False if status == "fail" else None
-        score = (
-            None
-            if status == "not_evaluated"
-            else (check.score if check.score is not None else (1.0 if check.passed else 0.0))
+
+    for check in data.get("checks", []):
+        check_id = check["check"]
+        status = check.get("status")
+        if status is None:
+            status = "pass" if check["passed"] else "fail"
+        if status not in VALID_CHECK_STATUSES:
+            raise ValueError(f"Invalid status {status!r} for check {check_id!r} in phase {phase_name!r}")
+
+        default_source = PHASE_CHECK_SOURCE_DEFAULTS.get(phase_name, {}).get(
+            check_id,
+            PHASE_SOURCE_DEFAULTS.get(phase_name, DEFAULT_SOURCE),
         )
+        passed = True if status == "pass" else False if status == "fail" else None
+        default_score = 1.0 if status == "pass" else 0.0
         checks.append(
             McpCheckResult(
                 check_id=check_id,
-                name=_HUMAN_NAMES_P2.get(check_id, check_id),
+                name=PHASE_CHECK_NAMES.get(phase_name, {}).get(check_id, check_id),
                 passed=passed,
-                score=score,
+                score=None if status == "not_evaluated" else check.get("score", default_score),
                 status=status,
-                message=check.message,
-                source=source,
-                publishable=not is_consumed,
+                message=check.get("message", ""),
+                source=check.get("source") or default_source,
             )
         )
-    return McpPhaseResult(phase=McpPhase.PHASE2, passed=summary.passed, checks=checks)
+
+    return McpPhaseResult(phase=phase_name, passed=data["passed"], checks=checks)
 
 
-def load_phase3_summary(path: Path) -> McpPhaseResult:
-    """Parse a behavioral evaluation summary into :class:`McpPhaseResult`."""
-    summary = BehavioralEvalSummary.model_validate(json.loads(path.read_text()))
-    checks: list[McpCheckResult] = []
-    for check in summary.checks:
-        status = check.status or ("pass" if check.passed else "fail")
-        passed = True if status == "pass" else False if status == "fail" else None
-        score = (
-            None
-            if status == "not_evaluated"
-            else (check.score if check.score is not None else (1.0 if check.passed else 0.0))
-        )
-        check_id = check.check
-        checks.append(
-            McpCheckResult(
-                check_id=check_id,
-                name=_HUMAN_NAMES_P3.get(check_id, check_id),
-                passed=passed,
-                score=score,
-                status=status,
-                message=check.message,
-                source=check.source or "mcpchecker",
-                publishable=True,
-            )
-        )
-    return McpPhaseResult(phase=McpPhase.PHASE3, passed=summary.passed, checks=checks)
-
-
-def build_mcp_eval_result(
-    phase1: McpPhaseResult,
-    phase2: McpPhaseResult,
-    phase3: McpPhaseResult | None = None,
-) -> McpEvalResult:
-    """Assemble phases into an :class:`McpEvalResult`.
-
-    Phases are independent — no hierarchy enforcement.
-    """
-    return McpEvalResult(phase1=phase1, phase2=phase2, phase3=phase3)
+def build_mcp_eval_result(phases: Iterable[McpPhaseResult]) -> McpEvalResult:
+    """Assemble any nonempty set of unique phase results."""
+    phase_map: dict[str, McpPhaseResult] = {}
+    for phase in phases:
+        if phase.phase in phase_map:
+            raise ValueError(f"Duplicate phase result: {phase.phase!r}")
+        phase_map[phase.phase] = phase
+    return McpEvalResult(phases=phase_map)
