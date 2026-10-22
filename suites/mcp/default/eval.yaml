@@ -1,0 +1,37 @@
+# Default MCP Behavioral Evaluation Configuration
+#
+# Generic task suite for MCP behavioral testing of any MCP server.
+# These tests are server-agnostic: they discover tools dynamically
+# and verify general behavioral properties (correctness, error handling,
+# data redaction) without assuming specific tool names or schemas.
+#
+# Used by the mcp-behavioral-eval pipeline task. Model values are
+# overridden by pipeline parameters at runtime via ${AGENT_LLM_MODEL}
+# and ${JUDGE_LLM_MODEL} environment variables.
+
+kind: Eval
+metadata:
+  name: mcp-behavioral-eval
+  description: >-
+    Generic behavioral evaluation for MCP servers. Covers tool correctness,
+    edge-case handling, and sensitive data redaction per the MCP Server
+    Evaluation specification.
+
+config:
+  agent:
+    type: builtin.llm-agent
+    model: ${AGENT_LLM_MODEL}
+
+  llmJudge:
+    ref:
+      type: builtin.llm-agent
+      model: ${JUDGE_LLM_MODEL}
+
+  mcpConfigFile: mcp-config.yaml
+
+  defaultTaskTimeout: 300s
+
+  taskSets:
+    - path: tasks/tool-correctness.yaml
+    - path: tasks/edge-case-handling.yaml
+    - path: tasks/sensitive-data-redaction.yaml
