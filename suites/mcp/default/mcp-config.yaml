@@ -1,0 +1,12 @@
+# MCP Server Connection Configuration
+#
+# The MCP_URL environment variable is injected at runtime by the
+# mcp-behavioral-eval pipeline task, constructed from the service
+# name and port of the deployed MCP server.
+#
+# MCP_BEARER_TOKEN is optional — set only when the MCP server
+# requires authentication.
+
+mcpServers:
+  - name: mcp-server-under-test
+    url: ${MCP_URL}

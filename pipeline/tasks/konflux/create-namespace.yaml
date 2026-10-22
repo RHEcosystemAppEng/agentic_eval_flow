@@ -7,10 +7,9 @@ metadata:
     app.kubernetes.io/component: konflux
 spec:
   description: >-
-    Creates an ephemeral, isolated namespace for MCP server evaluation
-    on a remote target cluster. Applies security guardrails: NetworkPolicy
-    (default deny ingress and egress with scoped DNS and backend allowances),
-    ResourceQuota, LimitRange, and restricted pod security standards.
+    Creates an ephemeral namespace for MCP server evaluation on a remote
+    target cluster and grants the pipeline ServiceAccount access through a
+    RoleBinding. Namespace security restrictions are currently disabled.
     The namespace is named mcp-eval-<run-id> and is intended to be
     cleaned up by the teardown-namespace task in the finally block.
   params:
@@ -21,11 +20,8 @@ spec:
       type: string
       default: ""
       description: >-
-        Comma-separated list of host:port pairs for backend endpoints
-        that the MCP server needs to reach. Hostnames are resolved to
-        all known IPs at pipeline time (NetworkPolicy requires IPs).
-        For stable endpoints, prefer providing IPs directly.
-        Example: "10.0.1.5:443,api.internal:5432"
+        Retained for pipeline compatibility. NetworkPolicy restrictions are
+        currently disabled and this parameter is not used.
   workspaces:
     - name: target-kubeconfig
       description: >-
@@ -59,166 +55,28 @@ spec:
             app.kubernetes.io/part-of: abevalflow
             abevalflow/type: mcp-eval
             abevalflow/pipeline-run: "$LABEL_RUN_ID"
-            pod-security.kubernetes.io/enforce: restricted
-            pod-security.kubernetes.io/warn: restricted
-            pod-security.kubernetes.io/audit: restricted
         EOF
 
         echo "Namespace created"
 
-        # Default deny all ingress
         cat <<EOF | oc apply -n "$NAMESPACE" -f -
-        apiVersion: networking.k8s.io/v1
-        kind: NetworkPolicy
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: RoleBinding
         metadata:
-          name: default-deny-ingress
+          name: mcp-eval-ephemeral-access
           labels:
             app.kubernetes.io/part-of: abevalflow
-        spec:
-          podSelector: {}
-          policyTypes:
-            - Ingress
-          ingress: []
+            app.kubernetes.io/name: mcp-eval
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: mcp-eval-ephemeral-access
+        subjects:
+          - kind: ServiceAccount
+            name: mcp-eval-pipeline
+            namespace: default
         EOF
-
-        echo "Applied default deny ingress"
-
-        # Default deny all egress
-        cat <<EOF | oc apply -n "$NAMESPACE" -f -
-        apiVersion: networking.k8s.io/v1
-        kind: NetworkPolicy
-        metadata:
-          name: default-deny-egress
-          labels:
-            app.kubernetes.io/part-of: abevalflow
-        spec:
-          podSelector: {}
-          policyTypes:
-            - Egress
-          egress: []
-        EOF
-
-        echo "Applied default deny egress"
-
-        # Allow DNS scoped to OpenShift cluster DNS (openshift-dns namespace).
-        # CoreDNS pods listen on 5353; the dns-default Service exposes 53.
-        # Both ports are allowed to handle pre- and post-DNAT matching
-        # depending on the CNI plugin.
-        cat <<EOF | oc apply -n "$NAMESPACE" -f -
-        apiVersion: networking.k8s.io/v1
-        kind: NetworkPolicy
-        metadata:
-          name: allow-dns
-          labels:
-            app.kubernetes.io/part-of: abevalflow
-        spec:
-          podSelector: {}
-          policyTypes:
-            - Egress
-          egress:
-            - to:
-                - namespaceSelector:
-                    matchLabels:
-                      kubernetes.io/metadata.name: openshift-dns
-              ports:
-                - protocol: UDP
-                  port: 53
-                - protocol: TCP
-                  port: 53
-                - protocol: UDP
-                  port: 5353
-                - protocol: TCP
-                  port: 5353
-        EOF
-
-        echo "Applied scoped DNS egress policy"
-
-        # Allow backend endpoints (if specified)
-        BACKENDS="$(params.backend-endpoints)"
-        if [ -n "$BACKENDS" ]; then
-          IFS=',' read -ra ENDPOINT_LIST <<< "$BACKENDS"
-          EGRESS_RULES=""
-          for ENDPOINT in "${ENDPOINT_LIST[@]}"; do
-            HOST=$(echo "$ENDPOINT" | cut -d: -f1)
-            PORT=$(echo "$ENDPOINT" | cut -d: -f2)
-            # Resolve all IPs for the hostname (not just the first)
-            IPS=$(getent ahosts "$HOST" 2>/dev/null | awk '{print $1}' | sort -u || echo "")
-            if [ -z "$IPS" ]; then
-              echo "  WARNING: Could not resolve $HOST — skipping"
-              continue
-            fi
-            for IP in $IPS; do
-              EGRESS_RULES="${EGRESS_RULES}
-            - to:
-                - ipBlock:
-                    cidr: ${IP}/32
-              ports:
-                - protocol: TCP
-                  port: ${PORT}"
-              echo "  Allowing egress to $HOST ($IP):$PORT"
-            done
-          done
-
-          if [ -n "$EGRESS_RULES" ]; then
-            cat <<EOF | oc apply -n "$NAMESPACE" -f -
-        apiVersion: networking.k8s.io/v1
-        kind: NetworkPolicy
-        metadata:
-          name: allow-backend-egress
-          labels:
-            app.kubernetes.io/part-of: abevalflow
-        spec:
-          podSelector: {}
-          policyTypes:
-            - Egress
-          egress:${EGRESS_RULES}
-        EOF
-            echo "Applied backend egress policy"
-          fi
-        fi
-
-        # ResourceQuota
-        cat <<EOF | oc apply -n "$NAMESPACE" -f -
-        apiVersion: v1
-        kind: ResourceQuota
-        metadata:
-          name: mcp-eval-quota
-          labels:
-            app.kubernetes.io/part-of: abevalflow
-        spec:
-          hard:
-            pods: "20"
-            requests.cpu: "8"
-            requests.memory: "16Gi"
-            limits.cpu: "16"
-            limits.memory: "32Gi"
-        EOF
-
-        echo "Applied ResourceQuota"
-
-        # LimitRange
-        cat <<EOF | oc apply -n "$NAMESPACE" -f -
-        apiVersion: v1
-        kind: LimitRange
-        metadata:
-          name: mcp-eval-limits
-          labels:
-            app.kubernetes.io/part-of: abevalflow
-        spec:
-          limits:
-            - type: Container
-              default:
-                cpu: "2"
-                memory: "4Gi"
-              defaultRequest:
-                cpu: "500m"
-                memory: "1Gi"
-              max:
-                cpu: "8"
-                memory: "16Gi"
-        EOF
-
-        echo "Applied LimitRange"
+        echo "Granted ephemeral access in namespace"
         echo ""
         echo "=== Namespace $NAMESPACE ready ==="
 

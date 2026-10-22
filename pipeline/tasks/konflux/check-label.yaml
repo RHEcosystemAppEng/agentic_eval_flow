@@ -1,0 +1,91 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: check-label
+  labels:
+    app.kubernetes.io/name: abevalflow
+    app.kubernetes.io/component: konflux
+spec:
+  description: >-
+    Checks whether a target PR label is present on the pull/merge request
+    associated with a given git commit. Supports both GitHub and GitLab.
+    Derives the API endpoint from the git-url host. Returns "true" if the
+    label is found, "false" otherwise.
+  params:
+    - name: git-url
+      type: string
+      description: Git repository URL (e.g. https://github.com/owner/repo)
+    - name: git-revision
+      type: string
+      description: Git commit SHA to look up associated PRs/MRs for
+    - name: target-label
+      type: string
+      default: "mcpchecker"
+      description: PR/MR label name to check for
+  results:
+    - name: has-label
+      description: "'true' if target-label appears on the PR/MR, 'false' otherwise"
+  steps:
+    - name: check
+      image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+      env:
+        - name: GIT_URL
+          value: $(params.git-url)
+        - name: REVISION
+          value: $(params.git-revision)
+        - name: TARGET_LABEL
+          value: $(params.target-label)
+        - name: GIT_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: git-secret
+              key: password
+              optional: true
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        microdnf install -y jq --nodocs
+
+        GIT_HOST=$(echo "$GIT_URL" | sed -E 's|https?://([^/]+)/.*|\1|')
+        REPO_PATH=$(echo "$GIT_URL" | sed -E 's|https?://[^/]+/||; s|\.git$||; s|/$||')
+
+        echo "Checking labels for $REPO_PATH @ $REVISION (host: $GIT_HOST)"
+        echo "Looking for label: $TARGET_LABEL"
+
+        if [ -z "$GIT_TOKEN" ]; then
+          echo "WARNING: GIT_TOKEN not available, returning false"
+          RESULT="false"
+        elif echo "$GIT_HOST" | grep -qi "github"; then
+          if [ "$GIT_HOST" = "github.com" ]; then
+            API_BASE="https://api.github.com"
+          else
+            API_BASE="https://${GIT_HOST}/api/v3"
+          fi
+
+          RESPONSE=$(curl -sSfk \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: token $GIT_TOKEN" \
+            "${API_BASE}/repos/${REPO_PATH}/commits/${REVISION}/pulls")
+
+          RESULT=$(echo "$RESPONSE" | jq -r --arg targetlabel "$TARGET_LABEL" \
+            '[.[].labels[].name] | if any(. == $targetlabel) then "true" else "false" end')
+
+        elif echo "$GIT_HOST" | grep -qi "gitlab"; then
+          ENCODED_PATH=$(echo "$REPO_PATH" | jq -Rr @uri)
+
+          RESPONSE=$(curl -sSfk \
+            -H "PRIVATE-TOKEN: $GIT_TOKEN" \
+            "https://${GIT_HOST}/api/v4/projects/${ENCODED_PATH}/repository/commits/${REVISION}/merge_requests")
+
+          RESULT=$(echo "$RESPONSE" | jq -r --arg targetlabel "$TARGET_LABEL" \
+            '[.[].labels[]] | if any(. == $targetlabel) then "true" else "false" end')
+
+        else
+          echo "ERROR: Unsupported Git platform: $GIT_HOST"
+          exit 1
+        fi
+
+
+        echo "Result: $RESULT"
+        echo -n "$RESULT" > "$(results.has-label.path)"
