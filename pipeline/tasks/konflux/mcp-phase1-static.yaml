@@ -51,6 +51,7 @@ spec:
   steps:
     - name: scan
       image: $(params.mcp-eval-image)
+      imagePullPolicy: Always
       # User-controlled params are bound to env vars (Tekton substitutes them as
       # literal strings) instead of inlined into the script, so a value containing
       # shell metacharacters cannot execute in the task pod.
@@ -68,6 +69,17 @@ spec:
         REPORTS_DIR="$(workspaces.source.path)/reports/$SUBMISSION_NAME"
         mkdir -p "$REPORTS_DIR"
 
+        # licensee (Rugged/libgit2) refuses to open a repo whose directory is not
+        # owned by the current UID. The repo was cloned by the pipeline's
+        # fetch-mcp-repo task, which runs in a different pod/UID than this step,
+        # so that ownership check always trips here even though we only need
+        # read access. Mark the workspace as a trusted ("safe") directory the
+        # same way `git config --global --add safe.directory` would - written
+        # directly since this image has no git CLI, only libgit2 bindings.
+        export HOME="${HOME:-/tmp}"
+        mkdir -p "$HOME"
+        printf '[safe]\n\tdirectory = *\n' >> "$HOME/.gitconfig"
+
         LICENSE_ARGS=""
         # shellcheck disable=SC2086
         for spdx in $ALLOWED_LICENSES; do
@@ -82,6 +94,7 @@ spec:
 
     - name: gate
       image: $(params.mcp-eval-image)
+      imagePullPolicy: Always
       env:
         - name: SUBMISSION_NAME
           value: $(params.submission-name)
@@ -102,3 +115,29 @@ spec:
           "$(results.phase1-passed.path)" \
           "reports/$SUBMISSION_NAME" \
           "$(results.report-path.path)"
+
+    - name: print-report
+      image: $(params.mcp-eval-image)
+      imagePullPolicy: Always
+      env:
+        - name: SUBMISSION_NAME
+          value: $(params.submission-name)
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        REPORTS_DIR="$(workspaces.source.path)/reports/$SUBMISSION_NAME"
+
+        echo "=== Phase 1 Summary ==="
+        cat "$REPORTS_DIR/phase1-summary.json" 2>/dev/null || echo "No summary found"
+
+        echo ""
+        echo "=== Secrets Scan ==="
+        cat "$REPORTS_DIR/secrets-scan.json" 2>/dev/null || echo "No report found"
+
+        echo ""
+        echo "=== No User Code Scan ==="
+        cat "$REPORTS_DIR/no-user-code-scan.json" 2>/dev/null || echo "No report found"
+
+        echo ""
+        echo "=== License Scan ==="
+        cat "$REPORTS_DIR/license-scan.json" 2>/dev/null || echo "No report found"
