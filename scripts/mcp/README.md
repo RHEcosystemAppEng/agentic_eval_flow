@@ -183,11 +183,12 @@ and the track definition as the body.
 
 ### Preview and publish evaluation facts
 
-The runner expects `phase1-summary.json` and `phase2-summary.json` beneath the
-reports directory (it supports either a flat layout or `phase1/` and
-`phase2/` subdirectories). It publishes individual evaluated checks, one
-summary fact per phase, and one combined summary fact to the SoundCheck Facts
-API. The request shape is `POST /api/soundcheck/facts/` with a `facts` array;
+The runner accepts explicit summary paths or a scoped report directory. In
+directory mode, it discovers `*-summary.json` recursively beneath that
+directory only. Summary filenames use `<phase-name>-summary.json`; the phase
+name must match the JSON `phase` field. It publishes mapped individual checks,
+one summary fact per mapped phase, and one combined summary fact to the
+SoundCheck Facts API. The request shape is `POST /api/soundcheck/facts/` with a `facts` array;
 each fact contains `factRef`, `entityRef`, and `data`. For example:
 
 ```json
@@ -216,6 +217,15 @@ python -m scripts.mcp.runners.compass_publish \
   --compass-url https://compass.stage.redhat.com/api/soundcheck/facts/
 ```
 
+Pass exact summary files when a task already has their paths:
+
+```bash
+python -m scripts.mcp.runners.compass_publish \
+  --summary-files reports/my-server/phase1-summary.json reports/my-server/phase2-summary.json \
+  --entity-ref mcpserver:default/my-server \
+  --compass-url https://compass.stage.redhat.com/api/soundcheck/facts/
+```
+
 Live publish requires explicit opt-in and the API key in the environment:
 
 ```bash
@@ -231,13 +241,13 @@ checks are included in the phase summary but are not re-published individually,
 avoiding a circular write. The pipeline can read those existing results with
 `GET /api/soundcheck/results?entityRef=<url-encoded-ref>&checks=mcp-tool-schema-check&checks=mcp-oauth-scope-match`.
 
-### Phase 3 and current scope
+### Adding a phase
 
-The domain model allows an optional Phase 3 result, but the CLI does not yet
-load a Phase 3 summary and there are no Phase 3 fact mappings or track level.
-When behavioral checks are ready, their report contract, loader, fact
-mappings, and track level must be added; a `phase3-summary.json` file is
-currently detected but skipped.
+The loader and publisher accept any phase name with the standard summary
+schema. Add phase configuration for check display names, consumed checks,
+source defaults, check fact references, and the phase summary fact reference.
+Unmapped facts are skipped with a warning. Compass track definitions remain a
+separate registration concern.
 
 The staging validation used
 `mcpserver:ai5-marketplace/openshift-mcp-server`. The local MCP endpoint served
