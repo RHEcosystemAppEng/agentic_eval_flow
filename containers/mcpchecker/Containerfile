@@ -9,7 +9,7 @@
 # Push:  podman push quay.io/rhecosystemappeng/mcpchecker-runner:latest
 
 # Stage 1: Build mcpchecker from source
-FROM golang:1.22-alpine AS builder
+FROM golang:1.26-alpine AS builder
 
 RUN apk add --no-cache git
 
