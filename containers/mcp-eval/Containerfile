@@ -52,7 +52,7 @@ COPY abevalflow/report.py            /opt/abevalflow/report.py
 COPY scripts/aggregate_mcpchecker.py /opt/scripts/aggregate_mcpchecker.py
 COPY suites/mcp/default              /opt/suites/mcp/default
 
-# Kubernetes Job templates for Phase 2 and Phase 3
+# Kubernetes Job templates for conformance and behavioral evaluation
 COPY templates/mcp-conformance-eval-job.yaml /opt/templates/mcp-conformance-eval-job.yaml
 COPY templates/mcp-behavioral-eval-job.yaml  /opt/templates/mcp-behavioral-eval-job.yaml
 

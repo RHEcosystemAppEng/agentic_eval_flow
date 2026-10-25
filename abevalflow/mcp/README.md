@@ -1,11 +1,11 @@
 # `abevalflow/mcp/` — MCP evaluation pipeline logic
 
-All evaluation logic for the MCP-server evaluation pipeline (ADR Approach 4,
-Phases 1 and 2). This package **reads** result JSON, applies policy, and
-**decides** pass/fail. No shell-outs to external tools, no network calls.
-Testable with JSON fixtures.
+All evaluation logic for the MCP-server evaluation pipeline (ADR Approach 4:
+static, conformance, and behavioral evaluations). This package **reads** result
+JSON, applies policy, and **decides** pass/fail. No shell-outs to external tools,
+no network calls. Testable with JSON fixtures.
 
-## Structure (organized by role, phase-prefixed)
+## Structure (organized by role and evaluation type)
 
 | Directory | Role | What it does |
 |-----------|------|-------------|
@@ -14,20 +14,20 @@ Testable with JSON fixtures.
 
 ### `gates/` — all pass/fail gates
 
-| File | Phase | What it does |
-|------|-------|-------------|
-| `phase1_secrets_gate.py` | 1 | `SecretsGate` — reads `secrets-scan.json`, counts HIGH findings |
-| `phase1_no_user_code_gate.py` | 1 | `NoUserCodeGate` — reads `no-user-code-scan.json`, counts HIGH findings |
-| `phase1_license_gate.py` | 1 | `LicenseGate` — reads `license-scan.json`, checks against allow-list |
-| `phase2_conformance_gate.py` | 2 | `Phase2Gate` — reads any `<check>-check.json`, maps three-state to `GateResult` |
-| `__init__.py` | 1+2 | Orchestrators: `run_phase1()`, `run_phase2()`, gate lists |
+| File | Evaluation Type | What it does |
+|------|-----------------|-------------|
+| `static_eval_secrets_gate.py` | Static | `SecretsGate` — reads `secrets-scan.json`, counts HIGH findings |
+| `static_eval_no_user_code_gate.py` | Static | `NoUserCodeGate` — reads `no-user-code-scan.json`, counts HIGH findings |
+| `static_eval_license_gate.py` | Static | `LicenseGate` — reads `license-scan.json`, checks against allow-list |
+| `conformance_eval_gate.py` | Conformance | `ConformanceEvalGate` — reads any `<check>-check.json`, maps three-state to `GateResult` |
+| `__init__.py` | All | Orchestrators: `run_static_eval()`, `run_conformance_eval()`, gate lists |
 
 ### `checks/` — conformance probes and Compass-consumed checks
 
-| File | Phase | What it does |
-|------|-------|-------------|
-| `phase2_conformance_checks.py` | 2 | 8 `check_*` functions + `probe_all()` — conformance checks against a running MCP server |
-| `phase2_compass_checks.py` | 2 | `map_facts()` + `map_results()` — maps Compass facts/results to `CheckOutcome` |
+| File | Evaluation Type | What it does |
+|------|-----------------|-------------|
+| `conformance_eval_checks.py` | Conformance | 8 `check_*` functions + `probe_all()` — conformance checks against a running MCP server |
+| `conformance_eval_compass_checks.py` | Conformance | `map_facts()` + `map_results()` — maps Compass facts/results to `CheckOutcome` |
 
 ### Root modules
 
@@ -40,31 +40,31 @@ Testable with JSON fixtures.
 ## Data flow
 
 ```
-Phase 1 (static — no running server)
+Static Evaluation (build-time — no running server)
 ┌─────────────────────────────────────────────────────────────────┐
 │ scripts/mcp/scanners/                                           │
-│   phase1_secrets_scan       ──→ secrets-scan.json                │
-│   phase1_no_user_code_scan  ──→ no-user-code-scan.json           │
-│   phase1_license_scan       ──→ license-scan.json                │
+│   static_eval_secrets_scan       ──→ secrets-scan.json          │
+│   static_eval_no_user_code_scan  ──→ no-user-code-scan.json     │
+│   static_eval_license_scan       ──→ license-scan.json          │
 └──────────────────────────────────┬──────────────────────────────┘
                                    │ JSON on disk
 ┌──────────────────────────────────▼──────────────────────────────┐
 │ abevalflow/mcp/gates/                                           │
-│   Phase1SecretsGate     ──→ GateResult (pass/fail)               │
-│   Phase1NoUserCodeGate  ──→ GateResult (pass/fail)               │
-│   Phase1LicenseGate     ──→ GateResult (pass/fail)               │
+│   SecretsGate           ──→ GateResult (pass/fail)              │
+│   NoUserCodeGate        ──→ GateResult (pass/fail)              │
+│   LicenseGate           ──→ GateResult (pass/fail)              │
 └─────────────────────────────────────────────────────────────────┘
 
-Phase 2 (live — against the running MCP server)
+Conformance Evaluation (live — against the running MCP server)
 ┌─────────────────────────────────────────────────────────────────┐
 │ scripts/mcp/probes/                                             │
-│   phase2_conformance_probe   ──→ <check>-check.json (per check)       │
-│   phase2_compass_probe ──→ <check>-check.json (consumed facts)  │
+│   conformance_eval_probe   ──→ <check>-check.json (per check)  │
+│   conformance_eval_compass_probe ──→ <check>-check.json (facts)│
 └──────────────────────────────────┬──────────────────────────────┘
                                    │ JSON on disk
 ┌──────────────────────────────────▼──────────────────────────────┐
 │ abevalflow/mcp/gates/                                           │
-│   Phase2ConformanceGate (×N)  ──→ GateResult (pass/fail/not_evaluated) │
+│   ConformanceEvalGate (×N)  ──→ GateResult (pass/fail/not_eval) │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -74,9 +74,9 @@ This package contains the **what** (evaluation logic — reads JSON, decides).
 `scripts/mcp/` contains the **how** (CLI entry points — runs tools, writes JSON).
 The contract between them is JSON files on disk.
 
-## Three-state model (Phase 2)
+## Three-state model (Conformance Evaluation)
 
-Every Phase 2 check produces one of three states:
+Every conformance evaluation check produces one of three states:
 
 | State | Meaning | Effect on verdict | Effect on grade |
 |---|---|---|---|
@@ -86,17 +86,17 @@ Every Phase 2 check produces one of three states:
 
 A server is never penalized for something it was never tested for.
 
-## Adding a new check
+## Adding a new conformance check
 
-1. **Add the check function** in `checks/phase2_conformance_checks.py` — takes the
+1. **Add the check function** in `checks/conformance_eval_checks.py` — takes the
    client and/or a response, returns a `CheckOutcome`.
 2. **Wire it** in `probe_all()` (same file).
-3. **Add the check name** to `PHASE2_CHECKS` in `gates/__init__.py`.
+3. **Add the check name** to `CONFORMANCE_EVAL_CHECKS` in `gates/__init__.py`.
 4. The gate picks it up automatically — it reads any `<check>-check.json` file.
    No gate code changes needed.
 
 ## Testing
 
 All code in this package is testable with JSON fixtures — no running server,
-no external tools. Tests are in `tests/test_mcp_phase1.py` and
-`tests/test_mcp_phase2.py`.
+no external tools. Tests are in `tests/test_mcp_static_eval.py` and
+`tests/test_mcp_conformance_eval.py`.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""MCP Phase 2 Compass-consumed checks — CLI entry point.
+"""MCP conformance evaluation Compass-consumed checks — CLI entry point.
 
 Two modes:
 
@@ -12,15 +12,15 @@ Two modes:
 If both are given, live mode takes precedence. If neither is given the consumed
 checks report not_evaluated.
 
-Mapping logic lives in ``abevalflow.mcp.checks.phase2_compass_checks``; this module is the
+Mapping logic lives in ``abevalflow.mcp.checks.conformance_eval_compass_checks``; this module is the
 thin CLI wrapper that handles I/O (file reads, HTTP calls) and writes results.
 
 Usage (file mode):
-    python -m scripts.mcp.probes.phase2_compass_probe \\
+    python -m scripts.mcp.probes.conformance_eval_compass_probe \\
         --facts-file facts.json --reports-dir <dir>
 
 Usage (live mode):
-    python -m scripts.mcp.probes.phase2_compass_probe \\
+    python -m scripts.mcp.probes.conformance_eval_compass_probe \\
         --compass-url https://compass.stage.redhat.com/api/soundcheck \\
         --entity-ref mcpserver:redhat/my-server \\
         --reports-dir <dir>
@@ -42,7 +42,7 @@ from urllib.parse import quote
 
 import httpx
 
-from abevalflow.mcp.checks.phase2_compass_checks import (
+from abevalflow.mcp.checks.conformance_eval_compass_checks import (
     CHECK_OAUTH,
     CHECK_TOOL_NAME,
     map_facts,
@@ -107,7 +107,7 @@ def _load_facts_file(path: Path) -> dict[str, Any]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="MCP Phase 2 Compass-consumed checks")
+    parser = argparse.ArgumentParser(description="MCP conformance evaluation Compass-consumed checks")
     parser.add_argument(
         "--reports-dir", type=Path, required=True, help="Directory to write <check>-check.json files into"
     )

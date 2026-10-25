@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
-"""MCP Phase 2 live conformance probe — CLI entry point.
+"""MCP conformance evaluation live probe — CLI entry point.
 
 Connects to a running MCP server over Streamable HTTP and runs the deterministic
 (no-LLM) contract/conformance checks, writing one three-state result file per
-check for the Phase 2 gates to read.
+check for the conformance evaluation gates to read.
 
-Check logic lives in ``abevalflow.mcp.checks.phase2_conformance_checks``; this module is the thin
+Check logic lives in ``abevalflow.mcp.checks.conformance_eval_checks``; this module is the thin
 CLI wrapper that creates the client, invokes the checks, and writes results.
 
 Checks that Compass already collects as real automated facts (tool-name rules,
 OAuth match) are NOT probed here — they are consumed via
-``scripts/mcp/probes/phase2_compass_probe.py`` instead.
+``scripts/mcp/probes/conformance_eval_compass_probe.py`` instead.
 
 Usage:
-    python -m scripts.mcp.probes.phase2_conformance_probe --server-url http://<service>:8080/mcp \
+    python -m scripts.mcp.probes.conformance_eval_probe --server-url http://<service>:8080/mcp \
         --reports-dir <dir> [--timeout 30] [--openapi-url URL]
 """
 
@@ -25,7 +25,7 @@ import sys
 import time
 from pathlib import Path
 
-from abevalflow.mcp.checks.phase2_conformance_checks import probe_all
+from abevalflow.mcp.checks.conformance_eval_checks import probe_all
 from abevalflow.mcp.helpers import write_check_result
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="MCP Phase 2 live conformance probe")
+    parser = argparse.ArgumentParser(description="MCP conformance evaluation live probe")
     parser.add_argument("--server-url", required=True, help="MCP endpoint URL, e.g. http://<service>:8080/mcp")
     parser.add_argument(
         "--reports-dir", type=Path, required=True, help="Directory to write <check>-check.json files into"
@@ -50,7 +50,7 @@ def main() -> int:
     outcomes = probe_all(args.server_url, timeout=args.timeout, openapi_url=args.openapi_url)
     for outcome in outcomes:
         write_check_result(args.reports_dir, outcome)
-    logger.info("Phase 2 probe complete: %d checks in %.1fs", len(outcomes), time.monotonic() - start)
+    logger.info("Conformance probe complete: %d checks in %.1fs", len(outcomes), time.monotonic() - start)
     return 0
 
 

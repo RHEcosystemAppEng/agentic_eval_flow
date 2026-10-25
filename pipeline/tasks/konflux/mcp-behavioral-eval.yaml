@@ -69,13 +69,13 @@ spec:
     - name: job-template
       type: string
       default: "/opt/templates/mcp-behavioral-eval-job.yaml"
-      description: Path to the Kubernetes Job template for the Phase 3 behavioral eval
+      description: Path to the Kubernetes Job template for behavioral evaluation
     - name: pipeline-run-id
       type: string
       description: Pipeline run ID for provenance tracking
     - name: submission-name
       type: string
-      description: Name used for the report directory (reports/<submission-name>/)
+      description: Name of the MCP component being evaluated (from the Konflux snapshot)
   workspaces:
     - name: source
       description: Shared workspace for storing results
@@ -141,10 +141,10 @@ spec:
         envsubst \
           '${JOB_NAME} ${NAMESPACE} ${JOB_TIMEOUT} ${IMAGE} ${MCP_URL} ${AGENT_SECRET} ${JUDGE_SECRET} ${CA_SECRET}' \
           < "$JOB_TEMPLATE" \
-          > "$(workspaces.source.path)/phase3-job.yaml"
+          > "$(workspaces.source.path)/behavioral-eval-job.yaml"
 
         echo "Generated Job manifest:"
-        cat "$(workspaces.source.path)/phase3-job.yaml"
+        cat "$(workspaces.source.path)/behavioral-eval-job.yaml"
 
     # ── Step 3: Apply Job and collect results ──
     - name: run-mcpchecker-job
@@ -163,7 +163,7 @@ spec:
         set -euo pipefail
 
         # Apply the Job
-        oc apply -f "$(workspaces.source.path)/phase3-job.yaml" --namespace="$NAMESPACE"
+        oc apply -f "$(workspaces.source.path)/behavioral-eval-job.yaml" --namespace="$NAMESPACE"
 
         # Wait for Job completion
         TIMEOUT=$JOB_TIMEOUT
@@ -191,55 +191,41 @@ spec:
         done
 
         # Collect Job output
-        RESULTS_DIR="$(workspaces.source.path)/eval-results/$(params.submission-name)"
+        RESULTS_DIR="$(workspaces.source.path)/results"
         mkdir -p "$RESULTS_DIR"
 
-        POD_NAME=$(oc get pods -n "$NAMESPACE" -l job-name="$JOB_NAME" \
-          -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+        RAW_LOGS="$RESULTS_DIR/$JOB_NAME-logs.txt"
+        oc logs "job/$JOB_NAME" -n "$NAMESPACE" > "$RAW_LOGS" 2>&1 || {
+          echo '{"error": "Failed to collect mcpchecker logs", "results": []}' > "$RAW_LOGS"
+        }
 
-        if [ -n "$POD_NAME" ]; then
-          oc logs "$POD_NAME" -n "$NAMESPACE" > "$RESULTS_DIR/mcpchecker-raw.txt" 2>&1 || {
-            echo '{"error": "Failed to collect mcpchecker logs", "results": []}' \
-              > "$RESULTS_DIR/mcpchecker-raw.txt"
-          }
-
-          echo "======================================"
-          echo "=== RAW MCPCHECKER LOGS (TEMPORARY DEBUG) ==="
-          echo "======================================"
-          cat "$RESULTS_DIR/mcpchecker-raw.txt" || echo "Failed to read mcpchecker logs"
-          echo "======================================"
-          echo "=== END RAW MCPCHECKER LOGS ==="
-          echo "======================================"
-
-          RAW="$RESULTS_DIR/mcpchecker-raw.txt"
-          OUTPUT="$RESULTS_DIR/mcpchecker-output.json"
-          if grep -n '^{' "$RAW" > /dev/null 2>&1; then
-            START_LINE=$(grep -n '^{' "$RAW" | head -1 | cut -d: -f1)
-            tail -n +$START_LINE "$RAW" > "$OUTPUT"
-          else
-            echo '{"error": "No JSON in mcpchecker output", "results": []}' > "$OUTPUT"
-          fi
-
-          if ! python3 -c "import json; json.load(open('$OUTPUT'))" 2>/dev/null; then
-            echo '{"error": "Invalid JSON from mcpchecker", "results": []}' > "$OUTPUT"
-          fi
+        OUTPUT="$RESULTS_DIR/$JOB_NAME-output.json"
+        if grep -n '^{' "$RAW_LOGS" > /dev/null 2>&1; then
+          START_LINE=$(grep -n '^{' "$RAW_LOGS" | head -1 | cut -d: -f1)
+          tail -n +$START_LINE "$RAW_LOGS" > "$OUTPUT"
         else
-          echo '{"error": "Job pod not found", "results": []}' \
-            > "$RESULTS_DIR/mcpchecker-output.json"
+          echo '{"error": "No JSON in mcpchecker output", "results": []}' > "$OUTPUT"
         fi
 
-    # ── Step 3: Aggregate results and write Tekton results ──
+        if ! python3 -c "import json; json.load(open('$OUTPUT'))" 2>/dev/null; then
+          echo '{"error": "Invalid JSON from mcpchecker", "results": []}' > "$OUTPUT"
+        fi
+
+    # ── Step 4: Aggregate results and write Tekton results ──
     - name: aggregate-results
       image: $(params.mcp-eval-image)
       imagePullPolicy: Always
+      env:
+        - name: JOB_NAME
+          value: mcpchecker-eval
       script: |
         #!/usr/bin/env bash
         set -euo pipefail
 
-        RESULTS_DIR="$(workspaces.source.path)/eval-results/$(params.submission-name)"
-        REPORTS_DIR="$(workspaces.source.path)/reports/$(params.submission-name)"
-        OUTPUT_FILE="$RESULTS_DIR/mcpchecker-output.json"
-        REPORT_REL="reports/$(params.submission-name)"
+        RESULTS_DIR="$(workspaces.source.path)/results"
+        REPORTS_DIR="$(workspaces.source.path)/reports"
+        OUTPUT_FILE="$RESULTS_DIR/$JOB_NAME-output.json"
+        REPORT_REL="reports/behavioral-eval-summary.json"
 
         if [ ! -f "$OUTPUT_FILE" ]; then
           echo -n "error" > "$(results.eval-passed.path)"
@@ -259,21 +245,23 @@ spec:
           exit 0
         fi
 
-        mkdir -p "$REPORTS_DIR"
+        mkdir -p "$RESULTS_DIR" "$REPORTS_DIR"
 
+        # Write detailed reports to results/
         python3 /opt/scripts/aggregate_mcpchecker.py \
           --output-json "$OUTPUT_FILE" \
           --submission-name "$(params.submission-name)" \
-          --report-dir "$REPORTS_DIR" \
+          --report-dir "$RESULTS_DIR" \
           --pipeline-run-id "$(params.pipeline-run-id)" \
           > /tmp/aggregate_output.json 2>/tmp/aggregate_stderr.log || {
             echo '{"overall_score": 0, "passed_tasks": 0, "total_tasks": 0, "recommendation": "error"}' \
               > /tmp/aggregate_output.json
           }
 
-        # Generate unified phase3-summary.json (matches Phase 1/2 format)
-        python3 -m scripts.mcp.runners.phase3_summary \
-          --report-dir "$REPORTS_DIR" || echo "WARNING: Failed to generate phase3-summary.json"
+        # Generate unified behavioral-eval-summary.json directly in reports/
+        python3 -m scripts.mcp.runners.behavioral_eval_summary \
+          --results-dir "$RESULTS_DIR" \
+          --report-dir "$REPORTS_DIR" || echo "WARNING: Failed to generate behavioral-eval-summary.json"
 
         RECOMMENDATION=$(python3 -c "import json; d=json.load(open('/tmp/aggregate_output.json')); print(d.get('recommendation', 'fail'))")
 
@@ -284,33 +272,3 @@ spec:
         fi
         echo -n "$REPORT_REL" > "$(results.report-path.path)"
         echo "MCP behavioral evaluation result: $RECOMMENDATION"
-
-    - name: print-report
-      image: $(params.mcp-eval-image)
-      imagePullPolicy: Always
-      script: |
-        #!/usr/bin/env bash
-        set -euo pipefail
-
-        RESULTS_DIR="$(workspaces.source.path)/eval-results/$(params.submission-name)"
-        REPORTS_DIR="$(workspaces.source.path)/reports/$(params.submission-name)"
-
-        echo "=== Phase 3 Summary ==="
-        cat "$REPORTS_DIR/phase3-summary.json" 2>/dev/null || echo "No summary found"
-
-        echo ""
-        echo "=== mcpchecker Raw Output ==="
-        cat "$RESULTS_DIR/mcpchecker-raw.txt" 2>/dev/null || echo "No raw output found"
-
-        echo ""
-        echo "=== mcpchecker JSON Output ==="
-        cat "$RESULTS_DIR/mcpchecker-output.json" 2>/dev/null || echo "No JSON output found"
-
-        echo ""
-        echo "=== Behavioral Evaluation Reports ==="
-        for report in "$REPORTS_DIR"/*.json; do
-          [ -f "$report" ] || continue
-          echo "--- $(basename "$report") ---"
-          cat "$report"
-          echo ""
-        done

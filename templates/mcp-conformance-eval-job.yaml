@@ -21,14 +21,14 @@ spec:
               REPORTS_DIR="/tmp/reports"
               mkdir -p "$REPORTS_DIR"
 
-              echo "=== Phase 2 live probe against ${SERVER_URL} ==="
-              python -m scripts.mcp.probes.phase2_conformance_probe \
+              echo "=== Conformance evaluation live probe against ${SERVER_URL} ==="
+              python -m scripts.mcp.probes.conformance_eval_probe \
                 --server-url "${SERVER_URL}" \
                 --reports-dir "$REPORTS_DIR" \
                 --timeout "${TIMEOUT}" \
                 --openapi-url "${OPENAPI_URL}"
 
-              echo "=== Phase 2 Compass-consumed checks ==="
+              echo "=== Conformance evaluation Compass-consumed checks ==="
               COMPASS_ARGS=()
               compass_url="${COMPASS_URL:-}"
               compass_entity_ref="${COMPASS_ENTITY_REF:-}"
@@ -41,7 +41,7 @@ spec:
               else
                 echo "No Compass source configured; consumed checks will report not_evaluated."
               fi
-              python -m scripts.mcp.probes.phase2_compass_probe \
+              python -m scripts.mcp.probes.conformance_eval_compass_probe \
                 --reports-dir "$REPORTS_DIR" "${COMPASS_ARGS[@]}"
 
               echo "=== Probe reports ==="

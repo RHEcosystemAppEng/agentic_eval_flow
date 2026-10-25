@@ -1,12 +1,12 @@
-"""Phase 2 gate: turn a three-state check result file into a GateResult.
+"""Conformance evaluation gate: turn a three-state check result file into a GateResult.
 
-Unlike the Phase 1 security gates (one class per gate, reusing
-``SecurityGate.evaluate_scan_json``), Phase 2 has many small, uniform checks that
-differ only by name and by a three-state status, so a single data-driven gate is
-used instead of a subclass per check.
+Unlike the static evaluation security gates (one class per gate, reusing
+``SecurityGate.evaluate_scan_json``), conformance evaluation has many small, uniform
+checks that differ only by name and by a three-state status, so a single data-driven
+gate is used instead of a subclass per check.
 
-Each check result file (written by scripts/mcp/probes/phase2_conformance_probe.py or phase2_compass_probe.py)
-has the shape::
+Each check result file (written by scripts/mcp/probes/conformance_eval_probe.py or
+conformance_eval_compass_probe.py) has the shape::
 
     {"check": ..., "status": "pass"|"fail"|"not_evaluated", "source": ...,
      "reason": ..., "findings": [ ... ]}
@@ -46,8 +46,8 @@ def _weighted_score(findings: list[Finding]) -> float:
     return sum(_SEVERITY_WEIGHT[f.severity] for f in findings) / len(findings)
 
 
-class Phase2Gate:
-    """Data-driven gate for one Phase 2 check."""
+class ConformanceEvalGate:
+    """Data-driven gate for one conformance evaluation check."""
 
     def __init__(self, check: str) -> None:
         self.check = check
@@ -99,9 +99,9 @@ class Phase2Gate:
             # A corrupt result file is a real pipeline defect, so log it loudly and
             # score 0.0 - but per the three-state model a "couldn't read" must not
             # block outside block mode (mirrors the fail branch below). This is a
-            # deliberate Phase 2 choice (warn never blocks, even on a corrupt file;
+            # deliberate conformance evaluation choice (warn never blocks, even on a corrupt file;
             # see test_corrupt_result_file_blocks_only_in_block_mode) and differs
-            # from Phase 1's security gates, which fail closed regardless of mode.
+            # from static evaluation's security gates, which fail closed regardless of mode.
             logger.error("Failed to read %s: %s", path, exc)
             return self._result(
                 passed=mode != GateMode.BLOCK,

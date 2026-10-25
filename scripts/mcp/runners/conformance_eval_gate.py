@@ -1,20 +1,19 @@
 #!/usr/bin/env python3
-"""Run the MCP Phase 2 gates over the three-state check result files.
+"""Run the MCP conformance evaluation gates over the three-state check result files.
 
-Reads the ``<check>-check.json`` files produced by the Phase 2 probe and the
-Compass-consume step, evaluates each gate, and writes results into the reports
-directory:
+Reads the ``<check>-check.json`` files produced by the conformance evaluation probe
+and the Compass-consume step, evaluates each gate, and writes results:
 
-- ``<check>-result.json`` per gate (the full GateResult)
-- ``phase2-summary.json`` (overall pass/fail + per-check summary with status)
+- ``<check>-result.json`` per gate (the full GateResult) → results directory
+- ``conformance-eval-summary.json`` (overall pass/fail + per-check summary) → reports directory
 
-Three-state aware: a ``not_evaluated`` check never fails the phase. The step
+Three-state aware: a ``not_evaluated`` check never fails the evaluation. The step
 fails (non-zero exit) only when a check genuinely FAILED in block mode. Reporting
 to the Evaluation-results database is still handled by the pipeline layer later;
 this writes local JSON only.
 
 Usage:
-    python -m scripts.mcp.runners.phase2_gate --reports-dir <dir> [--mode block|warn]
+    python -m scripts.mcp.runners.conformance_eval_gate --results-dir <dir> --reports-dir <dir> [--mode block|warn]
 """
 
 from __future__ import annotations
@@ -25,19 +24,28 @@ import logging
 import sys
 from pathlib import Path
 
-from abevalflow.mcp.gates import run_phase2
+from abevalflow.mcp.gates import run_conformance_eval
 from abevalflow.schemas import GateMode, GatePolicy
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
-SUMMARY_FILENAME = "phase2-summary.json"
+SUMMARY_FILENAME = "conformance-eval-summary.json"
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run MCP Phase 2 gates")
+    parser = argparse.ArgumentParser(description="Run MCP conformance evaluation gates")
     parser.add_argument(
-        "--reports-dir", type=Path, required=True, help="Directory holding the Phase 2 check result files"
+        "--results-dir",
+        type=Path,
+        required=True,
+        help="Directory holding the conformance evaluation check result files (input)",
+    )
+    parser.add_argument(
+        "--reports-dir",
+        type=Path,
+        required=True,
+        help="Directory for writing the summary JSON file (output)",
     )
     parser.add_argument(
         "--mode",
@@ -47,18 +55,20 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    if not args.reports_dir.is_dir():
-        logger.error("Not a directory: %s", args.reports_dir)
+    if not args.results_dir.is_dir():
+        logger.error("Not a directory: %s", args.results_dir)
         return 1
 
+    args.reports_dir.mkdir(parents=True, exist_ok=True)
+
     policy = GatePolicy(default_mode=GateMode(args.mode))
-    results = run_phase2(args.reports_dir, policy)
+    results = run_conformance_eval(args.results_dir, policy)
 
     summary: list[dict] = []
     for result in results:
         check_key = result.get_policy_key()
         status = result.details.get("status", "unknown")
-        (args.reports_dir / f"{check_key}-result.json").write_text(result.model_dump_json(indent=2))
+        (args.results_dir / f"{check_key}-result.json").write_text(result.model_dump_json(indent=2))
         summary.append(
             {
                 "check": check_key,
@@ -79,10 +89,12 @@ def main() -> int:
         "not_evaluated": sum(1 for s in summary if s["status"] == "not_evaluated"),
     }
     (args.reports_dir / SUMMARY_FILENAME).write_text(
-        json.dumps({"phase": "phase2", "passed": overall_passed, "counts": counts, "checks": summary}, indent=2)
+        json.dumps(
+            {"phase": "conformance-eval", "passed": overall_passed, "counts": counts, "checks": summary}, indent=2
+        )
     )
 
-    logger.info("Phase 2 overall: %s (%s)", "PASS" if overall_passed else "FAIL", counts)
+    logger.info("Conformance evaluation overall: %s (%s)", "PASS" if overall_passed else "FAIL", counts)
     # A gate is only not-passed when a real check FAILED in block mode
     # (not_evaluated and warn-mode failures keep passed=True), so this exits
     # non-zero exactly when the step should fail.

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Generate unified phase3-summary.json from mcpchecker-report.json.
+"""Generate unified behavioral-eval-summary.json from mcpchecker-report.json.
 
 Reads the detailed MCPCheckerResult and writes a unified summary matching
-the Phase 1/2 format for cross-phase consistency.
+the static/conformance eval format for cross-phase consistency.
 
 Usage:
-    python -m scripts.mcp.runners.phase3_summary --report-dir <dir>
+    python -m scripts.mcp.runners.behavioral_eval_summary --results-dir <dir> --report-dir <dir>
 """
 
 from __future__ import annotations
@@ -20,17 +20,17 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 REPORT_FILENAME = "mcpchecker-report.json"
-SUMMARY_FILENAME = "phase3-summary.json"
+SUMMARY_FILENAME = "behavioral-eval-summary.json"
 
 
 def map_mcpchecker_to_summary(result: dict) -> dict:
-    """Map MCPCheckerResult to unified phase3-summary.json format.
+    """Map MCPCheckerResult to unified behavioral-eval-summary.json format.
 
     Args:
         result: Parsed mcpchecker-report.json dict
 
     Returns:
-        Unified summary dict matching Phase 1/2 format
+        Unified summary dict matching static/conformance eval format
     """
     checks = []
     for task in result.get("tasks", []):
@@ -79,7 +79,7 @@ def map_mcpchecker_to_summary(result: dict) -> dict:
         )
 
     return {
-        "phase": "phase3",
+        "phase": "behavioral-eval",
         "passed": result.get("recommendation") == "pass",
         "counts": {
             "pass": result.get("passed_tasks", 0),
@@ -91,25 +91,31 @@ def map_mcpchecker_to_summary(result: dict) -> dict:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Generate Phase 3 unified summary")
+    parser = argparse.ArgumentParser(description="Generate behavioral evaluation unified summary")
+    parser.add_argument(
+        "--results-dir",
+        type=Path,
+        required=True,
+        help="Directory containing mcpchecker-report.json (detailed results)",
+    )
     parser.add_argument(
         "--report-dir",
         type=Path,
         required=True,
-        help="Directory containing mcpchecker-report.json",
+        help="Directory to write behavioral-eval-summary.json (summaries only)",
     )
     args = parser.parse_args()
 
-    if not args.report_dir.is_dir():
-        logger.error("Not a directory: %s", args.report_dir)
+    if not args.results_dir.is_dir():
+        logger.error("Results directory not found: %s", args.results_dir)
         return 1
 
-    report_path = args.report_dir / REPORT_FILENAME
+    report_path = args.results_dir / REPORT_FILENAME
     if not report_path.exists():
         logger.error("Report not found: %s", report_path)
         return 1
 
-    # Read mcpchecker-report.json
+    # Read mcpchecker-report.json from results/
     try:
         with open(report_path) as f:
             result = json.load(f)
@@ -120,14 +126,15 @@ def main() -> int:
     # Generate unified summary
     summary = map_mcpchecker_to_summary(result)
 
-    # Write phase3-summary.json
+    # Write behavioral-eval-summary.json to reports/
+    args.report_dir.mkdir(parents=True, exist_ok=True)
     summary_path = args.report_dir / SUMMARY_FILENAME
     with open(summary_path, "w") as f:
         json.dump(summary, f, indent=2)
 
     logger.info("Wrote unified summary to %s", summary_path)
     logger.info(
-        "Phase 3 overall: %s (pass=%d fail=%d not_evaluated=%d)",
+        "Behavioral evaluation overall: %s (pass=%d fail=%d not_evaluated=%d)",
         "PASS" if summary["passed"] else "FAIL",
         summary["counts"]["pass"],
         summary["counts"]["fail"],

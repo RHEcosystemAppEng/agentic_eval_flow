@@ -1,11 +1,11 @@
-# Semgrep ruleset for MCP Phase 1 "does not execute user-provided code".
+# Semgrep ruleset for MCP static evaluation "does not execute user-provided code".
 #
 # Flags dynamic / arbitrary code-execution sinks across the languages MCP
 # servers are commonly written in. Deliberately narrow (high-signal sinks only)
 # to keep false positives low and to run fully offline (no --config p/registry
 # network fetch). Extend per language as needed.
 #
-# Severity ERROR -> mapped to HIGH by scripts/mcp/scanners/phase1_no_user_code_scan.py.
+# Severity ERROR -> mapped to HIGH by scripts/mcp/scanners/static_eval_no_user_code_scan.py.
 rules:
   # ---- Python -------------------------------------------------------------
   - id: python-dynamic-exec

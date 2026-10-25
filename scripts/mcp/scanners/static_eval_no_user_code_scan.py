@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""MCP Phase 1 "does not execute user-provided code" scan.
+"""MCP static evaluation "does not execute user-provided code" scan.
 
 Runs semgrep with the bundled offline ruleset (rules/no_user_code.yml) over an
 MCP server repo and normalizes results into no-user-code-scan.json for
@@ -15,7 +15,7 @@ still honors a committed ``.semgrepignore``, so its mere presence is flagged as 
 high-severity finding - which fails a blocking gate - rather than being trusted.
 
 Usage:
-    python -m scripts.mcp.scanners.phase1_no_user_code_scan <target_dir> --reports-dir <dir>
+    python -m scripts.mcp.scanners.static_eval_no_user_code_scan <target_dir> --reports-dir <dir>
 """
 
 from __future__ import annotations
@@ -92,7 +92,7 @@ def normalize(semgrep_results: list[dict]) -> list[dict]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="MCP Phase 1 no-user-code-execution scan (semgrep)")
+    parser = argparse.ArgumentParser(description="MCP static evaluation no-user-code-execution scan (semgrep)")
     parser.add_argument("target_dir", type=Path, help="MCP server repo to scan")
     parser.add_argument(
         "--reports-dir",

@@ -1,27 +1,28 @@
 #!/usr/bin/env bash
-# Shared Phase 1 / Phase 2 gate wrapper, baked into the MCP eval image.
+# Shared gate wrapper for static/conformance evaluation, baked into the MCP eval image.
 #
-# Both phase gate steps do the same thing: run the phase's gate module, emit the
-# Tekton results (passed flag + report path) from the summary JSON, then exit
+# All evaluation gate steps do the same thing: run the evaluation's gate module, emit
+# the Tekton results (passed flag + report path) from the summary JSON, then exit
 # with the gate's own code so a failing gate fails the step. Keeping it here means
-# the two tasks stay consistent when this behavior changes.
+# the tasks stay consistent when this behavior changes.
 #
 # Usage:
 #   gate_wrapper.sh <gate-module> <reports-dir> <mode> <summary-json> \
 #               <passed-result-path> <report-rel> <report-path-result>
 set -uo pipefail
 
-GATE_MODULE="$1"        # e.g. scripts.mcp.runners.phase1_gate
-REPORTS_DIR="$2"        # absolute reports dir for this submission/phase
-MODE="$3"               # block | warn | disabled
-SUMMARY="$4"            # phaseN-summary.json written by the gate module
-PASSED_RESULT_PATH="$5" # Tekton result path for the passed flag
-REPORT_REL="$6"         # workspace-relative report path (result value)
-REPORT_PATH_RESULT="$7" # Tekton result path for the report path
+GATE_MODULE="$1"        # e.g. scripts.mcp.runners.static_eval_gate
+RESULTS_DIR="$2"        # absolute results dir for this submission/evaluation (input scans)
+REPORTS_DIR="$3"        # absolute reports dir for this submission/evaluation (output summaries)
+MODE="$4"               # block | warn | disabled
+SUMMARY="$5"            # *-eval-summary.json written by the gate module
+PASSED_RESULT_PATH="$6" # Tekton result path for the passed flag
+REPORT_REL="$7"         # workspace-relative report path (result value)
+REPORT_PATH_RESULT="$8" # Tekton result path for the report path
 
 # Never abort before writing results: capture the gate's exit code, emit the
 # Tekton results, then propagate the code so the step fails if a gate failed.
-python -m "$GATE_MODULE" --reports-dir "$REPORTS_DIR" --mode "$MODE"
+python -m "$GATE_MODULE" --results-dir "$RESULTS_DIR" --reports-dir "$REPORTS_DIR" --mode "$MODE"
 GATE_EXIT=$?
 
 # Emit the passed flag from the summary. A missing summary or one without a

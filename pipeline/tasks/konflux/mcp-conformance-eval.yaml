@@ -1,13 +1,13 @@
 apiVersion: tekton.dev/v1
 kind: Task
 metadata:
-  name: mcp-phase2-conformance
+  name: mcp-conformance-eval
   labels:
     app.kubernetes.io/name: abevalflow
     app.kubernetes.io/component: konflux
 spec:
   description: >-
-    MCP evaluation Phase 2 - deterministic contract/conformance (ADR Approach 4).
+    MCP conformance evaluation - deterministic contract/conformance (ADR Approach 4).
     Black-box, no LLM. Probes the deployed, running MCP server over Streamable
     HTTP for protocol/schema/HTTP conformance and operational limits, and
     consumes the checks Compass already collects as real facts (tool-name rules,
@@ -34,9 +34,6 @@ spec:
       type: string
       default: "8080"
       description: Port on which the MCP server listens
-    - name: submission-name
-      type: string
-      description: Name used for the report directory (reports/<submission-name>/).
     - name: mode
       type: string
       default: "block"
@@ -68,7 +65,7 @@ spec:
     - name: job-template
       type: string
       default: "/opt/templates/mcp-conformance-eval-job.yaml"
-      description: Path to the Kubernetes Job template for the Phase 2 conformance probe
+      description: Path to the Kubernetes Job template for the conformance probe
   workspaces:
     - name: source
       description: Workspace for the reports directory.
@@ -77,10 +74,10 @@ spec:
         Kubeconfig for the target cluster. Must contain a file named
         "kubeconfig".
   results:
-    - name: phase2-passed
-      description: Whether Phase 2 passed (no check FAILED in block mode).
+    - name: conformance-eval-passed
+      description: Whether conformance evaluation passed (no check FAILED in block mode).
     - name: report-path
-      description: Workspace-relative path to the Phase 2 reports directory.
+      description: Workspace-relative path to the conformance evaluation reports directory.
   steps:
     # ── Step 1: Prepare Job manifest from template ──
     - name: prepare-job
@@ -90,7 +87,7 @@ spec:
         - name: NAMESPACE
           value: $(params.namespace-name)
         - name: JOB_NAME
-          value: phase2-conformance-probe
+          value: conformance-eval-probe
         - name: IMAGE
           value: $(params.mcp-eval-image)
         - name: JOB_TIMEOUT
@@ -112,10 +109,10 @@ spec:
         envsubst \
           '${JOB_NAME} ${NAMESPACE} ${JOB_TIMEOUT} ${IMAGE} ${SERVER_URL} ${TIMEOUT} ${OPENAPI_URL} ${COMPASS_SECRET}' \
           < "$JOB_TEMPLATE" \
-          > "$(workspaces.source.path)/phase2-job.yaml"
+          > "$(workspaces.source.path)/conformance-eval-job.yaml"
 
         echo "Generated Job manifest:"
-        cat "$(workspaces.source.path)/phase2-job.yaml"
+        cat "$(workspaces.source.path)/conformance-eval-job.yaml"
 
     # ── Step 2: Apply Job and collect results ──
     - name: run-probe-job
@@ -126,11 +123,9 @@ spec:
         - name: NAMESPACE
           value: $(params.namespace-name)
         - name: JOB_NAME
-          value: phase2-conformance-probe
+          value: conformance-eval-probe
         - name: JOB_TIMEOUT
           value: $(params.job-timeout)
-        - name: SUBMISSION_NAME
-          value: $(params.submission-name)
         - name: COMPASS_SECRET
           value: $(params.compass-secret)
       script: |
@@ -149,14 +144,14 @@ spec:
         fi
 
         # Apply the Job
-        oc apply -f "$(workspaces.source.path)/phase2-job.yaml" --namespace="$NAMESPACE"
+        oc apply -f "$(workspaces.source.path)/conformance-eval-job.yaml" --namespace="$NAMESPACE"
 
-        RESULTS_DIR="$(workspaces.source.path)/reports/$SUBMISSION_NAME"
+        RESULTS_DIR="$(workspaces.source.path)/results"
         mkdir -p "$RESULTS_DIR"
         find "$RESULTS_DIR" -maxdepth 1 -type f -name '*-check.json' -delete
 
-        # Wait for the Job to finish, as in the Phase 3 task. Logs remain
-        # available after the pod completes, so no exec or file copy is needed.
+        # Wait for the Job to finish. Logs remain available after the pod
+        # completes, so no exec or file copy is needed.
         DEADLINE=$((SECONDS + JOB_TIMEOUT))
         JOB_STATE="running"
         while true; do
@@ -185,16 +180,8 @@ spec:
           sleep 10
         done
 
-        RAW_LOGS="$RESULTS_DIR/probe-logs.txt"
-        oc logs "job/$JOB_NAME" -n "$NAMESPACE" -c probe > "$RAW_LOGS" 2>&1
-
-        echo "======================================"
-        echo "=== RAW PROBE LOGS ==="
-        echo "======================================"
-        cat "$RAW_LOGS" || echo "Failed to read probe logs"
-        echo "======================================"
-        echo "=== END RAW PROBE LOGS ==="
-        echo "======================================"
+        RAW_LOGS="$RESULTS_DIR/$JOB_NAME-logs.txt"
+        oc logs "job/$JOB_NAME" -n "$NAMESPACE" > "$RAW_LOGS" 2>&1
 
         # Extract reports from logs: each ===REPORT_JSON:filename=== marker
         # is followed by a single-line JSON object.
@@ -222,45 +209,21 @@ spec:
       image: $(params.mcp-eval-image)
       imagePullPolicy: Always
       env:
-        - name: SUBMISSION_NAME
-          value: $(params.submission-name)
         - name: MODE
           value: $(params.mode)
       script: |
         #!/usr/bin/env bash
         set -euo pipefail
-        REPORTS_DIR="$(workspaces.source.path)/reports/$SUBMISSION_NAME"
+        RESULTS_DIR="$(workspaces.source.path)/results"
+        REPORTS_DIR="$(workspaces.source.path)/reports"
+        mkdir -p "$RESULTS_DIR" "$REPORTS_DIR"
 
         bash /opt/scripts/mcp/gate_wrapper.sh \
-          scripts.mcp.runners.phase2_gate \
+          scripts.mcp.runners.conformance_eval_gate \
+          "$RESULTS_DIR" \
           "$REPORTS_DIR" \
           "$MODE" \
-          "$REPORTS_DIR/phase2-summary.json" \
-          "$(results.phase2-passed.path)" \
-          "reports/$SUBMISSION_NAME" \
+          "$REPORTS_DIR/conformance-eval-summary.json" \
+          "$(results.conformance-eval-passed.path)" \
+          "reports/conformance-eval-summary.json" \
           "$(results.report-path.path)"
-
-    # ── Step 4: Print reports (temporary, for debugging) ──
-    - name: print-report
-      image: $(params.mcp-eval-image)
-      imagePullPolicy: Always
-      env:
-        - name: SUBMISSION_NAME
-          value: $(params.submission-name)
-      script: |
-        #!/usr/bin/env bash
-        set -euo pipefail
-        REPORTS_DIR="$(workspaces.source.path)/reports/$SUBMISSION_NAME"
-
-        echo "=== Phase 2 Summary ==="
-        cat "$REPORTS_DIR/phase2-summary.json" 2>/dev/null || echo "No summary found"
-
-        echo ""
-        echo "=== All Phase 2 Reports ==="
-        for report in "$REPORTS_DIR"/*.json; do
-          [ -f "$report" ] || continue
-          [ "$(basename "$report")" = "phase2-summary.json" ] && continue
-          echo "--- $(basename "$report") ---"
-          cat "$report"
-          echo ""
-        done

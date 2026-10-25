@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""MCP Phase 1 secrets scan.
+"""MCP static evaluation secrets scan.
 
 Runs gitleaks over an MCP server repository (static working-tree scan, no live
 verification) and normalizes its output into secrets-scan.json for SecretsGate.
 
 Usage:
-    python -m scripts.mcp.scanners.phase1_secrets_scan <target_dir> --reports-dir <dir>
+    python -m scripts.mcp.scanners.static_eval_secrets_scan <target_dir> --reports-dir <dir>
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ def normalize(gitleaks_findings: list[dict]) -> list[dict]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="MCP Phase 1 secrets scan (gitleaks)")
+    parser = argparse.ArgumentParser(description="MCP static evaluation secrets scan (gitleaks)")
     parser.add_argument("target_dir", type=Path, help="MCP server repo to scan")
     parser.add_argument(
         "--reports-dir",
