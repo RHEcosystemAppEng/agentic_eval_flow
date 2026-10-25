@@ -1,10 +1,10 @@
-"""Scanner I/O helpers for MCP Phase 1.
+"""Scanner I/O helpers for MCP static evaluation.
 
 Provides ``run_tool`` (shell out to a scanner CLI) and ``write_scan`` (write
 normalized scan JSON). Finding construction (``make_finding``) lives in
 ``abevalflow.mcp.types`` — scanners import it from there.
 
-All Phase 1 scanners emit the same JSON shape so the Phase 1 gates (which reuse
+All static evaluation scanners emit the same JSON shape so the static evaluation gates (which reuse
 ``SecurityGate.evaluate_scan_json``) can read them uniformly::
 
     {
@@ -39,7 +39,7 @@ def write_scan(
     """Write a normalized scan report to ``scan_path``.
 
     ``extra`` merges additional top-level metadata (e.g. a ``coverage`` block)
-    into the payload. The Phase 1 gates read only ``findings``, so extra keys are
+    into the payload. The static evaluation gates read only ``findings``, so extra keys are
     informational and never change pass/fail. The canonical keys always win, so a
     caller cannot accidentally clobber ``findings`` via ``extra``.
     """

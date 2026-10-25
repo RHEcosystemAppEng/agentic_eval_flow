@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""MCP Phase 1 license-compliance scan.
+"""MCP static evaluation license-compliance scan.
 
 Runs licensee to detect the repository's TOP-LEVEL declared license (from the
 LICENSE file and/or package manifests) and checks it against an approved-license
 allow-list. Emits license-scan.json for LicenseGate. Transitive/dependency
-license scanning is out of scope (ADR Phase 1).
+license scanning is out of scope for static evaluation.
 
 Usage:
-    python -m scripts.mcp.scanners.phase1_license_scan <target_dir> --reports-dir <dir> \
+    python -m scripts.mcp.scanners.static_eval_license_scan <target_dir> --reports-dir <dir> \
         [--allow apache-2.0 --allow mit ...]
 """
 
@@ -19,7 +19,7 @@ import logging
 import sys
 from pathlib import Path
 
-from abevalflow.mcp.gates.phase1_license_gate import DEFAULT_ALLOWED_LICENSES
+from abevalflow.mcp.gates.static_eval_license_gate import DEFAULT_ALLOWED_LICENSES
 from abevalflow.mcp.helpers import make_finding
 from scripts.mcp.scanners.helpers import run_tool, write_scan
 
@@ -74,7 +74,7 @@ def evaluate_licenses(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="MCP Phase 1 license scan (licensee)")
+    parser = argparse.ArgumentParser(description="MCP static evaluation license scan (licensee)")
     parser.add_argument("target_dir", type=Path, help="MCP server repo to scan")
     parser.add_argument(
         "--reports-dir",

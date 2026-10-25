@@ -1,4 +1,4 @@
-"""Tests for MCP Phase 2 (deterministic contract/conformance).
+"""Tests for MCP conformance evaluation (deterministic contract/conformance).
 
 Unit tests use synthetic JSON-RPC responses and a fake client, so they need no
 running server and are CI-safe. The integration test runs the real probe against
@@ -14,14 +14,14 @@ import os
 import pytest
 
 from abevalflow.gates.base import GateMode
-from abevalflow.mcp.checks import phase2_conformance_checks as phase2_probe
-from abevalflow.mcp.gates import PHASE2_CHECKS, Phase2Gate, run_phase2
+from abevalflow.mcp.checks import conformance_eval_checks as conformance_probe
+from abevalflow.mcp.gates import CONFORMANCE_EVAL_CHECKS, ConformanceEvalGate, run_conformance_eval
 from abevalflow.mcp.helpers import write_check_result
 from abevalflow.mcp.mcp_client import RpcResponse, _parse_sse_messages, _select_response
 from abevalflow.mcp.types import STATUS_FAIL, STATUS_NOT_EVALUATED, STATUS_PASS, CheckOutcome
 from abevalflow.schemas import GatePolicy
-from scripts.mcp.probes import phase2_compass_probe as compass_fetch
-from scripts.mcp.runners import phase2_gate as run_phase2_gates
+from scripts.mcp.probes import conformance_eval_compass_probe as compass_fetch
+from scripts.mcp.runners import conformance_eval_gate as run_conformance_eval_gates
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -148,9 +148,9 @@ def _init_ok():
 
 
 def test_http_support_pass_and_fail():
-    assert phase2_probe.check_http_support(None, _init_ok()).status == STATUS_PASS
+    assert conformance_probe.check_http_support(None, _init_ok()).status == STATUS_PASS
     bad = _rpc(None, status=500, content_type="text/plain")
-    out = phase2_probe.check_http_support(None, bad)
+    out = conformance_probe.check_http_support(None, bad)
     assert out.status == STATUS_FAIL
     assert len(out.findings) == 2  # bad status + unparseable body
 
@@ -162,7 +162,7 @@ def test_protocol_compliance_pass():
             "tools/list": _rpc({"jsonrpc": "2.0", "id": 91, "error": {"code": -32600, "message": "bad"}}),
         }
     )
-    out = phase2_probe.check_protocol_compliance(client, _init_ok())
+    out = conformance_probe.check_protocol_compliance(client, _init_ok())
     assert out.status == STATUS_PASS, out.findings
 
 
@@ -174,7 +174,7 @@ def test_protocol_compliance_flags_missing_result_and_bad_id():
             "tools/list": _rpc({"jsonrpc": "2.0", "id": 91, "error": {"code": -32600}}),
         }
     )
-    out = phase2_probe.check_protocol_compliance(client, init)
+    out = conformance_probe.check_protocol_compliance(client, init)
     assert out.status == STATUS_FAIL
     rule_ids = {f["rule_id"] for f in out.findings}
     assert "id-echo" in rule_ids
@@ -192,21 +192,21 @@ def test_protocol_compliance_disconnect_keeps_collected_findings():
             raise MCPConnectionError("connection reset")
 
     bad_init = _rpc({"jsonrpc": "2.0", "id": 999, "result": {}})  # wrong id + missing fields
-    out = phase2_probe.check_protocol_compliance(DroppingClient(), bad_init)
+    out = conformance_probe.check_protocol_compliance(DroppingClient(), bad_init)
     assert out.status == STATUS_FAIL
     assert out.findings  # init findings preserved through the disconnect
 
 
 def test_schema_conformance_pass_and_fail():
     good = _rpc({"result": {"tools": [{"name": "a", "inputSchema": {"type": "object", "properties": {}}}]}})
-    assert phase2_probe.check_schema_conformance(None, good).status == STATUS_PASS
+    assert conformance_probe.check_schema_conformance(None, good).status == STATUS_PASS
 
     bad = _rpc({"result": {"tools": [{"name": "b"}]}})  # no inputSchema
-    out = phase2_probe.check_schema_conformance(None, bad)
+    out = conformance_probe.check_schema_conformance(None, bad)
     assert out.status == STATUS_FAIL
 
     empty = _rpc({"result": {"tools": []}})
-    assert phase2_probe.check_schema_conformance(None, empty).status == STATUS_NOT_EVALUATED
+    assert conformance_probe.check_schema_conformance(None, empty).status == STATUS_NOT_EVALUATED
 
 
 def test_schema_conformance_fails_on_broken_tools_list():
@@ -214,12 +214,12 @@ def test_schema_conformance_fails_on_broken_tools_list():
     # absence of tools: it must FAIL (not not_evaluated) so a broken endpoint cannot
     # slip through schema validation.
     errored = _rpc({"jsonrpc": "2.0", "id": 2, "error": {"code": -32603, "message": "boom"}})
-    out = phase2_probe.check_schema_conformance(None, errored)
+    out = conformance_probe.check_schema_conformance(None, errored)
     assert out.status == STATUS_FAIL
     assert out.findings[0]["rule_id"] == "tools-list-malformed"
 
     malformed = _rpc({"jsonrpc": "2.0", "id": 2, "result": {"tools": "not-a-list"}})
-    assert phase2_probe.check_schema_conformance(None, malformed).status == STATUS_FAIL
+    assert conformance_probe.check_schema_conformance(None, malformed).status == STATUS_FAIL
 
 
 # ---------------------------------------------------------------------------
@@ -254,7 +254,7 @@ def test_openapi_pass_from_well_known_path():
         "http://srv:8080/mcp",
         {"http://srv:8080/openapi.json": (200, "application/json", _VALID_OPENAPI)},
     )
-    out = phase2_probe.check_openapi_conformance(client, None)
+    out = conformance_probe.check_openapi_conformance(client, None)
     assert out.status == STATUS_PASS
 
 
@@ -262,7 +262,7 @@ def test_openapi_pass_from_explicit_url():
     client = _OpenApiClient(
         "http://srv:8080/mcp", {"http://host/custom.json": (200, "application/json", _VALID_OPENAPI)}
     )
-    out = phase2_probe.check_openapi_conformance(client, None, openapi_url="http://host/custom.json")
+    out = conformance_probe.check_openapi_conformance(client, None, openapi_url="http://host/custom.json")
     assert out.status == STATUS_PASS
 
 
@@ -271,7 +271,7 @@ def test_openapi_pass_from_mcp_native_contract():
     # equivalent satisfies "OpenAPI (or equivalent)" per the ADR.
     client = _OpenApiClient("http://srv:8080/mcp", {})  # all well-known paths unreachable
     tools = _rpc({"result": {"tools": [{"name": "a", "inputSchema": {"type": "object"}}]}})
-    out = phase2_probe.check_openapi_conformance(client, tools)
+    out = conformance_probe.check_openapi_conformance(client, tools)
     assert out.status == STATUS_PASS
     assert "MCP-native equivalent" in out.reason
 
@@ -280,7 +280,7 @@ def test_openapi_fail_when_neither_rest_nor_mcp():
     # No REST contract AND no usable MCP tools/list -> no contract at all.
     client = _OpenApiClient("http://srv:8080/mcp", {})
     empty_tools = _rpc({"result": {"tools": []}})
-    out = phase2_probe.check_openapi_conformance(client, empty_tools)
+    out = conformance_probe.check_openapi_conformance(client, empty_tools)
     assert out.status == STATUS_FAIL
     assert out.findings[0]["rule_id"] == "openapi-missing"
 
@@ -288,7 +288,7 @@ def test_openapi_fail_when_neither_rest_nor_mcp():
 def test_openapi_fail_when_absent_and_no_tools_resp():
     # No REST contract AND tools_resp is None -> FAIL.
     client = _OpenApiClient("http://srv:8080/mcp", {})
-    out = phase2_probe.check_openapi_conformance(client, None)
+    out = conformance_probe.check_openapi_conformance(client, None)
     assert out.status == STATUS_FAIL
     assert out.findings[0]["rule_id"] == "openapi-missing"
 
@@ -299,7 +299,7 @@ def test_openapi_skips_unparseable_well_known_path():
     client = _OpenApiClient(
         "http://srv:8080/mcp", {"http://srv:8080/openapi.json": (200, "application/json", "{ not json")}
     )
-    out = phase2_probe.check_openapi_conformance(client, None)
+    out = conformance_probe.check_openapi_conformance(client, None)
     assert out.status == STATUS_FAIL
     assert out.findings[0]["rule_id"] == "openapi-missing"
 
@@ -307,7 +307,7 @@ def test_openapi_skips_unparseable_well_known_path():
 def test_openapi_explicit_url_fails_when_unparseable():
     # An explicit --openapi-url that is unparseable is a real FAIL (the operator pointed at it).
     client = _OpenApiClient("http://srv:8080/mcp", {"http://host/api.json": (200, "application/json", "{ not json")})
-    out = phase2_probe.check_openapi_conformance(client, None, openapi_url="http://host/api.json")
+    out = conformance_probe.check_openapi_conformance(client, None, openapi_url="http://host/api.json")
     assert out.status == STATUS_FAIL
     assert out.findings[0]["rule_id"] == "openapi-unparseable"
 
@@ -316,7 +316,7 @@ def test_openapi_skips_non_openapi3_well_known_path():
     # A Swagger 2.0 doc at a well-known path is skipped; falls through to missing.
     doc = json.dumps({"swagger": "2.0", "info": {}, "paths": {}})
     client = _OpenApiClient("http://srv:8080/mcp", {"http://srv:8080/openapi.json": (200, "application/json", doc)})
-    out = phase2_probe.check_openapi_conformance(client, None)
+    out = conformance_probe.check_openapi_conformance(client, None)
     assert out.status == STATUS_FAIL
     assert out.findings[0]["rule_id"] == "openapi-missing"
 
@@ -324,7 +324,7 @@ def test_openapi_skips_non_openapi3_well_known_path():
 def test_openapi_explicit_url_fails_when_not_openapi3():
     doc = json.dumps({"swagger": "2.0", "info": {}, "paths": {}})
     client = _OpenApiClient("http://srv:8080/mcp", {"http://host/api.json": (200, "application/json", doc)})
-    out = phase2_probe.check_openapi_conformance(client, None, openapi_url="http://host/api.json")
+    out = conformance_probe.check_openapi_conformance(client, None, openapi_url="http://host/api.json")
     assert out.status == STATUS_FAIL
     assert out.findings[0]["rule_id"] == "openapi-invalid"
 
@@ -334,34 +334,34 @@ def test_schema_conformance_output_schema_when_present():
     both = _rpc(
         {"result": {"tools": [{"name": "a", "inputSchema": {"type": "object"}, "outputSchema": {"type": "object"}}]}}
     )
-    assert phase2_probe.check_schema_conformance(None, both).status == STATUS_PASS
+    assert conformance_probe.check_schema_conformance(None, both).status == STATUS_PASS
 
     # Present-but-malformed output schema -> fail (optional, but must be well-formed when declared).
     bad_out = _rpc({"result": {"tools": [{"name": "b", "inputSchema": {"type": "object"}, "outputSchema": "nope"}]}})
-    out = phase2_probe.check_schema_conformance(None, bad_out)
+    out = conformance_probe.check_schema_conformance(None, bad_out)
     assert out.status == STATUS_FAIL
     assert out.findings[0]["rule_id"] == "output-schema-shape"
 
     # No output schema at all -> not a violation (optional in the MCP spec).
     no_out = _rpc({"result": {"tools": [{"name": "c", "inputSchema": {"type": "object"}}]}})
-    assert phase2_probe.check_schema_conformance(None, no_out).status == STATUS_PASS
+    assert conformance_probe.check_schema_conformance(None, no_out).status == STATUS_PASS
 
 
 def test_schema_is_object_rejects_conflicting_type_and_bad_properties():
     # Declared type conflicts with object -> not an object schema.
-    assert phase2_probe._schema_is_object({"type": "array", "properties": {}}) is False
+    assert conformance_probe._schema_is_object({"type": "array", "properties": {}}) is False
     # type object but properties is not a mapping -> malformed.
-    assert phase2_probe._schema_is_object({"type": "object", "properties": []}) is False
+    assert conformance_probe._schema_is_object({"type": "object", "properties": []}) is False
     # No type but an object keyword present -> accepted.
-    assert phase2_probe._schema_is_object({"properties": {}}) is True
+    assert conformance_probe._schema_is_object({"properties": {}}) is True
     # No type and no object keyword -> not an object schema.
-    assert phase2_probe._schema_is_object({"description": "x"}) is False
+    assert conformance_probe._schema_is_object({"description": "x"}) is False
     # Not a dict at all.
-    assert phase2_probe._schema_is_object("nope") is False
+    assert conformance_probe._schema_is_object("nope") is False
     # JSON Schema allows a type array; one that permits "object" is accepted.
-    assert phase2_probe._schema_is_object({"type": ["object", "null"], "properties": {}}) is True
+    assert conformance_probe._schema_is_object({"type": ["object", "null"], "properties": {}}) is True
     # A type array that does NOT include "object" is rejected.
-    assert phase2_probe._schema_is_object({"type": ["array", "null"]}) is False
+    assert conformance_probe._schema_is_object({"type": ["array", "null"]}) is False
 
 
 def test_protocol_compliance_flags_non_object_error():
@@ -372,7 +372,7 @@ def test_protocol_compliance_flags_non_object_error():
             "tools/list": _rpc({"jsonrpc": "2.0", "id": 91, "error": {"code": -32600}}),
         }
     )
-    out = phase2_probe.check_protocol_compliance(client, _init_ok())
+    out = conformance_probe.check_protocol_compliance(client, _init_ok())
     assert out.status == STATUS_FAIL
     assert "error-not-object" in {f["rule_id"] for f in out.findings}
 
@@ -380,17 +380,17 @@ def test_protocol_compliance_flags_non_object_error():
 def test_tool_annotations_absent_is_not_evaluated():
     # Annotations are optional in the MCP spec: none declared -> not_evaluated.
     resp = _rpc({"result": {"tools": [{"name": "a"}, {"name": "b"}]}})
-    assert phase2_probe.check_tool_annotations(None, resp).status == STATUS_NOT_EVALUATED
+    assert conformance_probe.check_tool_annotations(None, resp).status == STATUS_NOT_EVALUATED
 
 
 def test_tool_annotations_wellformed_passes():
     resp = _rpc({"result": {"tools": [{"name": "a", "annotations": {"readOnlyHint": True}}, {"name": "b"}]}})
-    assert phase2_probe.check_tool_annotations(None, resp).status == STATUS_PASS
+    assert conformance_probe.check_tool_annotations(None, resp).status == STATUS_PASS
 
 
 def test_tool_annotations_malformed_fails():
     resp = _rpc({"result": {"tools": [{"name": "a", "annotations": {"readOnlyHint": "yes"}}]}})
-    out = phase2_probe.check_tool_annotations(None, resp)
+    out = conformance_probe.check_tool_annotations(None, resp)
     assert out.status == STATUS_FAIL
     assert out.findings[0]["rule_id"] == "annotation-malformed"
 
@@ -400,7 +400,7 @@ def test_rate_limiting_pass_on_429():
         def list_tools(self, request_id=0):
             return _rpc({}, status=429 if request_id == 1005 else 200)
 
-    assert phase2_probe.check_rate_limiting(Burst(), burst=10).status == STATUS_PASS
+    assert conformance_probe.check_rate_limiting(Burst(), burst=10).status == STATUS_PASS
 
 
 def test_rate_limiting_not_evaluated_without_throttle():
@@ -408,13 +408,13 @@ def test_rate_limiting_not_evaluated_without_throttle():
         def list_tools(self, request_id=0):
             return _rpc({}, status=200)
 
-    assert phase2_probe.check_rate_limiting(Burst(), burst=5).status == STATUS_NOT_EVALUATED
+    assert conformance_probe.check_rate_limiting(Burst(), burst=5).status == STATUS_NOT_EVALUATED
 
 
 def test_deferred_checks_are_not_evaluated():
-    # Behavioral checks deferred to Phase 3 (can't be verified black-box in Phase 2).
-    assert phase2_probe.check_response_size_limit(None).status == STATUS_NOT_EVALUATED
-    assert phase2_probe.check_mandatory_timeouts(None).status == STATUS_NOT_EVALUATED
+    # Behavioral checks deferred to behavioral evaluation (can't be verified black-box in conformance eval).
+    assert conformance_probe.check_response_size_limit(None).status == STATUS_NOT_EVALUATED
+    assert conformance_probe.check_mandatory_timeouts(None).status == STATUS_NOT_EVALUATED
 
 
 # ---------------------------------------------------------------------------
@@ -474,7 +474,7 @@ def test_map_facts_oauth_explicit_false_fails_only_for_false():
 
 
 def test_map_results_pass_and_fail():
-    from abevalflow.mcp.checks.phase2_compass_checks import map_results
+    from abevalflow.mcp.checks.conformance_eval_compass_checks import map_results
 
     results = [
         {"checkId": "mcp-tool-schema-check", "state": "passed", "details": {"notes": {"data": "All names valid"}}},
@@ -487,7 +487,7 @@ def test_map_results_pass_and_fail():
 
 
 def test_map_results_missing_check_is_not_evaluated():
-    from abevalflow.mcp.checks.phase2_compass_checks import map_results
+    from abevalflow.mcp.checks.conformance_eval_compass_checks import map_results
 
     # Empty results — entity not registered yet
     by_check = {o.check: o for o in map_results([])}
@@ -496,7 +496,7 @@ def test_map_results_missing_check_is_not_evaluated():
 
 
 def test_map_results_error_state_is_not_evaluated():
-    from abevalflow.mcp.checks.phase2_compass_checks import map_results
+    from abevalflow.mcp.checks.conformance_eval_compass_checks import map_results
 
     results = [
         {"checkId": "mcp-tool-schema-check", "state": "ERROR", "details": {}},
@@ -544,9 +544,9 @@ def test_gate_pass_fail_not_evaluated(tmp_path):
     # remaining checks have no file -> not_evaluated, must not fail
 
     policy = GatePolicy(default_mode=GateMode.BLOCK)
-    results = {r.get_policy_key(): r for r in run_phase2(tmp_path, policy)}
+    results = {r.get_policy_key(): r for r in run_conformance_eval(tmp_path, policy)}
 
-    assert len(results) == len(PHASE2_CHECKS)
+    assert len(results) == len(CONFORMANCE_EVAL_CHECKS)
     assert results["http-support"].passed is True
     assert results["protocol-compliance"].passed is False  # fail in block mode
     assert results["openapi-conformance"].passed is True  # not_evaluated never penalized
@@ -555,7 +555,7 @@ def test_gate_pass_fail_not_evaluated(tmp_path):
 
 def test_corrupt_result_file_blocks_only_in_block_mode(tmp_path):
     (tmp_path / "http-support-check.json").write_text("{ not valid json ")
-    gate = Phase2Gate("http-support")
+    gate = ConformanceEvalGate("http-support")
     warn = gate.evaluate(tmp_path, GatePolicy(default_mode=GateMode.WARN))
     assert warn.details["status"] == STATUS_FAIL
     assert warn.passed is True  # warn never blocks, even on a corrupt file
@@ -566,29 +566,51 @@ def test_corrupt_result_file_blocks_only_in_block_mode(tmp_path):
 def test_fail_without_findings_scores_zero(tmp_path):
     # A bare fail (no findings) must not report a perfect score.
     write_check_result(tmp_path, CheckOutcome("http-support", STATUS_FAIL, "boom", findings=[]))
-    res = Phase2Gate("http-support").evaluate(tmp_path, GatePolicy(default_mode=GateMode.BLOCK))
+    res = ConformanceEvalGate("http-support").evaluate(tmp_path, GatePolicy(default_mode=GateMode.BLOCK))
     assert res.passed is False
     assert res.score == 0.0
 
 
 def test_not_evaluated_does_not_fail_runner(tmp_path, monkeypatch):
     _write(tmp_path, "http-support", STATUS_PASS)
-    for check in PHASE2_CHECKS:
+    for check in CONFORMANCE_EVAL_CHECKS:
         if check != "http-support":
             _write(tmp_path, check, STATUS_NOT_EVALUATED)
-    monkeypatch.setattr("sys.argv", ["run_phase2_gates", "--reports-dir", str(tmp_path), "--mode", "block"])
-    assert run_phase2_gates.main() == 0
-    summary = json.loads((tmp_path / "phase2-summary.json").read_text())
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "run_conformance_eval_gates",
+            "--results-dir",
+            str(tmp_path),
+            "--reports-dir",
+            str(tmp_path),
+            "--mode",
+            "block",
+        ],
+    )
+    assert run_conformance_eval_gates.main() == 0
+    summary = json.loads((tmp_path / "conformance-eval-summary.json").read_text())
     assert summary["passed"] is True
-    assert summary["counts"]["not_evaluated"] == len(PHASE2_CHECKS) - 1
+    assert summary["counts"]["not_evaluated"] == len(CONFORMANCE_EVAL_CHECKS) - 1
 
 
 def test_real_fail_exits_nonzero_in_block(tmp_path, monkeypatch):
-    for check in PHASE2_CHECKS:
+    for check in CONFORMANCE_EVAL_CHECKS:
         _write(tmp_path, check, STATUS_PASS)
     _write(tmp_path, "protocol-compliance", STATUS_FAIL, [{"severity": "high", "message": "m", "rule_id": "r"}])
-    monkeypatch.setattr("sys.argv", ["run_phase2_gates", "--reports-dir", str(tmp_path), "--mode", "block"])
-    assert run_phase2_gates.main() == 1
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "run_conformance_eval_gates",
+            "--results-dir",
+            str(tmp_path),
+            "--reports-dir",
+            str(tmp_path),
+            "--mode",
+            "block",
+        ],
+    )
+    assert run_conformance_eval_gates.main() == 1
 
 
 # ---------------------------------------------------------------------------
@@ -602,7 +624,7 @@ _SERVER_URL = os.environ.get("MCP_TEST_SERVER_URL")
 def test_probe_against_live_server(tmp_path):
     # Smoke against a real server, e.g. generic-mock-mcp-server run with
     # --transport streamable-http on :8080 (endpoint http://localhost:8080/mcp).
-    outcomes = phase2_probe.probe_all(_SERVER_URL, timeout=10.0)
+    outcomes = conformance_probe.probe_all(_SERVER_URL, timeout=10.0)
     by_check = {o.check: o for o in outcomes}
     assert by_check["http-support"].status == STATUS_PASS
     assert by_check["protocol-compliance"].status in (STATUS_PASS, STATUS_FAIL)

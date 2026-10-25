@@ -1,4 +1,4 @@
-"""Tests for MCP Phase 1 static / build-time checks.
+"""Tests for MCP static evaluation / build-time checks.
 
 Two layers:
 
@@ -23,12 +23,12 @@ from abevalflow.mcp.gates import (
     LicenseGate,
     NoUserCodeGate,
     SecretsGate,
-    run_phase1,
+    run_static_eval,
 )
 from abevalflow.schemas import GateMode, GatePolicy
-from scripts.mcp.scanners import phase1_license_scan as license_scan
-from scripts.mcp.scanners import phase1_no_user_code_scan as no_user_code_scan
-from scripts.mcp.scanners import phase1_secrets_scan as secrets_scan
+from scripts.mcp.scanners import static_eval_license_scan as license_scan
+from scripts.mcp.scanners import static_eval_no_user_code_scan as no_user_code_scan
+from scripts.mcp.scanners import static_eval_secrets_scan as secrets_scan
 
 BLOCK = GatePolicy(default_mode=GateMode.BLOCK)
 
@@ -108,21 +108,21 @@ def test_secrets_gate_passes_when_clean(tmp_path):
     assert result.score == 1.0
 
 
-def test_run_phase1_all_clean_passes(tmp_path):
+def test_run_static_eval_all_clean_passes(tmp_path):
     _write(tmp_path, "secrets-scan.json", [])
     _write(tmp_path, "no-user-code-scan.json", [])
     _write(tmp_path, "license-scan.json", [])
-    results = run_phase1(tmp_path, BLOCK)
+    results = run_static_eval(tmp_path, BLOCK)
     assert len(results) == 3
     assert all(r.passed for r in results)
     assert {r.policy_key for r in results} == {"mcp-secrets", "mcp-no-user-code", "mcp-license"}
 
 
-def test_run_phase1_one_dirty_fails_that_gate(tmp_path):
+def test_run_static_eval_one_dirty_fails_that_gate(tmp_path):
     _write(tmp_path, "secrets-scan.json", [])
     _write(tmp_path, "no-user-code-scan.json", [{"severity": "high", "message": "eval", "rule_id": "x"}])
     _write(tmp_path, "license-scan.json", [])
-    results = {r.policy_key: r for r in run_phase1(tmp_path, BLOCK)}
+    results = {r.policy_key: r for r in run_static_eval(tmp_path, BLOCK)}
     assert results["mcp-secrets"].passed is True
     assert results["mcp-no-user-code"].passed is False
     assert results["mcp-license"].passed is True

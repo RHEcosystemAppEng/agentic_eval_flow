@@ -1,4 +1,4 @@
-"""Phase 1 no-user-code-execution gate.
+"""Static evaluation no-user-code-execution gate.
 
 Reads no-user-code-scan.json produced by scripts/mcp/run_no_user_code_scan.py (a
 normalized semgrep run) and converts it into a standardized GateResult. Fails
@@ -6,7 +6,7 @@ in block mode when any HIGH/CRITICAL dynamic/arbitrary-execution pattern is
 present (e.g. eval/exec, os.system, subprocess shell=True, Function(),
 Runtime.exec).
 
-ADR Phase 1: "Does not execute user-provided code - static analysis of the
+ADR static evaluation: "Does not execute user-provided code - static analysis of the
 artifact for dynamic/arbitrary code execution."
 """
 

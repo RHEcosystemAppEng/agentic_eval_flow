@@ -1,0 +1,11 @@
+# MCP Server Connection Configuration
+#
+# The MCP_URL environment variable is injected at runtime by the
+# mcp-behavioral-eval pipeline task, constructed from the service
+# name and port of the deployed MCP server.
+
+mcpServers:
+  mcp-server-under-test:
+    type: http
+    url: ${MCP_URL}/mcp
+    enableAllTools: true

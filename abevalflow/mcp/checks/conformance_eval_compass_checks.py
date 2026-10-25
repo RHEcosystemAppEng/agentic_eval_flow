@@ -1,9 +1,9 @@
-"""Phase 2 Compass-consumed check mapping.
+"""Conformance evaluation Compass-consumed check mapping.
 
-A few Phase 2 checks are already collected by Compass as real automated facts, so
-the pipeline consumes them rather than re-probing (avoids duplicating what
-Compass does well). This module maps those Compass SoundCheck facts into the same
-three-state ``CheckOutcome`` the Phase 2 gates read.
+A few conformance evaluation checks are already collected by Compass as real
+automated facts, so the pipeline consumes them rather than re-probing (avoids
+duplicating what Compass does well). This module maps those Compass SoundCheck
+facts into the same three-state ``CheckOutcome`` the conformance evaluation gates read.
 
 Consumed checks and their source facts::
 
@@ -26,7 +26,7 @@ Two consumption modes:
   results from ``GET /api/soundcheck/results``.
 
 The CLI entry point that reads facts from a file or fetches live results from
-the SoundCheck API lives in ``scripts/mcp/probes/phase2_compass_probe.py``.
+the SoundCheck API lives in ``scripts/mcp/probes/conformance_eval_compass_probe.py``.
 """
 
 from __future__ import annotations
@@ -48,8 +48,8 @@ FACT_SECURITY = "mcp:default/security"
 CHECK_TOOL_NAME = "mcp-tool-schema-check"
 CHECK_OAUTH = "mcp-oauth-scope-match"
 
-# Maps a SoundCheck check ID to the Phase 2 check name our gates read.
-_CHECK_ID_TO_PHASE2 = {
+# Maps a SoundCheck check ID to the conformance evaluation check name our gates read.
+_CHECK_ID_TO_CONFORMANCE_EVAL = {
     CHECK_TOOL_NAME: "tool-name-rules",
     CHECK_OAUTH: "oauth-catalog-match",
 }
@@ -76,7 +76,7 @@ def _bool_outcome(check: str, value: Any, ok_reason: str, bad_reason: str) -> Ch
 
 
 def map_facts(facts: dict[str, Any]) -> list[CheckOutcome]:
-    """Map Compass facts to the consumed Phase 2 check outcomes."""
+    """Map Compass facts to the consumed conformance evaluation check outcomes."""
     outcomes: list[CheckOutcome] = []
 
     outcomes.append(
@@ -159,7 +159,7 @@ def map_facts(facts: dict[str, Any]) -> list[CheckOutcome]:
 
 
 def map_results(results: list[dict]) -> list[CheckOutcome]:
-    """Map SoundCheck API check results to Phase 2 check outcomes.
+    """Map SoundCheck API check results to conformance evaluation check outcomes.
 
     ``results`` is the ``results`` array from
     ``GET /api/soundcheck/results?entityRef=...&checks=...``.  Each element has
@@ -171,12 +171,12 @@ def map_results(results: list[dict]) -> list[CheckOutcome]:
     by_check_id = {r["checkId"]: r for r in results if isinstance(r, dict) and "checkId" in r}
     outcomes: list[CheckOutcome] = []
 
-    for check_id, phase2_name in _CHECK_ID_TO_PHASE2.items():
+    for check_id, check_name in _CHECK_ID_TO_CONFORMANCE_EVAL.items():
         result = by_check_id.get(check_id)
         if result is None:
             outcomes.append(
                 CheckOutcome(
-                    phase2_name,
+                    check_name,
                     STATUS_NOT_EVALUATED,
                     f"No Compass result for {check_id}; entity may not be registered yet.",
                     source="compass",
@@ -196,25 +196,23 @@ def map_results(results: list[dict]) -> list[CheckOutcome]:
 
         if state == "passed":
             outcomes.append(
-                CheckOutcome(phase2_name, STATUS_PASS, notes or f"Compass check {check_id} passed.", source="compass")
+                CheckOutcome(check_name, STATUS_PASS, notes or f"Compass check {check_id} passed.", source="compass")
             )
         elif state == "failed":
             outcomes.append(
                 CheckOutcome(
-                    phase2_name,
+                    check_name,
                     STATUS_FAIL,
                     notes or f"Compass check {check_id} failed.",
                     source="compass",
-                    findings=[
-                        make_finding(severity="high", message=notes or f"{check_id} failed", rule_id=phase2_name)
-                    ],
+                    findings=[make_finding(severity="high", message=notes or f"{check_id} failed", rule_id=check_name)],
                 )
             )
         else:
             # "error", "not-applicable", or unknown state
             outcomes.append(
                 CheckOutcome(
-                    phase2_name,
+                    check_name,
                     STATUS_NOT_EVALUATED,
                     f"Compass check {check_id} returned state '{state}': {notes}".strip(),
                     source="compass",

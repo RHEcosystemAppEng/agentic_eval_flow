@@ -5,30 +5,31 @@ Thin CLI entry points for the MCP-server evaluation pipeline. These are the
 step as `python -m scripts.mcp.<subpackage>.<name>`. They shell out to external
 tools, invoke evaluation logic from `abevalflow.mcp`, and write result JSON.
 
-## Structure (organized by role, phase-prefixed)
+## Structure (organized by role and evaluation type)
 
 | Directory | Role | What it does |
 |-----------|------|-------------|
-| `scanners/` | **Scan** source code | Shell out to external tools (gitleaks, semgrep, licensee) and write normalized scan JSON. Phase 1 only — no running server needed. |
-| `runners/` | **Run** gate evaluations | Thin CLIs that invoke the gate logic from `abevalflow.mcp.gates` and write summary JSON. Both phases. |
-| `probes/` | **Probe** the live server | Connect to the running MCP server (or Compass API) and write per-check result JSON. Phase 2 only — server must be running. |
+| `scanners/` | **Scan** source code | Shell out to external tools (gitleaks, semgrep, licensee) and write normalized scan JSON. Static evaluation only — no running server needed. |
+| `runners/` | **Run** gate evaluations | Thin CLIs that invoke the gate logic from `abevalflow.mcp.gates` and write summary JSON. All evaluation types. |
+| `probes/` | **Probe** the live server | Connect to the running MCP server (or Compass API) and write per-check result JSON. Conformance evaluation only — server must be running. |
 | `rules/` | **Bundled rulesets** | Offline semgrep rules for the no-user-code scan. Not a runner — consumed by the scanner. |
 
-### `scanners/` — Phase 1 scanner runners
+### `scanners/` — Static evaluation scanner runners
 
 | File | What it does | Emits |
 |------|-------------|-------|
-| `phase1_secrets_scan.py` | Shells out to gitleaks | `secrets-scan.json` |
-| `phase1_no_user_code_scan.py` | Shells out to semgrep (bundled offline ruleset) | `no-user-code-scan.json` |
-| `phase1_license_scan.py` | Shells out to licensee (top-level license only) | `license-scan.json` |
+| `static_eval_secrets_scan.py` | Shells out to gitleaks | `secrets-scan.json` |
+| `static_eval_no_user_code_scan.py` | Shells out to semgrep (bundled offline ruleset) | `no-user-code-scan.json` |
+| `static_eval_license_scan.py` | Shells out to licensee (top-level license only) | `license-scan.json` |
 | `helpers.py` | `run_tool()` + `write_scan()` — scanner I/O helpers | — |
 
 ### `runners/` — gate evaluation runners
 
 | File | What it does | Emits |
 |------|-------------|-------|
-| `phase1_gate.py` | Calls `abevalflow.mcp.gates.run_phase1()` | `phase1-summary.json` |
-| `phase2_gate.py` | Calls `abevalflow.mcp.gates.run_phase2()` | `phase2-summary.json` |
+| `static_eval_gate.py` | Calls `abevalflow.mcp.gates.run_static_eval()` | `static-eval-summary.json` |
+| `conformance_eval_gate.py` | Calls `abevalflow.mcp.gates.run_conformance_eval()` | `conformance-eval-summary.json` |
+| `behavioral_eval_summary.py` | Maps mcpchecker results to unified summary | `behavioral-eval-summary.json` |
 
 ### `gate_wrapper.sh` — shared Tekton gate wrapper
 
@@ -36,18 +37,18 @@ Lives at `scripts/mcp/gate_wrapper.sh` (flat, following repo convention for
 utility scripts). Both Tekton gate steps call it to run the gate module, emit
 Tekton results (`passed` flag + report path), and propagate the exit code.
 
-### `probes/` — Phase 2 probe runners
+### `probes/` — Conformance evaluation probe runners
 
 | File | What it does | Emits |
 |------|-------------|-------|
-| `phase2_conformance_probe.py` | Creates MCPClient, calls `probe_all()` | per-check `<name>-check.json` |
-| `phase2_compass_probe.py` | Fetches Compass results (live API or file mode) | per-check `<name>-check.json` |
+| `conformance_eval_probe.py` | Creates MCPClient, calls `probe_all()` | per-check `<name>-check.json` |
+| `conformance_eval_compass_probe.py` | Fetches Compass results (live API or file mode) | per-check `<name>-check.json` |
 
 ### `rules/` — bundled offline rulesets
 
 | File | Used by |
 |------|---------|
-| `no_user_code.yml` | semgrep (Phase 1 no-user-code scan) |
+| `no_user_code.yml` | semgrep (static evaluation no-user-code scan) |
 
 ## Two-package split
 
@@ -60,19 +61,19 @@ The contract between them: **JSON files on disk.** Writers produce them, readers
 
 ## Running locally
 
-`run_mcp_eval.sh` is the local dev/testing runner. It mirrors what the two
-Tekton Tasks do, so a local run exercises the same code paths as a cluster run.
+`run_mcp_eval.sh` is the local dev/testing runner. It mirrors what the Tekton
+Tasks do, so a local run exercises the same code paths as a cluster run.
 
 ```bash
-# Both phases — scan source + probe running server:
+# Both evaluations — scan source + probe running server:
 bash scripts/mcp/run_mcp_eval.sh \
     --repo /path/to/mcp-server-source \
     --server-url http://localhost:8080/mcp
 
-# Phase 1 only (no server needed):
+# Static evaluation only (no server needed):
 bash scripts/mcp/run_mcp_eval.sh --repo /path/to/mcp-server-source
 
-# Phase 2 only (server must be running):
+# Conformance evaluation only (server must be running):
 bash scripts/mcp/run_mcp_eval.sh --server-url http://localhost:8080/mcp
 
 # With explicit gate mode and license allow-list:
@@ -112,14 +113,15 @@ bash scripts/mcp/run_mcp_eval.sh \
 
 ## On a cluster (Tekton)
 
-Two Tekton Tasks run inside the eval container image
+Three Tekton Tasks run inside the eval container image
 (`quay.io/ecosystem-appeng/abevalflow-mcp-eval:0.1`):
 
-- `mcp-phase1-static` — scanners + phase 1 gate
-- `mcp-phase2-conformance` — probe + compass + phase 2 gate
+- `mcp-static-eval` — scanners + static evaluation gate
+- `mcp-conformance-eval` — probe + compass + conformance evaluation gate
+- `mcp-behavioral-eval` — mcpchecker + behavioral evaluation summary
 
-Task YAMLs: `pipeline/tasks/konflux/mcp-phase1-static.yaml` and
-`mcp-phase2-conformance.yaml`.
+Task YAMLs: `pipeline/tasks/konflux/mcp-static-eval.yaml`,
+`mcp-conformance-eval.yaml`, and `mcp-behavioral-eval.yaml`.
 
 ## Future repo split
 

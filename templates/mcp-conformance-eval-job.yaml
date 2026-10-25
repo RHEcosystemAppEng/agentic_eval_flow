@@ -1,0 +1,79 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ${JOB_NAME}
+  namespace: ${NAMESPACE}
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: ${JOB_TIMEOUT}
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: probe
+          image: ${IMAGE}
+          imagePullPolicy: Always
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -euo pipefail
+
+              REPORTS_DIR="/tmp/reports"
+              mkdir -p "$REPORTS_DIR"
+
+              echo "=== Conformance evaluation live probe against ${SERVER_URL} ==="
+              python -m scripts.mcp.probes.conformance_eval_probe \
+                --server-url "${SERVER_URL}" \
+                --reports-dir "$REPORTS_DIR" \
+                --timeout "${TIMEOUT}" \
+                --openapi-url "${OPENAPI_URL}"
+
+              echo "=== Conformance evaluation Compass-consumed checks ==="
+              COMPASS_ARGS=()
+              compass_url="${COMPASS_URL:-}"
+              compass_entity_ref="${COMPASS_ENTITY_REF:-}"
+              if [ -n "$compass_url" ] && [ -n "$compass_entity_ref" ]; then
+                echo "Compass live mode: $compass_url (entity: $compass_entity_ref)"
+                COMPASS_ARGS=(
+                  --compass-url "$compass_url"
+                  --entity-ref "$compass_entity_ref"
+                )
+              else
+                echo "No Compass source configured; consumed checks will report not_evaluated."
+              fi
+              python -m scripts.mcp.probes.conformance_eval_compass_probe \
+                --reports-dir "$REPORTS_DIR" "${COMPASS_ARGS[@]}"
+
+              echo "=== Probe reports ==="
+              for f in "$REPORTS_DIR"/*.json; do
+                [ -f "$f" ] || continue
+                printf '===REPORT_JSON:%s===\n' "$(basename "$f")"
+                # Keep each report on one line so the pipeline can extract the
+                # exact JSON record from logs without mixing it with adjacent
+                # reports or diagnostic output.
+                tr -d '\r\n' < "$f"
+                printf '\n'
+              done
+              echo "===REPORTS_END==="
+          workingDir: /tmp
+          env:
+            - name: HOME
+              value: /tmp
+            - name: COMPASS_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ${COMPASS_SECRET}
+                  key: api-key
+                  optional: true
+            - name: COMPASS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: ${COMPASS_SECRET}
+                  key: compass-url
+                  optional: true
+            - name: COMPASS_ENTITY_REF
+              valueFrom:
+                secretKeyRef:
+                  name: ${COMPASS_SECRET}
+                  key: entity-ref
+                  optional: true

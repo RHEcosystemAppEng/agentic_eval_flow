@@ -1,0 +1,229 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: mcp-conformance-eval
+  labels:
+    app.kubernetes.io/name: abevalflow
+    app.kubernetes.io/component: konflux
+spec:
+  description: >-
+    MCP conformance evaluation - deterministic contract/conformance (ADR Approach 4).
+    Black-box, no LLM. Probes the deployed, running MCP server over Streamable
+    HTTP for protocol/schema/HTTP conformance and operational limits, and
+    consumes the checks Compass already collects as real facts (tool-name rules,
+    OAuth match). Uses the three-state model
+    (pass / fail / not_evaluated): an unreachable server or a check that cannot
+    produce a meaningful signal is reported not_evaluated, never failed.
+    Runs as a Job on the target cluster so it can reach the MCP server via
+    internal cluster DNS.
+  params:
+    - name: mcp-eval-image
+      type: string
+      default: "quay.io/ecosystem-appeng/abevalflow-mcp-eval:0.1"
+      description: >-
+        MCP eval image with the probe dependencies (httpx, pydantic, pyyaml) and
+        the pipeline code (scripts.mcp, abevalflow.mcp) baked in at PYTHONPATH=/opt.
+    - name: namespace-name
+      type: string
+      description: Ephemeral namespace where the MCP server is deployed
+    - name: service-name
+      type: string
+      default: "mcp-server"
+      description: Kubernetes Service name of the deployed MCP server
+    - name: service-port
+      type: string
+      default: "8080"
+      description: Port on which the MCP server listens
+    - name: mode
+      type: string
+      default: "block"
+      description: Gate enforcement mode - block, warn, or disabled.
+    - name: timeout
+      type: string
+      default: "30"
+      description: Per-request HTTP timeout (seconds) for the probe.
+    - name: job-timeout
+      type: string
+      default: "300"
+      description: Timeout in seconds for the probe Job
+    - name: openapi-url
+      type: string
+      default: ""
+      description: >-
+        Explicit OpenAPI contract URL for the openapi-conformance check. Empty
+        probes well-known paths on the server root; a server publishing no
+        reachable contract fails the check (ADR baseline requirement).
+    - name: compass-secret
+      type: string
+      default: "mcp-eval-compass"
+      description: >-
+        Name of a Secret on the target cluster (in the default namespace)
+        containing Compass SoundCheck credentials. Keys: api-key,
+        compass-url, entity-ref. Copied into the ephemeral namespace.
+        If empty or the secret does not exist, Compass-consumed checks
+        report not_evaluated.
+    - name: job-template
+      type: string
+      default: "/opt/templates/mcp-conformance-eval-job.yaml"
+      description: Path to the Kubernetes Job template for the conformance probe
+  workspaces:
+    - name: source
+      description: Workspace for the reports directory.
+    - name: target-kubeconfig
+      description: >-
+        Kubeconfig for the target cluster. Must contain a file named
+        "kubeconfig".
+  results:
+    - name: conformance-eval-passed
+      description: Whether conformance evaluation passed (no check FAILED in block mode).
+    - name: report-path
+      description: Workspace-relative path to the conformance evaluation reports directory.
+  steps:
+    # ── Step 1: Prepare Job manifest from template ──
+    - name: prepare-job
+      image: $(params.mcp-eval-image)
+      imagePullPolicy: Always
+      env:
+        - name: NAMESPACE
+          value: $(params.namespace-name)
+        - name: JOB_NAME
+          value: conformance-eval-probe
+        - name: IMAGE
+          value: $(params.mcp-eval-image)
+        - name: JOB_TIMEOUT
+          value: $(params.job-timeout)
+        - name: SERVER_URL
+          value: http://$(params.service-name):$(params.service-port)/mcp
+        - name: TIMEOUT
+          value: $(params.timeout)
+        - name: OPENAPI_URL
+          value: $(params.openapi-url)
+        - name: COMPASS_SECRET
+          value: $(params.compass-secret)
+        - name: JOB_TEMPLATE
+          value: $(params.job-template)
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        envsubst \
+          '${JOB_NAME} ${NAMESPACE} ${JOB_TIMEOUT} ${IMAGE} ${SERVER_URL} ${TIMEOUT} ${OPENAPI_URL} ${COMPASS_SECRET}' \
+          < "$JOB_TEMPLATE" \
+          > "$(workspaces.source.path)/conformance-eval-job.yaml"
+
+        echo "Generated Job manifest:"
+        cat "$(workspaces.source.path)/conformance-eval-job.yaml"
+
+    # ── Step 2: Apply Job and collect results ──
+    - name: run-probe-job
+      image: registry.redhat.io/openshift4/ose-cli:latest
+      env:
+        - name: KUBECONFIG
+          value: $(workspaces.target-kubeconfig.path)/kubeconfig
+        - name: NAMESPACE
+          value: $(params.namespace-name)
+        - name: JOB_NAME
+          value: conformance-eval-probe
+        - name: JOB_TIMEOUT
+          value: $(params.job-timeout)
+        - name: COMPASS_SECRET
+          value: $(params.compass-secret)
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        # Copy Compass secret into ephemeral namespace if it exists
+        if [ -n "$COMPASS_SECRET" ]; then
+          if oc get secret "$COMPASS_SECRET" -n default -o yaml \
+            | sed '/^\s*namespace:/d; /^\s*uid:/d; /^\s*resourceVersion:/d; /^\s*creationTimestamp:/d' \
+            | oc apply -n "$NAMESPACE" -f - 2>/dev/null; then
+            echo "Copied Compass secret '$COMPASS_SECRET' into $NAMESPACE"
+          else
+            echo "WARNING: Could not copy Compass secret '$COMPASS_SECRET'; consumed checks will report not_evaluated."
+          fi
+        fi
+
+        # Apply the Job
+        oc apply -f "$(workspaces.source.path)/conformance-eval-job.yaml" --namespace="$NAMESPACE"
+
+        RESULTS_DIR="$(workspaces.source.path)/results"
+        mkdir -p "$RESULTS_DIR"
+        find "$RESULTS_DIR" -maxdepth 1 -type f -name '*-check.json' -delete
+
+        # Wait for the Job to finish. Logs remain available after the pod
+        # completes, so no exec or file copy is needed.
+        DEADLINE=$((SECONDS + JOB_TIMEOUT))
+        JOB_STATE="running"
+        while true; do
+          COMPLETE=$(oc get job "$JOB_NAME" -n "$NAMESPACE" \
+            -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}' \
+            2>/dev/null || true)
+          FAILED=$(oc get job "$JOB_NAME" -n "$NAMESPACE" \
+            -o jsonpath='{.status.conditions[?(@.type=="Failed")].status}' \
+            2>/dev/null || true)
+
+          if [ "$COMPLETE" = "True" ]; then
+            JOB_STATE="complete"
+            echo "Probe Job completed"
+            break
+          fi
+          if [ "$FAILED" = "True" ]; then
+            JOB_STATE="failed"
+            echo "WARNING: Probe Job failed; collecting available logs"
+            break
+          fi
+          if [ "$SECONDS" -ge "$DEADLINE" ]; then
+            JOB_STATE="timed_out"
+            echo "ERROR: Probe Job timed out after ${JOB_TIMEOUT}s; collecting available logs"
+            break
+          fi
+          sleep 10
+        done
+
+        RAW_LOGS="$RESULTS_DIR/$JOB_NAME-logs.txt"
+        oc logs "job/$JOB_NAME" -n "$NAMESPACE" > "$RAW_LOGS" 2>&1
+
+        # Extract reports from logs: each ===REPORT_JSON:filename=== marker
+        # is followed by a single-line JSON object.
+        REPORT_COUNT=0
+        while IFS= read -r marker; do
+          report="${marker#===REPORT_JSON:}"
+          report="${report%===}"
+          json=$(awk -v m="$marker" '$0 == m { getline; print; exit }' "$RAW_LOGS")
+          if [ -n "$json" ]; then
+            echo "$json" > "$RESULTS_DIR/$report"
+            REPORT_COUNT=$((REPORT_COUNT + 1))
+            echo "Saved $report"
+          else
+            echo "WARNING: No JSON after marker for $report"
+          fi
+        done < <(grep -E '^===REPORT_JSON:.*===$' "$RAW_LOGS")
+
+        oc delete job "$JOB_NAME" -n "$NAMESPACE" --ignore-not-found=true >/dev/null 2>&1 || true
+
+        echo "Saved $REPORT_COUNT report(s) to $RESULTS_DIR"
+        ls -la "$RESULTS_DIR"
+
+    # ── Step 3: Run gate evaluation ──
+    - name: gate
+      image: $(params.mcp-eval-image)
+      imagePullPolicy: Always
+      env:
+        - name: MODE
+          value: $(params.mode)
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        RESULTS_DIR="$(workspaces.source.path)/results"
+        REPORTS_DIR="$(workspaces.source.path)/reports"
+        mkdir -p "$RESULTS_DIR" "$REPORTS_DIR"
+
+        bash /opt/scripts/mcp/gate_wrapper.sh \
+          scripts.mcp.runners.conformance_eval_gate \
+          "$RESULTS_DIR" \
+          "$REPORTS_DIR" \
+          "$MODE" \
+          "$REPORTS_DIR/conformance-eval-summary.json" \
+          "$(results.conformance-eval-passed.path)" \
+          "reports/conformance-eval-summary.json" \
+          "$(results.report-path.path)"

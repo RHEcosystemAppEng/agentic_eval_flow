@@ -8,8 +8,8 @@ logic lives in ``abevalflow.mcp``; these runners are intentionally thin wrappers
 
 Organized by role:
 
-- ``scanners/``  - Phase 1 scanner runners (gitleaks, semgrep, licensee)
+- ``scanners/``  - Static evaluation scanner runners (gitleaks, semgrep, licensee)
 - ``gates/``     - Gate evaluation runners + gate_wrapper.sh
-- ``probes/``    - Phase 2 probe + Compass consume runners
+- ``probes/``    - Conformance evaluation probe + Compass consume runners
 - ``rules/``     - Bundled offline rulesets (semgrep)
 """

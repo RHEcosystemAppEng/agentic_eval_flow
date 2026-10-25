@@ -1,11 +1,11 @@
-"""Phase 1 license-compliance gate.
+"""Static evaluation license-compliance gate.
 
 Reads license-scan.json produced by scripts/mcp/run_license_scan.py (a licensee run
 compared against the approved-license allow-list) and converts it into a
 standardized GateResult. Fails in block mode when the top-level declared license
 is missing or not in the allow-list (emitted as a HIGH finding by the scanner).
 
-ADR Phase 1: "License compliance - verify the MCP server's top-level declared
+ADR static evaluation: "License compliance - verify the MCP server's top-level declared
 license against a list of approved/supported licenses ... Scoped to the
 top-level declared license only; transitive dependency license scanning is out
 of scope."

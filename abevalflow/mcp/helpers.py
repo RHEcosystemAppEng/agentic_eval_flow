@@ -1,7 +1,7 @@
 """Helper functions for the MCP evaluation pipeline.
 
 Finding builders, severity normalization, and check-result file I/O. Used by
-both Phase 1 scanners (via ``make_finding``) and Phase 2 checks/probes (via
+both static evaluation scanners (via ``make_finding``) and conformance evaluation checks/probes (via
 ``make_finding`` + ``write_check_result``).
 """
 

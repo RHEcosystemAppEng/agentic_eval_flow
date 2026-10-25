@@ -1,0 +1,81 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ${JOB_NAME}
+  namespace: ${NAMESPACE}
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: ${JOB_TIMEOUT}
+  template:
+    spec:
+      restartPolicy: Never
+      volumes:
+        - name: internal-ca
+          secret:
+            secretName: ${CA_SECRET}
+            optional: true
+      containers:
+        - name: mcpchecker
+          image: ${IMAGE}
+          imagePullPolicy: Always
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -euo pipefail
+
+              # Build combined CA bundle if internal CA cert is mounted
+              if [ -f /tmp/ca/ca.crt ]; then
+                cat /etc/pki/tls/certs/ca-bundle.crt /tmp/ca/ca.crt > /tmp/combined-ca.crt
+                export SSL_CERT_FILE=/tmp/combined-ca.crt
+                echo "Internal CA certificate added to trust store"
+              fi
+
+              mkdir -p /tmp/tasks
+              envsubst < /opt/suites/mcp/default/eval.yaml > /tmp/eval.yaml
+              cp /opt/suites/mcp/default/tasks/*.yaml /tmp/tasks/
+              envsubst < /opt/suites/mcp/default/mcp-config.yaml > /tmp/mcp-config.yaml
+
+              cd /tmp
+              mcpchecker check eval.yaml \
+                --mcp-config-file mcp-config.yaml \
+                -o json || echo "mcpchecker exited with code $?"
+          workingDir: /tmp
+          env:
+            - name: HOME
+              value: /tmp
+            - name: MCP_URL
+              value: "${MCP_URL}"
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ${AGENT_SECRET}
+                  key: openai-api-key
+            - name: OPENAI_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: ${AGENT_SECRET}
+                  key: openai-base-url
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ${AGENT_SECRET}
+                  key: anthropic-api-key
+            - name: ANTHROPIC_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: ${AGENT_SECRET}
+                  key: anthropic-base-url
+            - name: AGENT_LLM_MODEL
+              valueFrom:
+                secretKeyRef:
+                  name: ${AGENT_SECRET}
+                  key: model-name
+            - name: JUDGE_LLM_MODEL
+              valueFrom:
+                secretKeyRef:
+                  name: ${JUDGE_SECRET}
+                  key: model-name
+          volumeMounts:
+            - name: internal-ca
+              mountPath: /tmp/ca
+              readOnly: true

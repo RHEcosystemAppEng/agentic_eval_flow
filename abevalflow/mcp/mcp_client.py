@@ -1,7 +1,7 @@
-"""Minimal MCP client over Streamable HTTP for Phase 2 conformance probing.
+"""Minimal MCP client over Streamable HTTP for conformance evaluation probing.
 
 Hand-rolled JSON-RPC 2.0 over ``httpx`` (deliberately NOT the ``mcp`` SDK) so the
-Phase 2 probe can:
+conformance evaluation probe can:
 
 * send well-formed calls (initialize, tools/list, tools/call), and
 * send deliberately malformed / spec-violating payloads and inspect the raw
@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_PROTOCOL_VERSION = "2025-06-18"
 ACCEPT_HEADER = "application/json, text/event-stream"
-CLIENT_INFO = {"name": "mcp-phase2-probe", "version": "0.1"}
+CLIENT_INFO = {"name": "mcp-conformance-eval-probe", "version": "0.1"}
 
 
 @dataclass

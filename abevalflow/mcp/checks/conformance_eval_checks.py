@@ -1,4 +1,4 @@
-"""Phase 2 live conformance check functions.
+"""Conformance evaluation live check functions.
 
 Each check takes a ``MCPClient`` (and/or the ``tools/list`` response) and returns
 a ``CheckOutcome`` carrying a three-state result (pass / fail / not_evaluated).
@@ -6,7 +6,7 @@ a ``CheckOutcome`` carrying a three-state result (pass / fail / not_evaluated).
 
 These are pure evaluation logic: the client handles I/O, and the checks analyze
 responses and return verdicts. The CLI entry point that creates the client and
-writes results to disk lives in ``scripts/mcp/probes/phase2_conformance_probe.py``.
+writes results to disk lives in ``scripts/mcp/probes/conformance_eval_probe.py``.
 """
 
 from __future__ import annotations
@@ -223,7 +223,7 @@ def check_schema_conformance(client: MCPClient, tools_resp: RpcResponse) -> Chec
     inputSchema is required by the MCP tool type, so a missing/non-object one is a
     fail. outputSchema is optional in the MCP spec, so it is validated only when
     present (its absence is not a violation). Whether actual tool RESPONSES conform
-    to the declared schema is behavioral and is left to Phase 3.
+    to the declared schema is behavioral and is left to behavioral evaluation.
     """
     err = _tools_list_error(tools_resp)
     if err:
@@ -283,7 +283,7 @@ def check_tool_annotations(client: MCPClient, tools_resp: RpcResponse) -> CheckO
     conformance violation: a server that declares none is not_evaluated here
     (nothing to verify), never failed. Only a *malformed* annotation (a hint
     field present with a non-boolean value) is a real fail. Honesty of the hints
-    is behavioral and is left to Phase 3.
+    is behavioral and is left to behavioral evaluation.
     """
     err = _tools_list_error(tools_resp)
     if err:
@@ -524,7 +524,7 @@ def check_openapi_conformance(
 
 
 def probe_all(server_url: str, *, timeout: float = 30.0, openapi_url: str | None = None) -> list[CheckOutcome]:
-    """Run every live Phase 2 check against ``server_url``.
+    """Run every live conformance evaluation check against ``server_url``.
 
     If the server is unreachable, all checks are reported not_evaluated (ADR:
     a readiness/reachability failure must never be scored as a fail).

@@ -1,11 +1,11 @@
 """Core types for the MCP evaluation pipeline.
 
-Defines the data shapes both phases use:
+Defines the data shapes all evaluations use:
 
-- **Phase 2** check outcomes: ``CheckOutcome`` carries a three-state result
-  (pass / fail / not_evaluated) that the Phase 2 gate reads.
+- **Conformance evaluation** check outcomes: ``CheckOutcome`` carries a three-state result
+  (pass / fail / not_evaluated) that the conformance evaluation gate reads.
 
-Phase 2 uses the three-state model because a check that cannot produce a
+Conformance evaluation uses the three-state model because a check that cannot produce a
 meaningful signal (server unreachable, no OpenAPI contract, a capability the
 server does not expose) must report ``not_evaluated`` rather than a false pass
 or fail (ADR: three-state reporting).
@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 # ---------------------------------------------------------------------------
-# Phase 2 three-state model
+# Conformance evaluation three-state model
 # ---------------------------------------------------------------------------
 
 STATUS_PASS = "pass"
@@ -31,7 +31,7 @@ VALID_STATUSES = (STATUS_PASS, STATUS_FAIL, STATUS_NOT_EVALUATED)
 
 @dataclass
 class CheckOutcome:
-    """Result of a single Phase 2 check."""
+    """Result of a single conformance evaluation check."""
 
     check: str
     status: str
