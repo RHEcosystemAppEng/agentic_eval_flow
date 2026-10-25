@@ -28,6 +28,8 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
 
+from abevalflow.certification import CheckId
+
 if TYPE_CHECKING:
     from abevalflow.certification import CertificationResult, LevelResult
     from abevalflow.gates.base import GateResult
@@ -273,9 +275,9 @@ def validate_push_facts_config(
 
 
 class CertificationFactPushResult(BaseModel):
-    """Result of pushing a certification level fact."""
+    """Result of pushing a certification level, summary, or check fact."""
 
-    level: str = Field(description="Certification level (foundational, trusted, certified)")
+    level: str = Field(description="Certification level, summary, or standalone check fact name")
     fact_ref: str = Field(description="Fact reference that was used")
     success: bool = Field(description="Whether the push succeeded")
     error: str | None = Field(default=None, description="Error message if push failed")
@@ -539,13 +541,17 @@ def push_certification_facts(
     certification_result: CertificationResult,
     push_facts_config: PushFactsConfig,
 ) -> list[CertificationFactPushResult]:
-    """Push all certification level facts to Compass.
+    """Push certification levels, summary, and skill structure check to Compass.
 
-    Pushes 4 facts:
+    Pushes these facts using the configured fact_ref_prefix:
     - catalog:default/abevalflow_foundational
     - catalog:default/abevalflow_trusted
     - catalog:default/abevalflow_certified
     - catalog:default/abevalflow_certification (summary)
+    - catalog:default/abevalflow_valid-skill-structure (when the check is present)
+
+    The standalone structure fact uses the check result independently of level
+    pass/fail. Custom policies that omit the check do not publish this fact.
 
     The `passed` field in each level fact respects the certification hierarchy
     (enforced by compute_certification): a level only shows as passed if all
@@ -599,5 +605,43 @@ def push_certification_facts(
             bearer_token=resolved_token,
         )
     )
+
+    structure_check = next(
+        (
+            check
+            for level_result in (
+                certification_result.foundational,
+                certification_result.trusted,
+                certification_result.certified,
+            )
+            for check in level_result.checks
+            if check.check_id == CheckId.VALID_SKILL_STRUCTURE
+        ),
+        None,
+    )
+    if structure_check is not None:
+        fact_name = "valid-skill-structure"
+        fact_ref = f"{push_facts_config.fact_ref_prefix}{fact_name}"
+        payload = {
+            "facts": [
+                {
+                    "factRef": fact_ref,
+                    "entityRef": push_facts_config.entity_ref,
+                    "data": {
+                        **structure_check.model_dump(mode="json"),
+                        "evaluated_at": datetime.now(UTC).isoformat(),
+                    },
+                }
+            ]
+        }
+        results.append(
+            _push_raw_fact(
+                payload=payload,
+                endpoint=push_facts_config.endpoint,
+                fact_ref=fact_ref,
+                level=fact_name,
+                bearer_token=resolved_token,
+            )
+        )
 
     return results

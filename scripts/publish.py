@@ -112,7 +112,7 @@ def upload_reports(
     uploaded = 0
     # Core report files (required)
     # Core AEH and scorecard report files
-    core_files = ["report.json", "report.md", "scorecard.json", "certification.json"]
+    core_files = ["report.json", "report.md", "scorecard.json", "certification.json", "skill-structure-validation.json"]
     for filename in core_files:
         filepath = report_dir / filename
         if not filepath.exists():

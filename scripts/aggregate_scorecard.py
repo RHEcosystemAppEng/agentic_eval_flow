@@ -48,6 +48,7 @@ from abevalflow.gates.security import get_all_security_gates
 from abevalflow.operational_policy import check_operational_policy
 from abevalflow.schemas import CertificationPolicy, GatePolicy, OperationalLimits, SubmissionMetadata
 from abevalflow.scorecard import Scorecard, apply_combination_logic
+from abevalflow.skill_structure import load_skill_structure_result
 
 logging.basicConfig(
     level=logging.INFO,
@@ -365,6 +366,7 @@ def aggregate_scorecard(
     certification = compute_certification(
         gates=gates,
         validation_passed=validation_passed,
+        skill_structure_result=load_skill_structure_result(reports_dir / "skill-structure-validation.json"),
         metadata_valid=metadata_valid,
         has_eval_assets=has_eval_assets,
         policy=certification_policy,

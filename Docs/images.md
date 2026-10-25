@@ -14,16 +14,23 @@ for purpose in runner task trial security-scan skillmd-scan; do
 done
 ```
 
-The shared task currently selects the published, digest-pinned test images
-listed in [the test release manifest](test-release-20261019.md). They all share
-`quay.io/ecosystem-appeng/agent-eval-harness` with the prefix
-`v3.0-test-20261019-021235` and one of the suffixes `-runner`, `-task`, `-trial`,
-`-security-scan`, or `-skillmd-scan`.
+Build individual images with their Make targets, such as
+`make aeh-task VERSION=v4.0.2`. Publish the resulting tag, then update the shared
+task's image reference with its registry digest and publish a new task bundle.
 
-Build and publish all five images before updating the task bundle for a future
-release. Callers overriding `aeh-image` or `AEH_IMAGE` select the `-trial` image;
-`runner-image` selects `-runner`. Remove the unused `workload-credentials-secret`
-argument from callers when upgrading the shared task.
+The shared task selects these image tags:
+
+| Purpose | Tag |
+|---|---|
+| Task utilities | `v4.0.2-task` |
+| Cisco scanner | `v4.0.1-security-scan` |
+| SKILL.md scanner | `v4.0-skillmd-scan` |
+| Orchestrator | `v4.0-runner` |
+| Trial runtime | `v4.0-trial` |
+
+Callers overriding `aeh-image` or `AEH_IMAGE` select the `-trial` image;
+`runner-image` selects `-runner`. Image references are pinned by digest in the
+shared task.
 
 ## Dependency ownership
 

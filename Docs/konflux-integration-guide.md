@@ -14,9 +14,14 @@ step uses this same report key.
 
 ## Gates
 
-Tier A always runs source preparation, Cisco scanning, and harness-eval
-SKILL.md scanning. Cisco scanning disables LLM analysis and fails on high
-severity findings. This scan policy applies uniformly to every skill.
+Tier A always runs source preparation, skill structure validation, Cisco
+scanning, and harness-eval SKILL.md scanning. Skill structure validation checks
+`<pack>/skills/<skill>/SKILL.md` and its directory. Errors fail Tier A; warnings
+remain advisory. It writes `skill-structure-validation.json`, which supplies
+the `valid_skill_structure` certification check and the standalone
+`<fact_ref_prefix>valid-skill-structure` Compass fact. Cisco scanning disables
+LLM analysis and fails on high severity findings. This scan policy applies
+uniformly to every skill.
 
 Tier B runs validation, advisory quality review, and AEH only when
 `should-evaluate=true`, the skill belongs to `changed-skills`, and an AEH
@@ -43,6 +48,7 @@ the final result records runtime failures.
 | materialize-source, compute-flags | `task-image` | Inline source/flag handling |
 | swap-mock-mcp | `task-image` | `scripts/swap_mock_mcp.py` |
 | validate | `task-image` | `scripts/validate.py` |
+| skill-structure-validation | `task-image` | `scripts/validate_skill_structure.py` |
 | security-scan | `security-scan-image` | `skill-scanner` |
 | skillmd-scan | `skillmd-scan-image` | `harness-eval` |
 | quality-review | `task-image` | `scripts/test_quality_review.py`, `scripts/write_metrics_checkpoint.py` |

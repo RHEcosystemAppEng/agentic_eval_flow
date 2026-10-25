@@ -768,15 +768,18 @@ def compute_certification(
     policy: CertificationPolicy | None = None,
     operational_policy_result: CheckResult | None = None,
     behavioral_data: dict[str, Any] | None = None,
+    skill_structure_result: CheckResult | None = None,
 ) -> CertificationResult:
     """Compute certification levels from gate results.
 
     Args:
         gates: List of gate results from evaluation
-        validation_passed: Whether structural validation passed
+        validation_passed: Whether AEH submission validation passed (enterprise fallback)
         metadata_valid: Whether metadata.yaml validation passed
         has_eval_assets: Whether evaluation assets (evals.json, tests) exist
         policy: Optional certification policy for custom checks and thresholds
+        skill_structure_result: Dedicated Tier 1 skill validation result. Missing
+            evidence fails the skill structure check independently of the submission.
         behavioral_data: Optional behavioral testing data containing:
             - std_reward: Trial variance from evaluation run
             - edge_cases: {total, passed} edge case results
@@ -788,12 +791,14 @@ def compute_certification(
     threshold_overrides = _collect_threshold_overrides(policy)
     all_checks: dict[CheckId, CheckResult] = {}
 
-    all_checks[CheckId.VALID_SKILL_STRUCTURE] = CheckResult(
+    if skill_structure_result is not None and skill_structure_result.check_id != CheckId.VALID_SKILL_STRUCTURE:
+        raise ValueError("skill_structure_result must be a valid_skill_structure check")
+    all_checks[CheckId.VALID_SKILL_STRUCTURE] = skill_structure_result or CheckResult(
         check_id=CheckId.VALID_SKILL_STRUCTURE,
         name="Valid Skill Structure",
-        passed=validation_passed,
-        score=1.0 if validation_passed else 0.0,
-        message="Structure validation passed" if validation_passed else "Structure validation failed",
+        passed=False,
+        score=0.0,
+        message="Skill structure validation result unavailable",
     )
 
     all_checks[CheckId.METADATA_COMPLIANCE] = CheckResult(
@@ -828,7 +833,7 @@ def compute_certification(
             name="Enterprise Structure Validation",
             passed=validation_passed,
             score=1.0 if validation_passed else 0.0,
-            message="Derived from structure validation",
+            message="Derived from AEH submission validation",
         ),
     )
 

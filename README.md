@@ -8,7 +8,7 @@ Kubernetes/OpenShift, in single or control/treatment pairwise mode.
 The supported flow is:
 
 1. Materialize the caller's trusted source artifact into a private workspace per skill.
-2. Always scan the skill with Cisco Skill Scanner and harness-eval.
+2. Always validate skill structure and scan the skill with Cisco Skill Scanner and harness-eval.
 3. Validate and review an opted-in, changed skill with an AEH submission.
 4. Run AEH in separate trial pods and aggregate its judge results.
 5. Optionally produce scorecards, push Compass Facts, attach OCI reports, and store results in Postgres/MinIO.

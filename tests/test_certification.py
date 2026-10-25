@@ -21,6 +21,16 @@ from abevalflow.gates.base import Finding, GateMode, GateResult, GateType, Sever
 from abevalflow.schemas import CertificationLevelPolicy, CertificationPolicy
 
 
+@pytest.fixture
+def passing_structure_result():
+    return CheckResult(
+        check_id=CheckId.VALID_SKILL_STRUCTURE,
+        name="Valid Skill Structure",
+        passed=True,
+        score=1.0,
+    )
+
+
 class TestCheckResult:
     """Tests for CheckResult model."""
 
@@ -232,10 +242,10 @@ class TestComputeCertification:
         foundational_check_ids = [c.check_id for c in result.foundational.checks]
         assert CheckId.CONTENT_QUALITY_REVIEW in foundational_check_ids
 
-    def test_validation_failure_affects_certification(self) -> None:
+    def test_missing_skill_validation_fails_despite_submission_pass(self) -> None:
         result = compute_certification(
             gates=[],
-            validation_passed=False,
+            validation_passed=True,
             metadata_valid=True,
             has_eval_assets=True,
         )
@@ -482,7 +492,7 @@ class TestCertificationPolicy:
         assert advanced_check.passed is False
         assert "0.90" in advanced_check.message
 
-    def test_partial_policy_only_foundational(self) -> None:
+    def test_partial_policy_only_foundational(self, passing_structure_result) -> None:
         """Partial policy with only foundational specified."""
         policy = CertificationPolicy(
             foundational=CertificationLevelPolicy(
@@ -495,6 +505,7 @@ class TestCertificationPolicy:
         result = compute_certification(
             gates=[],
             validation_passed=True,
+            skill_structure_result=passing_structure_result,
             metadata_valid=True,
             has_eval_assets=True,
             policy=policy,
@@ -857,7 +868,7 @@ class TestHierarchyEnforcement:
     If a lower level fails, higher levels must also fail even if their own checks pass.
     """
 
-    def test_trusted_fails_certified_cascades(self) -> None:
+    def test_trusted_fails_certified_cascades(self, passing_structure_result) -> None:
         """If trusted's own checks fail, certified should also fail.
 
         Scenario: foundational passes, trusted fails its own checks
@@ -882,6 +893,7 @@ class TestHierarchyEnforcement:
         result = compute_certification(
             gates=[engine_gate],
             validation_passed=True,
+            skill_structure_result=passing_structure_result,
             metadata_valid=True,
             has_eval_assets=True,
             policy=policy,
@@ -968,7 +980,7 @@ class TestHierarchyEnforcement:
         # The check itself passed (from the engine gate)
         assert func_check.passed is True
 
-    def test_all_levels_pass_when_all_requirements_met(self) -> None:
+    def test_all_levels_pass_when_all_requirements_met(self, passing_structure_result) -> None:
         """All levels pass when all their requirements are satisfied."""
         security_gate = GateResult(
             gate_name="security",
@@ -1001,6 +1013,7 @@ class TestHierarchyEnforcement:
         result = compute_certification(
             gates=[security_gate, quality_gate, engine_gate],
             validation_passed=True,
+            skill_structure_result=passing_structure_result,
             metadata_valid=True,
             has_eval_assets=True,
             policy=policy,
@@ -1097,7 +1110,7 @@ class TestProfileLoading:
 
 
 class TestOperationalPolicyCertificationIntegration:
-    def test_passing_check_enables_trusted(self) -> None:
+    def test_passing_check_enables_trusted(self, passing_structure_result) -> None:
         passing_result = CheckResult(
             check_id=CheckId.OPERATIONAL_POLICY_COMPLIANCE,
             name="Operational Policy Compliance",
@@ -1133,6 +1146,7 @@ class TestOperationalPolicyCertificationIntegration:
         result = compute_certification(
             gates=[engine_gate, security_gate, quality_gate],
             validation_passed=True,
+            skill_structure_result=passing_structure_result,
             metadata_valid=True,
             has_eval_assets=True,
             operational_policy_result=passing_result,

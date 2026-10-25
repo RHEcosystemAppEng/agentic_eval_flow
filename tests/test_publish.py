@@ -73,6 +73,28 @@ class TestBuildArtifactPrefix:
 
 class TestUploadReports:
     @patch("minio.Minio")
+    def test_uploads_skill_structure_report_without_aeh_report(self, mock_minio_cls, tmp_path):
+        report = tmp_path / "skill-structure-validation.json"
+        report.write_text('{"check_id": "valid_skill_structure", "passed": false}')
+        mock_client = mock_minio_cls.return_value
+        mock_client.bucket_exists.return_value = True
+
+        prefix = upload_reports(
+            report_dir=tmp_path,
+            submission_name="test-skill",
+            pipeline_run_id="run-1",
+            endpoint="http://minio:9000",
+            access_key="key",
+            secret_key="secret",
+        )
+
+        assert prefix is not None
+        mock_client.fput_object.assert_called_once()
+        args = mock_client.fput_object.call_args.args
+        assert args[1] == f"{prefix}/skill-structure-validation.json"
+        assert args[2] == str(report)
+
+    @patch("minio.Minio")
     def test_uploads_both_files(self, mock_minio_cls, report_dir):
         mock_client = MagicMock()
         mock_minio_cls.return_value = mock_client

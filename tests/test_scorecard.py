@@ -444,8 +444,8 @@ class TestValidationJsonHandling:
         )
         assert valid_structure_check.passed is False
 
-    def test_present_validation_json_valid_passes(self, tmp_path):
-        """Present validation.json with valid=true should pass validation."""
+    def test_submission_validation_alone_does_not_pass_skill_structure(self, tmp_path):
+        """Submission validation cannot substitute for skill structure evidence."""
         from scripts.aggregate_scorecard import aggregate_scorecard
 
         submission_dir = tmp_path / "submissions" / "test-skill"
@@ -482,7 +482,7 @@ class TestValidationJsonHandling:
         valid_structure_check = next(
             c for c in scorecard.certification.foundational.checks if c.check_id == CheckId.VALID_SKILL_STRUCTURE
         )
-        assert valid_structure_check.passed is True
+        assert valid_structure_check.passed is False
 
     def test_present_validation_json_invalid_fails(self, tmp_path):
         """Present validation.json with valid=false should fail validation."""
