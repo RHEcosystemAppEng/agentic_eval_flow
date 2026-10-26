@@ -5,7 +5,9 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import signal
 import sys
+import threading
 from contextlib import redirect_stdout
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -75,6 +77,7 @@ def workflow_options(parser: argparse.ArgumentParser) -> None:
     scanners.add_argument("--security-command", help="Override the included skill-scanner executable")
     scanners.add_argument("--quality-command", help="Override the included harness-eval executable")
     parser.add_argument("--command-timeout", type=int, help="External command timeout in seconds (default: 7200)")
+    parser.add_argument("--timeout-retries", type=int, help="Retry a timed-out AEH arm 0-5 times (default: 1)")
     models.add_argument("--llm-base-url", help="Submission/skill review API endpoint")
     models.add_argument("--llm-model", help="Submission/skill review model")
     models.add_argument("--agent-base-url", help="Agent API endpoint passed to AEH")
@@ -95,12 +98,17 @@ def parser() -> argparse.ArgumentParser:
     subcommands = command.add_subparsers(dest="command", required=True)
     for name, help_text in {
         "run": "Execute selected tiers, report results, and publish when requested",
+        "batch": "Evaluate explicit catalog skill IDs sequentially with per-skill evidence",
         "plan": "Show resolved non-secret configuration and operations without executing them",
         "doctor": "Check dependencies and remote workload readiness without running models",
         "init": "Initialize a run manifest for independent container phases",
     }.items():
         child = subcommands.add_parser(name, help=help_text)
         workflow_options(child)
+        if name == "batch":
+            child.add_argument(
+                "--skill-ids", nargs="*", required=True, help="Ordered unique <pack>/<skill> identifiers"
+            )
         if name == "doctor":
             child.add_argument(
                 "--offline", action="store_true", help="Check local prerequisites without contacting a cluster"
@@ -109,6 +117,21 @@ def parser() -> argparse.ArgumentParser:
     validate.add_argument("kind", choices=("skill", "submission"))
     validate.add_argument("path", type=Path)
     validate.add_argument("--output", type=Path, help="Optional JSON report path")
+    package = subcommands.add_parser("batch-package", help="Archive existing batch reports for OCI attachment")
+    package.add_argument("--batch-dir", type=Path, required=True)
+    export = subcommands.add_parser(
+        "batch-results", help="Validate batch evidence, emit Konflux results, and apply gates"
+    )
+    export.add_argument("--batch-dir", type=Path, required=True)
+    export.add_argument("--skill-ids", nargs="*", required=True)
+    export.add_argument("--revision", required=True)
+    export.add_argument("--tiers", choices=("1", "2", "1,2"), required=True)
+    export.add_argument("--persist", default="")
+    export.add_argument("--results-dir", type=Path, required=True)
+    export.add_argument("--image-url", default="")
+    export.add_argument("--image-digest", default="")
+    export.add_argument("--artifact-file", type=Path)
+    export.add_argument("--fail-on-non-success", choices=("true", "false"), default="true")
     for name, help_text in {
         "report": "Regenerate local reports from existing run evidence",
         "publish": "Publish an existing run without repeating checks or trials",
@@ -154,7 +177,7 @@ def package_version() -> str:
     try:
         return version("abevalflow")
     except PackageNotFoundError:
-        return "0.3.0"
+        return "0.4.0"
 
 
 def emit(value) -> None:
@@ -171,10 +194,44 @@ def main(argv: list[str] | None = None) -> int:
     )
     from abevalflow.observability.otel import setup_tracer_provider, shutdown_tracer_provider
 
-    tracing = args.command in {"run", "phase", "report", "publish"}
+    tracing = args.command in {"run", "batch", "phase", "report", "publish"}
+    previous_term = None
+    if tracing and threading.current_thread() is threading.main_thread():
+
+        def interrupted(signum, frame):
+            raise KeyboardInterrupt
+
+        previous_term = signal.signal(signal.SIGTERM, interrupted)
     try:
         if tracing:
             setup_tracer_provider()
+        if args.command == "batch":
+            from abevalflow.workflow.batch import run_batch
+
+            with redirect_stdout(sys.stderr):
+                directory, result = run_batch(args.skill_ids, vars(args))
+            emit({"batch_id": result.batch_id, "batch_dir": str(directory), "exit_code": result.exit_code})
+            return result.exit_code
+        if args.command == "batch-package":
+            from abevalflow.results.konflux import package_batch
+
+            package_batch(args.batch_dir)
+            return 0
+        if args.command == "batch-results":
+            from abevalflow.results.konflux import emit_results
+
+            return emit_results(
+                args.batch_dir,
+                args.skill_ids,
+                args.revision,
+                {int(t) for t in args.tiers.split(",")},
+                {v.strip() for v in args.persist.split(",") if v.strip()},
+                args.results_dir,
+                args.image_url,
+                args.image_digest,
+                args.artifact_file,
+                args.fail_on_non_success == "true",
+            )
         if args.command == "runtime":
             from abevalflow.execution.runtime import AEH_REVISION, AEH_VERSION, install_runtime, resolve_runtime
 
@@ -312,6 +369,9 @@ def main(argv: list[str] | None = None) -> int:
             }
         )
         return result.exit_code
+    except KeyboardInterrupt:
+        print("Evaluation interrupted; partial evidence retained", file=sys.stderr)
+        return 130
     except ConfigurationError as exc:
         print(f"Configuration error: {exc}", file=sys.stderr)
         return 2
@@ -338,5 +398,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Runtime failure ({type(exc).__name__})", file=sys.stderr)
         return 3
     finally:
+        if previous_term is not None:
+            signal.signal(signal.SIGTERM, previous_term)
         if tracing:
             shutdown_tracer_provider()

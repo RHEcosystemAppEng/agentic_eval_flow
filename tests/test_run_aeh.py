@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 import yaml
@@ -94,10 +94,10 @@ class TestHarborRunner:
         runner = HarborRunner(env_type="podman")
         assert runner.env_type == "podman"
 
-    @patch("subprocess.run")
+    @patch("abevalflow.execution.process.run_process")
     def test_harbor_runner_execute_basic(self, mock_run, tmp_path):
         """Harbor runner should call harbor.run with correct args."""
-        mock_run.return_value = MagicMock(returncode=0)
+        mock_run.return_value = 0
         runner = HarborRunner(model="test-model")
 
         config = tmp_path / "eval.yaml"
@@ -120,10 +120,10 @@ class TestHarborRunner:
         assert "--model" in call_args
         assert "test-model" in call_args
 
-    @patch("subprocess.run")
+    @patch("abevalflow.execution.process.run_process")
     def test_harbor_runner_execute_with_image(self, mock_run, tmp_path):
         """Harbor runner should pass image flag when set."""
-        mock_run.return_value = MagicMock(returncode=0)
+        mock_run.return_value = 0
         runner = HarborRunner(model="test-model", image="quay.io/test/image:v1")
 
         config = tmp_path / "eval.yaml"
@@ -136,10 +136,10 @@ class TestHarborRunner:
         assert "--image" in call_args
         assert "quay.io/test/image:v1" in call_args
 
-    @patch("subprocess.run")
+    @patch("abevalflow.execution.process.run_process")
     def test_harbor_runner_prepares_enriched_tasks(self, mock_run, tmp_path):
         """With image + tasks_dir, runner generates and enriches Harbor tasks."""
-        mock_run.return_value = MagicMock(returncode=0)
+        mock_run.return_value = 0
         runner = HarborRunner(model="test-model", image="quay.io/test/image:v1")
         config = tmp_path / "eval.yaml"
         config.write_text(yaml.dump({"skill": "demo", "models": {"skill": "m"}}))
@@ -152,7 +152,7 @@ class TestHarborRunner:
         prepare.assert_called_once()
         assert prepare.call_args[0][1] == tasks_dir
 
-    @patch("subprocess.run")
+    @patch("abevalflow.execution.process.run_process")
     def test_harbor_runner_omits_regenerate_after_enrichment(self, mock_run, tmp_path):
         """--regenerate must NOT be passed when tasks were just prepared+
         enriched in this same call: agent_eval.harbor.run's --regenerate
@@ -163,7 +163,7 @@ class TestHarborRunner:
         trial pod. See the comment at the --regenerate call site for the
         real-world failure this caused.
         """
-        mock_run.return_value = MagicMock(returncode=0)
+        mock_run.return_value = 0
         runner = HarborRunner(model="test-model", image="quay.io/test/image:v1")
         config = tmp_path / "eval.yaml"
         config.write_text(yaml.dump({"skill": "demo", "models": {"skill": "m"}}))
@@ -176,13 +176,13 @@ class TestHarborRunner:
         call_args = mock_run.call_args[0][0]
         assert "--regenerate" not in call_args
 
-    @patch("subprocess.run")
+    @patch("abevalflow.execution.process.run_process")
     def test_harbor_runner_omits_judge_model_after_enrichment(self, mock_run, tmp_path):
         """--judge-model must also be omitted after enrichment: agent_eval.
         harbor.run hard-rejects --judge-model against pre-generated tasks
         unless --regenerate is also passed, and enrich_harbor_tasks() already
         baked judge_model into the packages directly."""
-        mock_run.return_value = MagicMock(returncode=0)
+        mock_run.return_value = 0
         runner = HarborRunner(model="test-model", judge_model="judge-model", image="quay.io/test/image:v1")
         config = tmp_path / "eval.yaml"
         config.write_text(yaml.dump({"skill": "demo", "models": {"skill": "m"}}))
@@ -197,12 +197,12 @@ class TestHarborRunner:
         assert "--model" in call_args
         assert "test-model" in call_args
 
-    @patch("subprocess.run")
+    @patch("abevalflow.execution.process.run_process")
     def test_harbor_runner_reuses_tasks_without_rewriting_them(self, mock_run, tmp_path):
         """--regenerate is still passed on the tasks_dir-reuse path (no
         image, so _prepare_enriched_tasks never ran this call) -- stale
         pre-existing packages may not match a newly-passed model/judge."""
-        mock_run.return_value = MagicMock(returncode=0)
+        mock_run.return_value = 0
         runner = HarborRunner(model="test-model", judge_model="judge-model")
         config = tmp_path / "eval.yaml"
         config.write_text(yaml.dump({"skill": "demo", "models": {"skill": "m"}}))
@@ -316,10 +316,10 @@ class TestEvalDirName:
 class TestPairwiseExecution:
     """Test pairwise A/B comparison execution."""
 
-    @patch("subprocess.run")
+    @patch("abevalflow.execution.process.run_process")
     def test_pairwise_creates_correct_directories(self, mock_run, tmp_path):
         """run_pairwise should create control and treatment directories."""
-        mock_run.return_value = MagicMock(returncode=0)
+        mock_run.return_value = 0
 
         control_config = tmp_path / "eval-control.yaml"
         treatment_config = tmp_path / "eval-treatment.yaml"
@@ -332,7 +332,7 @@ class TestPairwiseExecution:
 
         # Mock summary.yaml creation
         def create_summary(*args, **kwargs):
-            result = MagicMock(returncode=0)
+            result = 0
             # Create summary.yaml after "execution"
             control_dir = output_base / "test-skill" / "control-run-123"
             treatment_dir = output_base / "test-skill" / "treatment-run-123"
@@ -361,10 +361,10 @@ class TestPairwiseExecution:
         assert "control-run-123" in result["control_dir"]
         assert "treatment-run-123" in result["treatment_dir"]
 
-    @patch("subprocess.run")
+    @patch("abevalflow.execution.process.run_process")
     def test_pairwise_regenerates_report_html_with_baseline(self, mock_run, tmp_path):
         """After pairwise, call report.py --baseline so HTML includes pairwise."""
-        mock_run.return_value = MagicMock(returncode=0)
+        mock_run.return_value = 0
 
         control_config = tmp_path / "eval-control.yaml"
         treatment_config = tmp_path / "eval-treatment.yaml"
@@ -386,7 +386,7 @@ class TestPairwiseExecution:
             (treatment_dir / "summary.yaml").write_text(
                 yaml.dump({"mean_reward": 0.6, "pairwise": {"wins_a": 0, "ties": 1}})
             )
-            return MagicMock(returncode=0)
+            return 0
 
         mock_run.side_effect = create_summary
         runner = HarborRunner(model="test-model")
@@ -427,7 +427,7 @@ class TestPairwiseExecution:
 
         runner = HarborRunner(model="test-model")
 
-        with patch("subprocess.run", return_value=MagicMock(returncode=0)):
+        with patch("abevalflow.execution.process.run_process", return_value=0):
             try:
                 runner.run_pairwise(
                     control_config=control_config,

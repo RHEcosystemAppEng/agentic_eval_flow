@@ -21,7 +21,7 @@ def create_result(config: RuntimeConfig) -> RunResult:
     try:
         evaluator_version = version("abevalflow")
     except PackageNotFoundError:
-        evaluator_version = "0.3.0"
+        evaluator_version = "0.4.0"
     return RunResult(
         run_id=config.run_id,
         skill=config.name,
@@ -71,6 +71,8 @@ def execute_step(config: RuntimeConfig, result: RunResult, name: str, operations
         try:
             step = operations.execute(name, result)
         except Exception as exc:
+            from abevalflow.execution.cleanup import CleanupError
+
             blocking = name != "skill-review" and not (
                 name == "submission-review"
                 and not (
@@ -86,6 +88,7 @@ def execute_step(config: RuntimeConfig, result: RunResult, name: str, operations
                 verdict="unavailable",
                 blocking=blocking,
                 reason=f"{name} failed ({type(exc).__name__})",
+                details={"error_type": type(exc).__name__, "stop_batch": isinstance(exc, CleanupError)},
             )
     result.record(step)
     save_run(config, result)

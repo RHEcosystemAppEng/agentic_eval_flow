@@ -191,6 +191,7 @@ class Operations:
             timeout=config.command_timeout,
             aeh_root=config.aeh_root,
             aeh_python=config.aeh_python,
+            timeout_retries=config.timeout_retries,
         )
         tasks = config.output / "tasks"
         jobs = config.output / "jobs"

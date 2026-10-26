@@ -2,7 +2,7 @@
 
 `abevalflow` validates skills and runs Agent Eval Harness (AEH) evaluations through
 Harbor on Kubernetes/OpenShift. Install the `abeval` CLI locally or in a container.
-The same application services power combined runs and independent container phases.
+The same application services power single-skill runs, sequential batches, and independent container phases.
 
 ## Install
 
@@ -67,6 +67,40 @@ templates; a wheel-only AEH installation is insufficient for this release.
 The application calls upstream task generation, execution, scoring, and report
 commands without changing AEH code or overriding its functions. Runner/trial
 images install the complete source distribution during their build.
+
+## Sequential catalog evaluation
+
+Single-skill execution remains `abeval run --skill-id <pack>/<skill> --source .`.
+To evaluate an explicit list in order, use:
+
+```sh
+abeval batch --source . --tiers 1,2 --persist postgres,s3 \
+  --output /workspace/batch --timeout-retries 1 \
+  --skill-ids rh-sre/cve-validation rh-sre/cve-impact
+```
+
+Each skill uses the existing workflow, including its complete configured plugin
+skills tree, mock MCP fixtures, control/treatment configuration, report generation,
+and persistence. The next skill starts after the current workflow finishes.
+Separate CLI or pipeline invocations may run concurrently.
+
+`--timeout-retries` (or `ABEVAL_TIMEOUT_RETRIES`) allows 0–5 additional attempts,
+default 1, for a timed-out AEH execution arm. Both command deadlines and native
+Harbor trial timeouts qualify. Verdict failures and other runtime failures do not.
+A completed control arm is retained when treatment times out. Scans, reviews,
+reporting, and publication are not repeated by an arm retry. The local process
+group is stopped and only pods named by this invocation's persisted Harbor trial
+configs are deleted, with UID preconditions; deletion must finish before retry.
+If cleanup cannot be confirmed, no later skill is started.
+
+The batch directory contains atomic `batch.json` progress and isolated
+`runs/<index>/run.json` and `reports/` evidence. Interrupted batches remain
+incomplete. Timeout attempt histories and partial outputs are retained under the
+skill's reports. Do not configure whole-batch Tekton retries: completed skills
+would run again. An intentional rerun uses a new output directory and an explicit
+list of skills. Existing `abeval publish --run-dir ...` retries publication only.
+Batch output must be outside the source root or under its excluded `.abeval/`.
+An empty `--skill-ids` list succeeds without evaluating or publishing any skill.
 
 ## Two tiers
 

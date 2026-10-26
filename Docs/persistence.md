@@ -14,8 +14,8 @@ failed checks. See the [CLI reference](cli.md#persistence-opt-in) for configurat
 | Compass | `gate_policy.push_facts` in metadata; `ABEVAL_COMPASS_TOKEN` | Selected gate and certification facts. |
 
 The base CLI installation writes local reports. Install the `storage` extra for
-PostgreSQL/S3. Secret templates for
-Kubernetes deployments are in [config/storage](../config/storage/).
+PostgreSQL/S3. Supply credentials through environment variables locally or
+Secret-backed environment variables in Kubernetes.
 
 ## Reports
 

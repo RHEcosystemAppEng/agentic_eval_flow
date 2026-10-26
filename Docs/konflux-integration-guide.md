@@ -9,7 +9,7 @@ codes. Submission files define cases, models, judges, and policy.
 | Konflux task | Evaluation CLI |
 |---|---|
 | Retrieve trusted source artifacts and select changed skills. | Stage an isolated source copy. |
-| Fan out one evaluation per skill. | Run selected tiers in sequence. |
+| Pass changed skill IDs to one batch invocation. | Sequence existing single-skill workflows and retry timed-out AEH arms. |
 | Mount kubeconfig, inject credentials, and provide image references. | Validate inputs, run scans/reviews, and orchestrate remote AEH trials. |
 | Provide a shared workspace across task steps. | Record phase evidence and generate reports in a run directory. |
 | Convert run evidence to Tekton results and attach OCI evidence. | Return structured JSON and documented exit codes. |
@@ -100,10 +100,13 @@ uses the existing digest-pinned `quay.io/konflux-ci/task-runner` image with
 parameters select the attachment subject. Registry authentication is provided by
 Konflux; the CLI has no registry settings or OCI publishing support.
 
-Result conversion and Matrix aggregation are inline Python in the shared task
-definitions. They consume the documented `run.json` schema, fail closed on
-missing or invalid evidence, and expose separate static, trial, publication,
-and OCI artifact results. No application utility image is required.
+For multiple skills, the shared task calls `abeval batch --skill-ids ...` once.
+It then packages reports with `batch-package`, attaches the OCI archive with the
+existing Konflux task-runner, and calls `batch-results` to emit small aggregates
+and apply static/publication gates. The batch manifest identifies every skill
+and source revision; registration consumes `summary.json` through the evidence
+workspace. No Matrix or per-skill task fanout is involved. Parallel pipeline runs
+remain allowed. The CLI's individual skill workflow and plugin staging are unchanged.
 
 Only evaluation and trial images are maintained by this project. Use the same
 AEH revision for both. Existing script-based bundles require their older images;

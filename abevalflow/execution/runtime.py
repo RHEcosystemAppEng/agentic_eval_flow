@@ -61,14 +61,16 @@ class AEHRuntime:
         self, arguments: list[str], *, environment: dict[str, str] | None, timeout: int, cwd: Path | None = None
     ) -> int:
         """Execute an upstream command with an explicit evaluation project directory."""
+        from abevalflow.execution.process import run_process
+
         self.validate()
-        return subprocess.run(
+        return run_process(
             [str(self.python), *arguments],
             cwd=cwd or self.root,
             env=environment,
             timeout=timeout,
             stdout=sys.stderr,
-        ).returncode
+        )
 
 
 def resolve_runtime(root: Path | None = None, python: Path | None = None) -> AEHRuntime:

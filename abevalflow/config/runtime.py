@@ -52,6 +52,7 @@ class RuntimeConfig(BaseModel):
     security_command: str = "skill-scanner"
     quality_command: str = "harness-eval"
     command_timeout: int = Field(default=7200, gt=0)
+    timeout_retries: int = Field(default=1, ge=0, le=5)
     llm_base_url: str | None = None
     llm_model: str | None = None
     llm_api_key: SecretStr | None = Field(default=None, exclude=True)
@@ -102,6 +103,23 @@ def load_metadata(path: Path) -> SubmissionMetadata:
         raise ConfigurationError(f"Invalid submission {path}; invalid fields: {fields}") from exc
     except (OSError, ValueError, yaml.YAMLError) as exc:
         raise ConfigurationError(f"Invalid submission {path} ({type(exc).__name__})") from exc
+
+
+def parse_tiers(value: str) -> tuple[int, ...]:
+    try:
+        tiers = tuple(sorted(set(int(v) for v in str(value).split(","))))
+    except ValueError as exc:
+        raise ConfigurationError("--tiers must be 1, 2, or 1,2") from exc
+    if not tiers or any(v not in (1, 2) for v in tiers):
+        raise ConfigurationError("--tiers must be 1, 2, or 1,2")
+    return tiers
+
+
+def parse_destinations(value: str) -> tuple[str, ...]:
+    destinations = tuple(dict.fromkeys(v.strip() for v in value.split(",") if v.strip()))
+    if set(destinations) - {"postgres", "s3", "compass"}:
+        raise ConfigurationError("Persistence destinations: postgres,s3,compass")
+    return destinations
 
 
 def resolve_config(options: Mapping[str, Any], environ: Mapping[str, str] | None = None) -> RuntimeConfig:
@@ -156,13 +174,7 @@ def resolve_config(options: Mapping[str, Any], environ: Mapping[str, str] | None
     if submission and not submission.is_relative_to(source):
         raise ConfigurationError("Submission must be inside --source; select a common source root")
     metadata = load_metadata(submission) if submission else None
-    tier_value = get("tiers", "1")
-    try:
-        tiers = tuple(sorted(set(int(v) for v in str(tier_value).split(","))))
-    except ValueError as exc:
-        raise ConfigurationError("--tiers must be 1, 2, or 1,2") from exc
-    if not tiers or any(v not in (1, 2) for v in tiers):
-        raise ConfigurationError("--tiers must be 1, 2, or 1,2")
+    tiers = parse_tiers(get("tiers", "1"))
     if 2 in tiers and submission is None:
         raise ConfigurationError("Tier 2 requires an AEH submission; supply --submission")
     from datetime import UTC, datetime
@@ -181,9 +193,7 @@ def resolve_config(options: Mapping[str, Any], environ: Mapping[str, str] | None
     if metadata and metadata.gate_policy and not review_enabled and 2 in tiers:
         if metadata.gate_policy.get_gate_policy("quality").mode.value == "block":
             raise ConfigurationError("Blocking quality policy requires submission review")
-    destinations = tuple(dict.fromkeys(v.strip() for v in get("persist", "").split(",") if v.strip()))
-    if set(destinations) - {"postgres", "s3", "compass"}:
-        raise ConfigurationError("Persistence destinations: postgres,s3,compass")
+    destinations = parse_destinations(get("persist", ""))
     values: dict[str, Any] = {
         "skill": skill,
         "source": source,
@@ -217,6 +227,7 @@ def resolve_config(options: Mapping[str, Any], environ: Mapping[str, str] | None
         "security_image": (None,),
         "quality_image": (None,),
         "command_timeout": (7200,),
+        "timeout_retries": (1,),
         "llm_base_url": (None, "LLM_BASE_URL", "LLM_API_BASE"),
         "llm_model": (None, "LLM_MODEL"),
         "llm_api_key": (None, "LLM_API_KEY"),

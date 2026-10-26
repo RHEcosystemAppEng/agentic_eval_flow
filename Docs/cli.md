@@ -254,3 +254,38 @@ from earlier scan or evaluation evidence.
 | `1` | Blocking policy findings. |
 | `2` | Invalid invocation or configuration. |
 | `3` | Required runtime or publication failure. |
+
+## Sequential batch commands (0.4.0)
+
+`abeval batch` accepts the same runtime, tier, review, and persistence flags as
+`abeval run`, plus required `--skill-ids` followed by zero or more unique catalog
+IDs. Do not combine it with a positional skill, `--skill-id`, or `--submission`.
+Each skill discovers its own submission and calls the existing workflow once.
+`--timeout-retries` / `ABEVAL_TIMEOUT_RETRIES` selects 0–5 additional AEH arm
+attempts after a command or native trial timeout (default 1). Other failures are
+not retried. `--command-timeout` remains the per-external-command deadline.
+Retry evidence is retained; scans/reviews/reporting/persistence are not repeated.
+Unconfirmed workload cleanup stops the batch rather than starting more trials.
+
+```sh
+abeval batch --source . --tiers 1,2 --persist postgres,s3 \
+  --output /workspace/batch --skill-ids rh-sre/cve-validation rh-sre/cve-impact
+abeval batch-package --batch-dir /workspace/batch
+abeval batch-results --batch-dir /workspace/batch --revision "$REVISION" \
+  --tiers 1,2 --persist postgres,s3 --results-dir /workspace/results \
+  --skill-ids rh-sre/cve-validation rh-sre/cve-impact
+```
+
+`batch-package` archives batch.json plus every available skill's run.json and
+reports. `batch-results` validates revision, selection, completed child evidence,
+tiers, and persistence destinations, writes `summary.json`, and emits standard
+Konflux result files. It gates Tier 1 and required publication; Tier 2 remains
+informational. Missing or malformed selected evidence is ERROR. Large per-skill
+outcomes stay in the summary, not Tekton result arrays. Registry attachment is
+performed by Konflux and supplied as an attachment receipt. Report-only consumers
+may select `--fail-on-non-success false`; the default is true.
+
+Batch exit codes are 0 (all workflows passed), 1 (completed policy failure),
+2 (invalid batch options), 3 (runtime/item failure), or 130 (interruption).
+The shared task finalizes evidence after nonzero batch exit and applies its
+separate Tier 1/publication gates. Configuration errors are isolated per skill.
