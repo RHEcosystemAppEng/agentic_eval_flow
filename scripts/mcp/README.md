@@ -131,9 +131,9 @@ entity. The API is the delivery mechanism; the code here makes publishing
 repeatable for local and pipeline runs.
 
 ```text
-Phase 1 scanners + gate ──> phase1-summary.json ─┐
-                                                 ├─> publisher ─> SoundCheck facts
-Phase 2 probes + gate ────> phase2-summary.json ─┘
+Static evaluation ────────> static-eval-summary.json ──┐
+Conformance evaluation ───> conformance-eval-summary.json ─┼─> publisher ─> SoundCheck facts
+Behavioral evaluation ────> behavioral-eval-summary.json ─┘  (optional)
 ```
 
 The report model and fact mapping live in `abevalflow/mcp/eval_result.py` and
@@ -145,14 +145,15 @@ The report model and fact mapping live in `abevalflow/mcp/eval_result.py` and
 
 The dedicated track is **ABEvalFlow MCP Evaluation** (`abevalflow-mcp-evaluation`),
 owned by `group:redhat/ai5-marketplace` and filtered to MCP server entities.
-It separates checks into two levels:
+It separates checks into three levels:
 
 1. Phase 1 — Static Analysis
 2. Phase 2 — Conformance Testing
+3. Phase 3 — Behavioral Evaluation
 
 The setup script, `scripts/mcp/bootstrap_compass_track.py`, is a manual,
 per-environment provisioning step—not part of each evaluation run. It
-registers eleven ABEvalFlow-owned check definitions, then creates the track or
+registers twelve ABEvalFlow-owned check definitions, then creates the track or
 updates its levels if it already exists. Two existing Compass checks
 (`mcp-tool-schema-check` and `mcp-oauth-scope-match`) are referenced in the
 Phase 2 level; their definitions are not recreated by this script.
@@ -185,11 +186,14 @@ and the track definition as the body.
 
 ### Preview and publish evaluation facts
 
-The runner expects `phase1-summary.json` and `phase2-summary.json` beneath the
-reports directory (it supports either a flat layout or `phase1/` and
-`phase2/` subdirectories). It publishes individual evaluated checks, one
-summary fact per phase, and one combined summary fact to the SoundCheck Facts
-API. The request shape is `POST /api/soundcheck/facts/` with a `facts` array;
+The runner reads `static-eval-summary.json` and
+`conformance-eval-summary.json` files from the reports directory. It also reads
+`behavioral-eval-summary.json` when present. Legacy `phase1-summary.json`,
+`phase2-summary.json`, and `phase3-summary.json` names remain supported. Files
+can be flat in the reports directory or inside `phase1/`, `phase2/`, and
+`phase3/` subdirectories. It publishes individual evaluated checks, one
+summary fact per available phase, and one combined summary fact to the
+SoundCheck Facts API. The request shape is `POST /api/soundcheck/facts/` with a `facts` array;
 each fact contains `factRef`, `entityRef`, and `data`. For example:
 
 ```json
@@ -233,13 +237,13 @@ checks are included in the phase summary but are not re-published individually,
 avoiding a circular write. The pipeline can read those existing results with
 `GET /api/soundcheck/results?entityRef=<url-encoded-ref>&checks=mcp-tool-schema-check&checks=mcp-oauth-scope-match`.
 
-### Phase 3 and current scope
+### Optional behavioral phase
 
-The domain model allows an optional Phase 3 result, but the CLI does not yet
-load a Phase 3 summary and there are no Phase 3 fact mappings or track level.
-When behavioral checks are ready, their report contract, loader, fact
-mappings, and track level must be added; a `phase3-summary.json` file is
-currently detected but skipped.
+The pipeline runs behavioral evaluation only when its gating label is
+present. The publisher includes Phase 3 when its summary file exists; otherwise
+the combined summary marks Phase 3 as unavailable. The Compass track uses one
+aggregate behavioral check, while its phase fact retains each behavioral check's
+details.
 
 The staging validation used
 `mcpserver:ai5-marketplace/openshift-mcp-server`. The local MCP endpoint served

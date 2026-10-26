@@ -26,6 +26,8 @@ import os
 import sys
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from abevalflow.mcp.checks.compass_publish import (
     McpPushConfig,
     push_mcp_eval_facts,
@@ -34,14 +36,15 @@ from abevalflow.mcp.eval_result import (
     build_mcp_eval_result,
     load_phase1_summary,
     load_phase2_summary,
+    load_phase3_summary,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
-PHASE1_SUMMARY = "phase1-summary.json"
-PHASE2_SUMMARY = "phase2-summary.json"
-PHASE3_SUMMARY = "phase3-summary.json"
+PHASE1_SUMMARIES = ("static-eval-summary.json",)
+PHASE2_SUMMARIES = ("conformance-eval-summary.json",)
+PHASE3_SUMMARIES = ("behavioral-eval-summary.json",)
 
 
 def _summary_path(reports_dir: Path, phase: str, filename: str) -> Path:
@@ -50,6 +53,15 @@ def _summary_path(reports_dir: Path, phase: str, filename: str) -> Path:
     if nested.is_file():
         return nested
     return reports_dir / filename
+
+
+def _phase_summary_path(reports_dir: Path, phase: str, filenames: tuple[str, ...]) -> Path:
+    """Find a phase summary by trying filenames in order."""
+    for filename in filenames:
+        path = _summary_path(reports_dir, phase, filename)
+        if path.is_file():
+            return path
+    return _summary_path(reports_dir, phase, filenames[0])
 
 
 def main() -> int:
@@ -82,9 +94,9 @@ def main() -> int:
         logger.error("Not a directory: %s", args.reports_dir)
         return 1
 
-    p1_path = _summary_path(args.reports_dir, "phase1", PHASE1_SUMMARY)
-    p2_path = _summary_path(args.reports_dir, "phase2", PHASE2_SUMMARY)
-    p3_path = _summary_path(args.reports_dir, "phase3", PHASE3_SUMMARY)
+    p1_path = _phase_summary_path(args.reports_dir, "static-eval", PHASE1_SUMMARIES)
+    p2_path = _phase_summary_path(args.reports_dir, "conformance-eval", PHASE2_SUMMARIES)
+    p3_path = _phase_summary_path(args.reports_dir, "behavioral-eval", PHASE3_SUMMARIES)
 
     if not p1_path.is_file():
         logger.error("Phase 1 summary not found: %s", p1_path)
@@ -93,15 +105,13 @@ def main() -> int:
         logger.error("Phase 2 summary not found: %s", p2_path)
         return 1
 
-    phase1 = load_phase1_summary(p1_path)
-    phase2 = load_phase2_summary(p2_path)
-
-    phase3 = None
-    if p3_path.is_file():
-        logger.info("Phase 3 summary found: %s (loading)", p3_path)
-        # Phase 3 loader will be added when behavioral checks land.
-        # For now, log and skip.
-        logger.warning("Phase 3 loader not yet implemented; Phase 3 results will be reported as not available.")
+    try:
+        phase1 = load_phase1_summary(p1_path)
+        phase2 = load_phase2_summary(p2_path)
+        phase3 = load_phase3_summary(p3_path) if p3_path.is_file() else None
+    except (OSError, ValueError, ValidationError) as exc:
+        logger.error("Invalid MCP evaluation summary in %s: %s", args.reports_dir, exc)
+        return 1
 
     eval_result = build_mcp_eval_result(phase1, phase2, phase3)
 

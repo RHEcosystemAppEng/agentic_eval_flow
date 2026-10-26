@@ -9,10 +9,14 @@ Covers:
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+import yaml
 
 from abevalflow.mcp.checks.compass_publish import (
     ALL_FACT_MAPS,
@@ -34,6 +38,7 @@ from abevalflow.mcp.eval_result import (
     build_mcp_eval_result,
     load_phase1_summary,
     load_phase2_summary,
+    load_phase3_summary,
 )
 from scripts.mcp.bootstrap_compass_track import (
     ALL_CHECK_DEFS,
@@ -44,14 +49,17 @@ from scripts.mcp.bootstrap_compass_track import (
     _register_checks,
     _register_track,
 )
-from scripts.mcp.runners.compass_publish import _summary_path
+from scripts.mcp.runners.compass_publish import _phase_summary_path, _summary_path
+from scripts.mcp.runners.compass_publish import main as compass_publish_main
+
+COMPASS_PUBLISH_TASK = Path(__file__).parents[1] / "pipeline/tasks/konflux/mcp-compass-publish.yaml"
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
 PHASE1_SUMMARY_ALL_PASS = {
-    "phase": "phase1",
+    "phase": "static-eval",
     "passed": True,
     "gates": [
         {"gate": "mcp-secrets", "passed": True, "score": 1.0, "findings": 0, "message": "No secrets found"},
@@ -61,7 +69,7 @@ PHASE1_SUMMARY_ALL_PASS = {
 }
 
 PHASE1_SUMMARY_ONE_FAIL = {
-    "phase": "phase1",
+    "phase": "static-eval",
     "passed": False,
     "gates": [
         {"gate": "mcp-secrets", "passed": False, "score": 0.25, "findings": 2, "message": "2 secrets found"},
@@ -71,7 +79,7 @@ PHASE1_SUMMARY_ONE_FAIL = {
 }
 
 PHASE2_SUMMARY_MIXED = {
-    "phase": "phase2",
+    "phase": "conformance-eval",
     "passed": False,
     "counts": {"pass": 6, "fail": 1, "not_evaluated": 3},
     "checks": [
@@ -164,6 +172,48 @@ PHASE2_SUMMARY_MIXED = {
             "findings": 1,
             "source": "compass",
             "message": "OAuth mismatch",
+        },
+    ],
+}
+
+STATIC_EVAL_SUMMARY = {
+    "phase": "static-eval",
+    "passed": True,
+    "gates": [
+        {"gate": "mcp-secrets", "passed": True, "score": 1.0, "findings": 0, "message": "No secrets found"},
+    ],
+}
+
+CONFORMANCE_EVAL_SUMMARY = {
+    "phase": "conformance-eval",
+    "passed": False,
+    "counts": {"pass": 1, "fail": 1, "not_evaluated": 1},
+    "checks": [
+        {"check": "http-support", "status": "pass", "passed": True, "score": 1.0, "findings": 0},
+        {"check": "protocol-compliance", "status": "fail", "passed": False, "score": 0.0, "findings": 1},
+        {
+            "check": "rate-limiting",
+            "status": "not_evaluated",
+            "passed": True,
+            "score": 1.0,
+            "findings": 0,
+        },
+    ],
+}
+
+BEHAVIORAL_EVAL_SUMMARY = {
+    "phase": "behavioral-eval",
+    "passed": False,
+    "counts": {"pass": 0, "fail": 1, "not_evaluated": 0},
+    "checks": [
+        {
+            "check": "tool-behavior",
+            "status": "fail",
+            "passed": False,
+            "score": 0.4,
+            "findings": 1,
+            "source": "mcpchecker",
+            "message": "One behavioral check failed",
         },
     ],
 }
@@ -300,6 +350,110 @@ class TestLoadPhase2Summary:
         assert result.checks_evaluated == 7
 
 
+class TestSummaryPath:
+    def test_loads_flat_reports_from_all_three_phases(self, tmp_path):
+        static_path = _write_summary(tmp_path / "static-eval-summary.json", STATIC_EVAL_SUMMARY)
+        conformance_path = _write_summary(tmp_path / "conformance-eval-summary.json", CONFORMANCE_EVAL_SUMMARY)
+        behavioral_path = _write_summary(tmp_path / "behavioral-eval-summary.json", BEHAVIORAL_EVAL_SUMMARY)
+
+        static = load_phase1_summary(static_path)
+        conformance = load_phase2_summary(conformance_path)
+        behavioral = load_phase3_summary(behavioral_path)
+
+        assert static.phase == McpPhase.PHASE1
+        assert static.checks[0].check_id == "mcp-secrets"
+        assert conformance.phase == McpPhase.PHASE2
+        rate_limit = next(check for check in conformance.checks if check.check_id == "rate-limiting")
+        assert (rate_limit.status, rate_limit.passed, rate_limit.score) == ("not_evaluated", None, None)
+        assert behavioral.phase == McpPhase.PHASE3
+        assert behavioral.checks[0].check_id == "tool-behavior"
+        assert behavioral.checks[0].status == "fail"
+
+    def test_finds_flat_report_names(self, tmp_path):
+        reports = tmp_path / "reports"
+        reports.mkdir()
+        for phase, filename in (
+            ("phase1", "static-eval-summary.json"),
+            ("phase2", "conformance-eval-summary.json"),
+            ("phase3", "behavioral-eval-summary.json"),
+        ):
+            expected = reports / filename
+            expected.write_text("{}")
+            assert _phase_summary_path(reports, phase, (filename,)) == expected
+
+    @pytest.mark.parametrize("include_behavioral", [True, False])
+    def test_supports_optional_behavioral_report(
+        self, tmp_path, monkeypatch, include_behavioral
+    ):
+        reports = tmp_path / "reports"
+        reports.mkdir()
+        _write_summary(reports / "static-eval-summary.json", STATIC_EVAL_SUMMARY)
+        _write_summary(reports / "conformance-eval-summary.json", CONFORMANCE_EVAL_SUMMARY)
+        if include_behavioral:
+            _write_summary(reports / "behavioral-eval-summary.json", BEHAVIORAL_EVAL_SUMMARY)
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "compass_publish",
+                "--reports-dir",
+                str(reports),
+                "--entity-ref",
+                "mcpserver:default/example",
+                "--compass-url",
+                "https://compass.example.com/api/soundcheck/facts/",
+            ],
+        )
+        published_results = []
+
+        def capture_publish(eval_result, config):
+            published_results.append((eval_result, config))
+            return []
+
+        with patch("scripts.mcp.runners.compass_publish.push_mcp_eval_facts", side_effect=capture_publish):
+            assert compass_publish_main() == 0
+
+        eval_result, config = published_results[0]
+        assert (eval_result.phase3 is not None) is include_behavioral
+        if include_behavioral:
+            assert eval_result.phase3.checks[0].check_id == "tool-behavior"
+        assert config.dry_run is True
+
+
+class TestCompassPublishTask:
+    @pytest.mark.parametrize(
+        ("dry_run", "publisher_exit", "expected_status", "expected_exit"),
+        [("true", 0, "dry-run", 0), ("false", 0, "published", 0), ("false", 1, "failed", 1)],
+    )
+    def test_task_reports_publish_status(self, tmp_path, dry_run, publisher_exit, expected_status, expected_exit):
+        task = yaml.safe_load(COMPASS_PUBLISH_TASK.read_text())
+        script = next(step["script"] for step in task["spec"]["steps"] if step["name"] == "publish")
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        status_path = tmp_path / "publish-status"
+        script = script.replace("$(workspaces.source.path)", str(workspace))
+        script = script.replace("$(results.publish-status.path)", str(status_path))
+
+        fake_bin = tmp_path / "bin"
+        fake_bin.mkdir()
+        fake_python = fake_bin / "python"
+        fake_python.write_text(f"#!/bin/sh\nexit {publisher_exit}\n")
+        fake_python.chmod(0o755)
+        env = {
+            **os.environ,
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "REPORTS_DIR": "reports",
+            "ENTITY_REF": "mcpserver:default/example",
+            "COMPASS_URL": "https://compass.example.com/api/soundcheck/facts/",
+            "DRY_RUN": dry_run,
+        }
+
+        result = subprocess.run(["bash", "-c", script], env=env, capture_output=True, text=True, check=False)
+
+        assert result.returncode == expected_exit, result.stderr
+        assert status_path.read_text() == expected_status
+
+
 class TestBuildMcpEvalResult:
     def test_no_hierarchy(self, tmp_path):
         """Phase 1 fail does NOT cascade to Phase 2.
@@ -335,24 +489,30 @@ class TestSummaryPath:
 class TestCompassTrackBootstrap:
     def test_track_is_separate_and_reuses_existing_compass_checks(self):
         assert TRACK_ID == "abevalflow-mcp-evaluation"
-        assert len(TRACK_DEFINITION["levels"]) == 2
-        phase1, phase2 = TRACK_DEFINITION["levels"]
+        assert len(TRACK_DEFINITION["levels"]) == 3
+        phase1, phase2, phase3 = TRACK_DEFINITION["levels"]
         assert (phase1["ordinal"], phase1["name"]) == (1, "Phase 1 — Static Analysis")
         assert (phase2["ordinal"], phase2["name"]) == (2, "Phase 2 — Conformance Testing")
+        assert (phase3["ordinal"], phase3["name"]) == (3, "Phase 3 — Behavioral Evaluation")
         phase1_ids = {check["id"] for check in phase1["checks"]}
         phase2_ids = {check["id"] for check in phase2["checks"]}
+        phase3_ids = {check["id"] for check in phase3["checks"]}
         assert len(phase1_ids) == 3
         assert len(phase2_ids) == 10
+        assert phase3_ids == {
+            "mcp-eval-tool-correctness",
+            "mcp-eval-edge-case-handling",
+            "mcp-eval-sensitive-data-redaction",
+        }
         assert phase1_ids.isdisjoint(phase2_ids)
+        assert phase3_ids.isdisjoint(phase1_ids | phase2_ids)
         assert "mcp-tool-schema-check" in phase2_ids
         assert "mcp-oauth-scope-match" in phase2_ids
-        assert not any("summary" in check_id for check_id in phase1_ids | phase2_ids)
         assert "mcp-eval-tool-name-rules" not in phase2_ids
         assert "mcp-eval-oauth-catalog-match" not in phase2_ids
-        assert "mcp-eval-phase3-summary" not in phase1_ids | phase2_ids
         registered_ids = {check["id"] for check in ALL_CHECK_DEFS}
         assert registered_ids.isdisjoint({check["id"] for check in CONSUMED_TRACK_CHECKS})
-        assert len(ALL_CHECK_DEFS) == 11
+        assert len(ALL_CHECK_DEFS) == 14
 
     def test_track_dry_run_does_not_make_http_request(self):
         with patch("scripts.mcp.bootstrap_compass_track.urllib.request.urlopen") as mock_urlopen:
@@ -438,8 +598,10 @@ class TestBuildMcpSummaryPayload:
         data = payload["facts"][0]["data"]
         assert data["phase1_passed"] is True
         assert data["phase2_passed"] is False
-        assert data["phase3_passed"] is None
-        assert data["phase3_score"] is None
+        assert data["phase3_passed"] is False
+        assert data["phase3_score"] == 0.0
+        assert data["phase3_checks_evaluated"] == 0
+        assert data["phase3_checks_total"] == 0
 
     def test_with_phase3(self):
         p1 = McpPhaseResult(phase=McpPhase.PHASE1, passed=True, checks=[])

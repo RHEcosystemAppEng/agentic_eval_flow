@@ -58,7 +58,11 @@ PHASE2_FACT_MAP: dict[str, str] = {
     "openapi-conformance": "abevalflow:default/mcp_openapi_conformance",
 }
 
-PHASE3_FACT_MAP: dict[str, str] = {}
+PHASE3_FACT_MAP: dict[str, str] = {
+    "tool-correctness": "abevalflow:default/mcp_tool_correctness",
+    "edge-case-handling": "abevalflow:default/mcp_edge_case_handling",
+    "sensitive-data-redaction": "abevalflow:default/mcp_sensitive_data_redaction",
+}
 
 ALL_FACT_MAPS: dict[McpPhase, dict[str, str]] = {
     McpPhase.PHASE1: PHASE1_FACT_MAP,
@@ -83,6 +87,7 @@ def _build_check_fact_payload(
     check: McpCheckResult,
     entity_ref: str,
     fact_ref: str,
+    evaluated_at: datetime | None = None,
 ) -> dict[str, Any]:
     return {
         "facts": [
@@ -95,7 +100,7 @@ def _build_check_fact_payload(
                     "status": check.status,
                     "message": check.message,
                     "source": check.source,
-                    "evaluated_at": datetime.now(UTC).isoformat(),
+                    "evaluated_at": (evaluated_at or datetime.now(UTC)).isoformat(),
                 },
             }
         ]
@@ -106,6 +111,7 @@ def _build_phase_summary_payload(
     phase_result: McpPhaseResult,
     entity_ref: str,
     fact_ref: str,
+    evaluated_at: datetime | None = None,
 ) -> dict[str, Any]:
     checks_data = [
         {
@@ -131,7 +137,7 @@ def _build_phase_summary_payload(
                     "checks_total": phase_result.checks_total,
                     "overall_score": phase_result.overall_score,
                     "checks": checks_data,
-                    "evaluated_at": datetime.now(UTC).isoformat(),
+                    "evaluated_at": (evaluated_at or datetime.now(UTC)).isoformat(),
                 },
             }
         ]
@@ -142,6 +148,7 @@ def _build_mcp_summary_payload(
     eval_result: McpEvalResult,
     entity_ref: str,
     fact_ref: str,
+    evaluated_at: datetime | None = None,
 ) -> dict[str, Any]:
     data: dict[str, Any] = {
         "phase1_passed": eval_result.phase1.passed,
@@ -152,7 +159,7 @@ def _build_mcp_summary_payload(
         "phase1_checks_total": eval_result.phase1.checks_total,
         "phase2_checks_evaluated": eval_result.phase2.checks_evaluated,
         "phase2_checks_total": eval_result.phase2.checks_total,
-        "evaluated_at": datetime.now(UTC).isoformat(),
+        "evaluated_at": (evaluated_at or datetime.now(UTC)).isoformat(),
     }
     if eval_result.phase3 is not None:
         data["phase3_passed"] = eval_result.phase3.passed
@@ -160,8 +167,10 @@ def _build_mcp_summary_payload(
         data["phase3_checks_evaluated"] = eval_result.phase3.checks_evaluated
         data["phase3_checks_total"] = eval_result.phase3.checks_total
     else:
-        data["phase3_passed"] = None
-        data["phase3_score"] = None
+        data["phase3_passed"] = False
+        data["phase3_score"] = 0.0
+        data["phase3_checks_evaluated"] = 0
+        data["phase3_checks_total"] = 0
         data["phase3_checks_evaluated"] = 0
         data["phase3_checks_total"] = 0
     return {
@@ -203,6 +212,7 @@ def push_mcp_eval_facts(
     resolved_token = _resolve_env_vars(config.bearer_token)
     _check_unresolved_env_vars(resolved_token, "bearer_token")
 
+    evaluated_at = datetime.now(UTC)
     results: list[CertificationFactPushResult] = []
 
     phases: list[McpPhaseResult] = [eval_result.phase1, eval_result.phase2]
@@ -222,7 +232,7 @@ def push_mcp_eval_facts(
             if fact_ref is None:
                 logger.warning("No factRef mapping for check %s; skipping", check.check_id)
                 continue
-            payload = _build_check_fact_payload(check, config.entity_ref, fact_ref)
+            payload = _build_check_fact_payload(check, config.entity_ref, fact_ref, evaluated_at)
             results.append(
                 _push_or_dry_run(payload, config.endpoint, fact_ref, check.check_id, resolved_token, config.dry_run)
             )
@@ -230,10 +240,10 @@ def push_mcp_eval_facts(
     for phase_result in phases:
         phase_key = phase_result.phase.value
         fact_ref = PHASE_SUMMARY_FACTS[phase_key]
-        payload = _build_phase_summary_payload(phase_result, config.entity_ref, fact_ref)
+        payload = _build_phase_summary_payload(phase_result, config.entity_ref, fact_ref, evaluated_at)
         results.append(_push_or_dry_run(payload, config.endpoint, fact_ref, phase_key, resolved_token, config.dry_run))
 
-    summary_payload = _build_mcp_summary_payload(eval_result, config.entity_ref, MCP_EVAL_SUMMARY_FACT)
+    summary_payload = _build_mcp_summary_payload(eval_result, config.entity_ref, MCP_EVAL_SUMMARY_FACT, evaluated_at)
     results.append(
         _push_or_dry_run(
             summary_payload, config.endpoint, MCP_EVAL_SUMMARY_FACT, "mcp_eval", resolved_token, config.dry_run

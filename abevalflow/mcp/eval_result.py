@@ -25,6 +25,7 @@ import json
 import logging
 from enum import StrEnum
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, Field, computed_field
 
@@ -141,54 +142,149 @@ class McpEvalResult(BaseModel):
 # Summary JSON loaders
 # ---------------------------------------------------------------------------
 
+_HUMAN_NAMES_P1: dict[str, str] = {
+    "mcp-secrets": "Secrets Management",
+    "mcp-no-user-code": "No User-Code Execution",
+    "mcp-license": "License Compliance",
+}
+
+_HUMAN_NAMES_P2: dict[str, str] = {
+    "http-support": "HTTP Support",
+    "protocol-compliance": "Protocol Compliance",
+    "schema-conformance": "Schema Conformance",
+    "tool-annotations": "Tool Annotations",
+    "rate-limiting": "Rate Limiting",
+    "response-size-limit": "Response Size Limit",
+    "mandatory-timeouts": "Mandatory Timeouts",
+    "openapi-conformance": "OpenAPI Conformance",
+    "tool-name-rules": "Tool Name Rules",
+    "oauth-catalog-match": "OAuth Catalog Match",
+}
+
+_HUMAN_NAMES_P3: dict[str, str] = {
+    "tool-correctness": "Tool Correctness",
+    "edge-case-handling": "Edge Case Handling",
+    "sensitive-data-redaction": "Sensitive Data Redaction",
+}
+
+SummaryStatus = Literal["pass", "fail", "not_evaluated"]
+
+
+class StaticEvalGateSummary(BaseModel):
+    gate: str
+    passed: bool
+    score: float | None = Field(default=None, ge=0.0, le=1.0)
+    findings: int = Field(default=0, ge=0)
+    message: str = ""
+
+
+class StaticEvalSummary(BaseModel):
+    phase: Literal["static-eval"] | None = None
+    passed: bool
+    gates: list[StaticEvalGateSummary]
+
+
+class EvalSummaryCheck(BaseModel):
+    check: str
+    status: SummaryStatus | None = None
+    passed: bool
+    score: float | None = Field(default=None, ge=0.0, le=1.0)
+    findings: int = Field(default=0, ge=0)
+    source: str | None = None
+    message: str = ""
+
+
+class ConformanceEvalSummary(BaseModel):
+    phase: Literal["conformance-eval"] | None = None
+    passed: bool
+    counts: dict[str, int] | None = None
+    checks: list[EvalSummaryCheck]
+
+
+class BehavioralEvalSummary(BaseModel):
+    phase: Literal["behavioral-eval"] | None = None
+    passed: bool
+    counts: dict[str, int] | None = None
+    checks: list[EvalSummaryCheck]
+
 
 def load_phase1_summary(path: Path) -> McpPhaseResult:
-    """Parse ``phase1-summary.json`` into :class:`McpPhaseResult`."""
-    data = json.loads(path.read_text())
+    """Parse a static evaluation summary into :class:`McpPhaseResult`."""
+    summary = StaticEvalSummary.model_validate(json.loads(path.read_text()))
     checks: list[McpCheckResult] = []
-    for gate in data.get("gates", []):
-        gate_id = gate["gate"]
+    for gate in summary.gates:
+        gate_id = gate.gate
         checks.append(
             McpCheckResult(
                 check_id=gate_id,
                 name=_HUMAN_NAMES_P1.get(gate_id, gate_id),
-                passed=gate["passed"],
-                score=gate.get("score", 1.0 if gate["passed"] else 0.0),
-                status="pass" if gate["passed"] else "fail",
-                message=gate.get("message", ""),
+                passed=gate.passed,
+                score=gate.score if gate.score is not None else (1.0 if gate.passed else 0.0),
+                status="pass" if gate.passed else "fail",
+                message=gate.message,
                 source="pipeline",
                 publishable=True,
             )
         )
-    return McpPhaseResult(phase=McpPhase.PHASE1, passed=data["passed"], checks=checks)
+    return McpPhaseResult(phase=McpPhase.PHASE1, passed=summary.passed, checks=checks)
 
 
 def load_phase2_summary(path: Path) -> McpPhaseResult:
-    """Parse ``phase2-summary.json`` into :class:`McpPhaseResult`.
+    """Parse a conformance evaluation summary into :class:`McpPhaseResult`.
 
     Consumed checks (tool-name-rules, oauth-catalog-match) are marked
     ``publishable=False``.
     """
-    data = json.loads(path.read_text())
+    summary = ConformanceEvalSummary.model_validate(json.loads(path.read_text()))
     checks: list[McpCheckResult] = []
-    for check in data.get("checks", []):
-        check_id = check["check"]
-        status = check.get("status", "pass" if check["passed"] else "fail")
+    for check in summary.checks:
+        check_id = check.check
+        status = check.status or ("pass" if check.passed else "fail")
         is_consumed = check_id in CONSUMED_CHECKS
-        source = check.get("source", "compass" if is_consumed else "probe")
+        source = check.source or ("compass" if is_consumed else "probe")
+        passed = True if status == "pass" else False if status == "fail" else None
+        score = None if status == "not_evaluated" else (
+            check.score if check.score is not None else (1.0 if check.passed else 0.0)
+        )
         checks.append(
             McpCheckResult(
                 check_id=check_id,
                 name=_HUMAN_NAMES_P2.get(check_id, check_id),
-                passed=True if status == "pass" else False if status == "fail" else None,
-                score=None if status == "not_evaluated" else check.get("score", 1.0 if check["passed"] else 0.0),
+                passed=passed,
+                score=score,
                 status=status,
-                message=check.get("message", ""),
+                message=check.message,
                 source=source,
                 publishable=not is_consumed,
             )
         )
-    return McpPhaseResult(phase=McpPhase.PHASE2, passed=data["passed"], checks=checks)
+    return McpPhaseResult(phase=McpPhase.PHASE2, passed=summary.passed, checks=checks)
+
+
+def load_phase3_summary(path: Path) -> McpPhaseResult:
+    """Parse a behavioral evaluation summary into :class:`McpPhaseResult`."""
+    summary = BehavioralEvalSummary.model_validate(json.loads(path.read_text()))
+    checks: list[McpCheckResult] = []
+    for check in summary.checks:
+        status = check.status or ("pass" if check.passed else "fail")
+        passed = True if status == "pass" else False if status == "fail" else None
+        score = None if status == "not_evaluated" else (
+            check.score if check.score is not None else (1.0 if check.passed else 0.0)
+        )
+        check_id = check.check
+        checks.append(
+            McpCheckResult(
+                check_id=check_id,
+                name=_HUMAN_NAMES_P3.get(check_id, check_id),
+                passed=passed,
+                score=score,
+                status=status,
+                message=check.message,
+                source=check.source or "mcpchecker",
+                publishable=True,
+            )
+        )
+    return McpPhaseResult(phase=McpPhase.PHASE3, passed=summary.passed, checks=checks)
 
 
 def build_mcp_eval_result(

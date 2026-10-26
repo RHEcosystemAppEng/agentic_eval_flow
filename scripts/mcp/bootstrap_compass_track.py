@@ -152,7 +152,28 @@ PHASE2_CHECKS = [
     ),
 ]
 
-ALL_CHECK_DEFS = PHASE1_CHECKS + PHASE2_CHECKS
+PHASE3_CHECKS = [
+    _check_def(
+        "mcp-eval-tool-correctness",
+        "Tool Correctness",
+        "Behavioral correctness of MCP server tools via mcpchecker.",
+        "abevalflow:default/mcp_tool_correctness",
+    ),
+    _check_def(
+        "mcp-eval-edge-case-handling",
+        "Edge Case Handling",
+        "Edge case handling and error resilience via mcpchecker.",
+        "abevalflow:default/mcp_edge_case_handling",
+    ),
+    _check_def(
+        "mcp-eval-sensitive-data-redaction",
+        "Sensitive Data Redaction",
+        "Sensitive data handling and redaction via mcpchecker.",
+        "abevalflow:default/mcp_sensitive_data_redaction",
+    ),
+]
+
+ALL_CHECK_DEFS = PHASE1_CHECKS + PHASE2_CHECKS + PHASE3_CHECKS
 
 # These two check definitions already belong to the existing MCP Scorecard.
 # The new track references them but must not overwrite or duplicate them.
@@ -175,8 +196,8 @@ TRACK_DEFINITION = {
     "type": "standard",
     "name": TRACK_NAME,
     "description": (
-        "Phase 1 and Phase 2 MCP evaluation results from ABEvalFlow. "
-        "Each phase is shown as a separate level; Phase 3 will be added when implemented."
+        "Static, conformance, and behavioral MCP evaluation results from ABEvalFlow. "
+        "Each phase is shown as a separate level."
     ),
     "ownerEntityRef": OWNER,
     "filter": FILTER,
@@ -191,7 +212,16 @@ TRACK_DEFINITION = {
             "ordinal": 2,
             "name": "Phase 2 — Conformance Testing",
             "description": "MCP protocol and server conformance checks, including existing Compass-owned checks.",
-            "checks": (OWNED_TRACK_CHECKS[len(PHASE1_CHECKS) :] + CONSUMED_TRACK_CHECKS),
+            "checks": (
+                OWNED_TRACK_CHECKS[len(PHASE1_CHECKS) : len(PHASE1_CHECKS) + len(PHASE2_CHECKS)]
+                + CONSUMED_TRACK_CHECKS
+            ),
+        },
+        {
+            "ordinal": 3,
+            "name": "Phase 3 — Behavioral Evaluation",
+            "description": "Behavioral MCP checks aggregated from mcpchecker results.",
+            "checks": OWNED_TRACK_CHECKS[len(PHASE1_CHECKS) + len(PHASE2_CHECKS) :],
         },
     ],
 }
@@ -298,7 +328,7 @@ def _register_track(compass_url: str, api_key: str, dry_run: bool) -> bool:
             return True
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
-        if exc.code == 409:
+        if exc.code in (409, 400):
             logger.info("Track %s already exists; updating its levels", TRACK_ID)
             update = urllib.request.Request(
                 f"{url}/{TRACK_ID}",
@@ -357,19 +387,26 @@ def main() -> int:
         logger.info("DRY RUN — check definitions will be logged but not registered")
 
     logger.info("Registering %d MCP evaluation checks on %s", len(ALL_CHECK_DEFS), args.compass_url)
-    if not _register_checks(args.compass_url, ALL_CHECK_DEFS, api_key, dry_run):
-        logger.error("Check registration failed; track was not created")
-        return 1
+    checks_ok = _register_checks(args.compass_url, ALL_CHECK_DEFS, api_key, dry_run)
+    if not checks_ok and not dry_run:
+        logger.warning("Check registration failed; attempting track update anyway")
 
     if not _register_track(args.compass_url, api_key, dry_run):
         return 1
 
-    logger.info(
-        "All %d checks and track %s %s",
-        len(ALL_CHECK_DEFS),
-        TRACK_ID,
-        "registered" if not dry_run else "would be registered",
-    )
+    if checks_ok:
+        logger.info(
+            "All %d checks and track %s %s",
+            len(ALL_CHECK_DEFS),
+            TRACK_ID,
+            "registered" if not dry_run else "would be registered",
+        )
+    else:
+        logger.info(
+            "Track %s %s (checks already exist)",
+            TRACK_ID,
+            "updated" if not dry_run else "would be updated",
+        )
     return 0
 
 

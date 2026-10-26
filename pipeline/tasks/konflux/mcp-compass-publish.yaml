@@ -7,17 +7,18 @@ metadata:
     app.kubernetes.io/component: konflux
 spec:
   description: >-
-    Publish MCP evaluation Phase 1 + Phase 2 results to Compass SoundCheck as
-    facts on the dedicated MCP evaluation track. Reads phase1-summary.json and
-    phase2-summary.json from the reports workspace. Dry-run by default; set
-    dry-run param to "false" to actually publish.
+    Publish MCP static, conformance, and optional behavioral evaluation
+    summaries to Compass SoundCheck as facts on the dedicated MCP evaluation
+    track. Reads validated summary JSON files from a configurable workspace
+    directory. Dry-run by default; set dry-run to "false" to publish.
   params:
     - name: mcp-eval-image
       type: string
       default: "quay.io/ecosystem-appeng/abevalflow-mcp-eval:0.1"
-    - name: submission-name
+    - name: reports-dir
       type: string
-      description: Name used for the report directory (reports/<submission-name>/).
+      default: "reports"
+      description: Workspace-relative directory containing evaluation summary JSON files.
     - name: entity-ref
       type: string
       description: >-
@@ -49,8 +50,8 @@ spec:
               name: compass-api-credentials
               key: COMPASS_API_KEY
               optional: true
-        - name: SUBMISSION_NAME
-          value: $(params.submission-name)
+        - name: REPORTS_DIR
+          value: $(params.reports-dir)
         - name: ENTITY_REF
           value: $(params.entity-ref)
         - name: COMPASS_URL
@@ -60,7 +61,7 @@ spec:
       script: |
         #!/usr/bin/env bash
         set -euo pipefail
-        REPORTS_DIR="$(workspaces.source.path)/reports/$SUBMISSION_NAME"
+        REPORTS_DIR="$(workspaces.source.path)/$REPORTS_DIR"
 
         DRY_RUN_FLAG=""
         if [ "$DRY_RUN" = "false" ]; then
