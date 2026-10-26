@@ -65,7 +65,12 @@ def extract_task_results(raw_output: dict) -> list[MCPCheckerTaskResult]:
 
         # Handle status (v1alpha2 uses taskPassed boolean, legacy uses status string)
         if "taskPassed" in task_data:
-            status = "passed" if task_data["taskPassed"] else "failed"
+            if task_data["taskPassed"]:
+                status = "passed"
+            elif task_data.get("agentExecutionError"):
+                status = "error"
+            else:
+                status = "failed"
         elif "status" in task_data:
             status_raw = task_data.get("status", "unknown").lower()
             if status_raw in ("passed", "pass", "success"):
