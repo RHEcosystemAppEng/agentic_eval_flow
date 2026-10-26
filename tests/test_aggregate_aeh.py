@@ -8,17 +8,17 @@ from pathlib import Path
 import pytest
 import yaml
 
+from abevalflow.cli.compat.aggregate_aeh import main
 from abevalflow.report import AnalysisResult
-from scripts.aggregate_aeh import (
+from abevalflow.reporting.markdown import render_markdown
+from abevalflow.results.aeh import (
     _case_reward,
     _extract_mean_reward,
     _load_execution_metadata,
     _trials_from_per_case,
     aggregate_pairwise_run,
     aggregate_single_run,
-    main,
 )
-from scripts.analyze import render_markdown
 
 
 def _write_summary(run_dir: Path, summary: dict) -> None:

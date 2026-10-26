@@ -15,7 +15,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'
 
       - name: Install dependencies
         run: |
@@ -24,3 +24,13 @@ jobs:
 
       - name: Run tests, coverage, and lint
         run: make test
+
+      - name: Build and verify standalone wheel
+        run: |
+          uv build
+          uv venv /tmp/abeval-wheel --python 3.12
+          uv pip install --python /tmp/abeval-wheel/bin/python dist/*.whl
+          cd /tmp
+          /tmp/abeval-wheel/bin/abeval --version
+          /tmp/abeval-wheel/bin/abeval validate skill "$GITHUB_WORKSPACE/submissions/aeh-pairwise-example/skills/aeh-pairwise-example"
+          /tmp/abeval-wheel/bin/python -c "from abevalflow.certification import get_available_profiles; assert 'skill' in get_available_profiles()"

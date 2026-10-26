@@ -49,7 +49,7 @@ Put shared schemas at
 `cases/<case-id>/mock-mcps/<server>/fixture.json`. Fixtures use
 `{"sequence": [...]}`. The pack's `mcps.json` supplies MCP configuration.
 
-`swap_mock_mcp.py` rewrites matching servers to launch the trial image's
+The MCP preparation service rewrites matching servers to launch the trial image's
 `/opt/mock-mcp/src/server.py` over stdio. Enrichment uploads the matching schema
 and fixture into each trial's workspace. Pairwise control configs can use a
 generated `<pack>-mcp-only` sibling to expose the same tools without a skill.
@@ -58,5 +58,9 @@ When `inputs.tools` is configured, each entry needs a nonempty `match` and the
 submission needs `tool_handlers.yaml`. `permissions.allow` and
 `permissions.deny`, when present, are lists.
 
-The local `submissions/aeh-hello-world`, `submissions/aeh-pairwise-example`, and
-`examples/aeh-skill-konflux` directories demonstrate the retained AEH formats.
+The checked-in `submissions/aeh-pairwise-example` demonstrates the pairwise
+submission format. Validate it with:
+
+```sh
+abeval validate submission submissions/aeh-pairwise-example
+```

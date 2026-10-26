@@ -34,10 +34,12 @@ shared task.
 
 ## Dependency ownership
 
-The task image installs this project's dependencies plus OTLP telemetry support.
+The task and runner images export their selected dependencies from `uv.lock`,
+install those exact versions, then install the application package. The task
+image includes model-review, storage, and OTLP telemetry support.
 The scanner images install only their pinned scanner packages. The orchestrator
-contains Harbor, the Kubernetes client, upstream AEH, and the three scripts
-needed to run/aggregate evaluations and rewrite MCP configuration. The trial
+installs the application with its `runner`, `llm`, and telemetry extras, including
+Harbor, the Kubernetes client, and the pinned upstream AEH package. The trial
 image contains upstream AEH's reward/scoring code, Claude Code, and the mock MCP
 server. It receives case files and skills at runtime through Harbor.
 
@@ -50,18 +52,17 @@ must still fail the HIGH gate when Bash is undeclared. Review the patch when
 upgrading Cisco; its version and source checks deliberately fail on drift.
 
 Both AEH images use AEH release `v1.53.3`, pinned to commit
-`7ec9078b621d8aa5d2c0ea3b4e61f9e60b4bed2f`. Their `AEH_SHA` build arguments
-require a full commit SHA. Update both together.
+`7ec9078b621d8aa5d2c0ea3b4e61f9e60b4bed2f`. The runner dependency is pinned in `pyproject.toml`; the trial image uses the
+`AEH_SHA` build argument. Keep these pins and the packaged `_vendor/aeh` resources
+aligned.
 The mock server uses commit `f68734ac68e504f4856c7a1d25e01919b95b3bb7`;
 `MOCK_SHA` also requires a full commit SHA. Claude Code is pinned through
 `CLAUDE_CODE_VERSION` in the trial Containerfile.
 
-The runner applies one small build-time patch to forward pack `mcps.json` files
-to Harbor because upstream AEH does not yet do this. The patch fails when its
-expected source changes. Pairwise judge warning handling is included in this
-AEH release and no longer needs a local patch. AEH v1.53.3 also changes score
-validation and reward normalization; treat results from before and after this
-upgrade as separate baselines.
+The packaged upstream adapter forwards pack `mcps.json` files to Harbor and
+loads the distributed scoring/reporting resources. It does not patch installed
+AEH source files. Resource provenance and license details are recorded in
+[THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md).
 
 All runtime images use an unprivileged user and writable group-0 directories
 for OpenShift arbitrary UIDs. Task dependencies are installed during the build;
@@ -71,7 +72,7 @@ steps do not install Python packages during evaluation.
 
 GitHub CI runs the Python checks and builds all five Containerfiles. The existing
 Konflux `.tekton/agent-eval-harness-{push,pull-request}.yaml` definitions build
-the orchestrator component using the Containerfile's AEH pin. Additional
+the orchestrator component using the package's AEH pin. Additional
 Konflux image components can point at the other four Containerfiles with the
 same repository-root build context. Component registrations and registry
 credentials belong to the deployment environment.

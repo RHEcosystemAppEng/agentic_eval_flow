@@ -1,6 +1,7 @@
 ---
 name: aeh-pairwise-example
-description: Minimal sample skill for AEH pairwise A/B demo submissions
+description: Use when verifying that a skill is loaded during an AEH pairwise evaluation.
+license: Apache-2.0
 ---
 
 # aeh-pairwise-example

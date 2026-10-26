@@ -8,11 +8,11 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from abevalflow.cli.compat.analyze import main as render_report
 from abevalflow.engines import get_all_engines, get_engine
 from abevalflow.report import AnalysisResult
+from abevalflow.results.aeh import aggregate_single_run
 from abevalflow.schemas import SubmissionMetadata
-from scripts.aggregate_aeh import aggregate_single_run
-from scripts.analyze import main as render_report
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -82,7 +82,7 @@ def test_publisher_accepts_shared_task_arguments(tmp_path):
 
 def test_repository_submissions_validate():
     """Validate every checked-in submission, without keeping a stale path list."""
-    from scripts.validate import validate_submission
+    from abevalflow.validation.submission import validate_submission
 
     submissions = sorted(path for path in (ROOT / "submissions").iterdir() if path.is_dir())
     assert submissions, "expected at least one checked-in submission"

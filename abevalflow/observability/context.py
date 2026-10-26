@@ -1,7 +1,7 @@
 """Metrics context for accumulating token usage and timing across a pipeline run.
 
 Append-only during execution, then serialized and persisted at the end.
-Per-gate token buckets keyed by phase/gate name for future parallelization.
+Per-gate token buckets keyed by phase/gate name.
 """
 
 from __future__ import annotations

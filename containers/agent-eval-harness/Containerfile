@@ -1,35 +1,22 @@
-# AEH orchestration: only the shared task's run-eval step.
-# Build from repository root; trial pods use containers/aeh-trial/Containerfile.
+# Local and CI orchestration; trial pods use the separate aeh-trial image.
 FROM registry.access.redhat.com/ubi9/python-312:latest
 USER 0
+COPY --from=ghcr.io/astral-sh/uv:0.13.0 /uv /usr/local/bin/uv
 RUN dnf install -y git tar && dnf clean all
-# The same AEH revision is used by orchestration and the in-pod verifier.
-ARG AEH_REPO=https://github.com/opendatahub-io/agent-eval-harness.git
-ARG AEH_SHA=7ec9078b621d8aa5d2c0ea3b4e61f9e60b4bed2f
-RUN echo "${AEH_SHA}" | grep -qE '^[0-9a-fA-F]{40}$' \
-    && git init /tmp/aeh \
-    && git -C /tmp/aeh remote add origin "${AEH_REPO}" \
-    && git -C /tmp/aeh fetch --depth 1 origin "${AEH_SHA}" \
-    && git -C /tmp/aeh checkout --detach FETCH_HEAD \
-    && mkdir -p /opt/agent-eval-harness/skills \
-    && cp -r /tmp/aeh/agent_eval /opt/agent-eval-harness/ \
-    && cp -r /tmp/aeh/skills/eval-run /opt/agent-eval-harness/skills/ \
-    && cp /tmp/aeh/pyproject.toml /opt/agent-eval-harness/ \
-    && rm -rf /tmp/aeh
-COPY containers/agent-eval-harness/patch_mcp_config.py /tmp/patch_mcp_config.py
-RUN python3 /tmp/patch_mcp_config.py /opt/agent-eval-harness/agent_eval/harbor/run.py \
-    && rm /tmp/patch_mcp_config.py
-# Harbor is AEH's Kubernetes backend, not a second evaluation engine.
-RUN pip install --no-cache-dir "harbor>=0.21.0" "kubernetes>=32.0.0,<37" \
-    pyyaml pydantic "anthropic[vertex]" jinja2 "truststore>=0.9,<1"
-COPY abevalflow/__init__.py abevalflow/aeh_scoring.py /opt/agent-eval-harness/abevalflow/
-COPY abevalflow/harbor_extensions /opt/agent-eval-harness/abevalflow/harbor_extensions
-COPY scripts/__init__.py scripts/run_aeh.py scripts/aggregate_aeh.py scripts/swap_mock_mcp.py /opt/agent-eval-harness/scripts/
+COPY pyproject.toml README.md uv.lock /opt/agent-eval-harness/
+WORKDIR /opt/agent-eval-harness
+RUN uv export --frozen --no-dev --extra runner --extra llm --extra observability --no-emit-project --no-hashes --output-file /tmp/runtime-requirements.txt \
+    && pip install --no-cache-dir -r /tmp/runtime-requirements.txt \
+    && rm /tmp/runtime-requirements.txt
+COPY abevalflow /opt/agent-eval-harness/abevalflow
+COPY scripts /opt/agent-eval-harness/scripts
+RUN pip install --no-cache-dir --no-deps /opt/agent-eval-harness \
+    && abeval --version \
+    && python3 -c "import agent_eval.harbor.run; import abevalflow.harbor_extensions.openshift_environment; from abevalflow.execution.upstream import configure_task_resources; configure_task_resources()"
 COPY containers/agent-eval-harness/sitecustomize.py /tmp/sitecustomize.py
 RUN python3 -c "import shutil, site; shutil.copy('/tmp/sitecustomize.py', site.getsitepackages()[0] + '/sitecustomize.py')" \
     && rm /tmp/sitecustomize.py
-RUN PYTHONPATH=/opt/agent-eval-harness python3 -c "import agent_eval.harbor.run; import abevalflow.harbor_extensions.openshift_environment; import scripts.run_aeh"
-ENV PYTHONPATH=/opt/agent-eval-harness HOME=/workspace
+ENV HOME=/workspace
 RUN mkdir -p /workspace /logs /tests /solution /harbor /installed-agent \
     && chgrp -R 0 /workspace /logs /tests /solution /harbor /installed-agent /opt/agent-eval-harness \
     && chmod -R g=u /workspace /logs /tests /solution /harbor /installed-agent /opt/agent-eval-harness

@@ -6,9 +6,9 @@ import pytest
 import yaml
 
 from abevalflow.certification import CheckId, compute_certification
+from abevalflow.cli.compat.validate_skill_structure import main
+from abevalflow.policy.aggregation import aggregate_scorecard
 from abevalflow.skill_structure import load_skill_structure_result, validate_skill_structure
-from scripts.aggregate_scorecard import aggregate_scorecard
-from scripts.validate_skill_structure import main
 
 
 @pytest.fixture

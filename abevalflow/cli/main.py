@@ -1,0 +1,296 @@
+"""Installed command-line interface for skill validation and AEH evaluation."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import sys
+from contextlib import redirect_stdout
+from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
+
+from pydantic import ValidationError
+
+from abevalflow.config.runtime import ConfigurationError, resolve_config
+
+
+def workflow_options(parser: argparse.ArgumentParser) -> None:
+    workload = parser.add_argument_group("Kubernetes workload")
+    scanners = parser.add_argument_group("Tier 1 scanners")
+    models = parser.add_argument_group("Model endpoints and review")
+    storage = parser.add_argument_group("Persistence and publication")
+    credentials = parser.add_argument_group("Credentials")
+    parser.add_argument("skill", nargs="?", help="Directory containing SKILL.md; defaults to ABEVAL_SKILL or cwd")
+    parser.add_argument("--source", type=Path, help="Source root containing the skill and submission")
+    parser.add_argument("--submission", type=Path, help="AEH submission directory; otherwise discovered in the catalog")
+    parser.add_argument("--tiers", help="1, 2, or 1,2 (default: 1)")
+    parser.add_argument("--output", type=Path, help="New run directory (default: .abeval/runs/<run-id>)")
+    parser.add_argument("--run-id", help="Stable filesystem-safe run identifier")
+    parser.add_argument("--revision", help="Evaluated source revision")
+    models.add_argument(
+        "--submission-review",
+        choices=("auto", "on", "off"),
+        help="Honor metadata, enable, or disable advisory submission review (default: auto)",
+    )
+    models.add_argument(
+        "--skill-review",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Enable advisory LLM review of SKILL.md",
+    )
+    parser.add_argument(
+        "--continue-on-tier1-failure",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Allow Tier 2 after blocking Tier 1 findings; preserve the failing verdict",
+    )
+    storage.add_argument("--persist", help="Comma-separated destinations: postgres,s3,compass,oci; disabled by default")
+    storage.add_argument(
+        "--persistence-required",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Fail the command when selected publication fails (default: enabled)",
+    )
+    workload.add_argument("--backend", choices=("kubernetes",), help="Remote workload backend")
+    workload.add_argument("--kubeconfig", type=Path, help="Remote cluster kubeconfig (also KUBECONFIG)")
+    workload.add_argument("--kube-context", help="Explicit kubeconfig context")
+    workload.add_argument("--namespace", help="Namespace for trial pods (default: default)")
+    workload.add_argument("--credentials-secret", help="Workload model credential Secret (default: llm-credentials)")
+    workload.add_argument("--trial-image", help="Trial runtime image, preferably pinned by digest")
+    workload.add_argument("--model", help="Override the submission's execution model")
+    workload.add_argument("--judge-model", help="Override the submission's judge model")
+    workload.add_argument("--score-script", type=Path, help="Upstream AEH score.py for pairwise aggregation")
+    scanners.add_argument(
+        "--scanner-runtime",
+        choices=("local", "podman", "docker"),
+        help="Run scanners on PATH or in pinned containers (default: local)",
+    )
+    scanners.add_argument("--security-image", help="Cisco scanner image for container execution")
+    scanners.add_argument("--quality-image", help="Quality scanner image for container execution")
+    scanners.add_argument("--security-command", help="Cisco scanner executable (default: skill-scanner)")
+    scanners.add_argument("--quality-command", help="Quality scanner executable (default: harness-eval)")
+    parser.add_argument("--command-timeout", type=int, help="External command timeout in seconds (default: 7200)")
+    models.add_argument("--llm-base-url", help="Submission/skill review API endpoint")
+    models.add_argument("--llm-model", help="Submission/skill review model")
+    models.add_argument("--agent-base-url", help="Agent API endpoint passed to AEH")
+    models.add_argument("--judge-base-url", help="Suite-level judge API endpoint")
+    for secret in ("llm-api-key", "agent-api-key", "judge-api-key", "s3-access-key", "s3-secret-key", "compass-token"):
+        credentials.add_argument(f"--{secret}", help=f"Credential; prefer ABEVAL_{secret.upper().replace('-', '_')}")
+    storage.add_argument("--database-url", help="SQLAlchemy database URL; prefer ABEVAL_DATABASE_URL for credentials")
+    storage.add_argument("--s3-endpoint", help="S3-compatible endpoint URL")
+    storage.add_argument("--s3-bucket", help="S3 bucket (default: ab-eval-reports)")
+    storage.add_argument("--s3-verify-tls", action=argparse.BooleanOptionalAction, default=None)
+    storage.add_argument("--oci-subject", help="OCI image reference including @sha256 digest for report attachment")
+    storage.add_argument("--registry-config", type=Path, help="ORAS registry authentication file")
+
+
+def parser() -> argparse.ArgumentParser:
+    command = argparse.ArgumentParser(prog="abeval", description="Validate skills and run AEH trials on Kubernetes.")
+    command.add_argument("--version", action="version", version=package_version())
+    command.add_argument("--verbose", action="store_true", help="Enable diagnostic logging")
+    subcommands = command.add_subparsers(dest="command", required=True)
+    for name, help_text in {
+        "run": "Execute selected tiers, report results, and publish when requested",
+        "plan": "Show resolved non-secret configuration and operations without executing them",
+        "doctor": "Check dependencies and remote workload readiness without running models",
+        "init": "Initialize a run manifest for independent container phases",
+    }.items():
+        child = subcommands.add_parser(name, help=help_text)
+        workflow_options(child)
+        if name == "doctor":
+            child.add_argument(
+                "--offline", action="store_true", help="Check local prerequisites without contacting a cluster"
+            )
+    validate = subcommands.add_parser("validate", help="Validate one skill or AEH submission without model calls")
+    validate.add_argument("kind", choices=("skill", "submission"))
+    validate.add_argument("path", type=Path)
+    validate.add_argument("--output", type=Path, help="Optional JSON report path")
+    for name, help_text in {
+        "report": "Regenerate local reports from existing run evidence",
+        "publish": "Publish an existing run without repeating checks or trials",
+        "phase": "Execute one selected phase from an initialized run",
+    }.items():
+        child = subcommands.add_parser(name, help=help_text)
+        child.add_argument("--run-dir", type=Path, required=True)
+        if name == "phase":
+            child.add_argument(
+                "name",
+                choices=(
+                    "prepare",
+                    "structure",
+                    "security",
+                    "quality",
+                    "skill-review",
+                    "submission",
+                    "submission-review",
+                    "evaluate",
+                    "report",
+                ),
+            )
+        if name == "publish":
+            child.add_argument("--persist", help="Override selected publication destinations")
+            child.add_argument("--database-url", help="Database URL; prefer ABEVAL_DATABASE_URL for credentials")
+            child.add_argument("--s3-endpoint")
+            child.add_argument("--s3-bucket")
+            child.add_argument("--oci-subject")
+            child.add_argument("--registry-config", type=Path)
+            child.add_argument("--persistence-required", action=argparse.BooleanOptionalAction, default=None)
+    return command
+
+
+def package_version() -> str:
+    try:
+        return version("abevalflow")
+    except PackageNotFoundError:
+        return "0.2.0"
+
+
+def emit(value) -> None:
+    print(json.dumps(value, indent=2, default=str))
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Return 0 for success, 1 for policy failure, 2 for usage, or 3 for runtime failure."""
+    args = parser().parse_args(argv)
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.WARNING,
+        format="%(levelname)s %(name)s: %(message)s",
+        stream=sys.stderr,
+    )
+    try:
+        if args.command == "validate":
+            from abevalflow.results.run import write_json
+
+            if args.kind == "skill":
+                from abevalflow.skill_structure import validate_skill_structure
+
+                result = validate_skill_structure(args.path)
+                payload = result.model_dump(mode="json")
+                valid = result.passed
+            else:
+                from abevalflow.config.runtime import load_metadata
+                from abevalflow.validation.submission import validate_submission
+
+                metadata = load_metadata(args.path)
+                errors = validate_submission(
+                    args.path,
+                    aeh_mode=metadata.aeh_mode.value,
+                    aeh_control_config=metadata.aeh_control_config,
+                    aeh_treatment_config=metadata.aeh_treatment_config,
+                )
+                valid = not errors
+                payload = {"valid": valid, "errors": errors}
+            if args.output:
+                write_json(args.output, payload)
+            emit(payload)
+            return 0 if valid else 1
+        if args.command in {"report", "publish", "phase"}:
+            from abevalflow.workflow.operations import Operations
+            from abevalflow.workflow.service import execute_step, load_run, phase, save_run
+            from abevalflow.workflow.workspace import run_lock
+
+            if args.command == "phase":
+                with redirect_stdout(sys.stderr):
+                    result = phase(args.run_dir, args.name)
+            else:
+                with run_lock(args.run_dir):
+                    config, result = load_run(args.run_dir)
+                    if args.command == "report":
+                        execute_step(config, result, "report", Operations(config))
+                    else:
+                        from abevalflow.persistence.service import publish
+
+                        if args.persist is not None:
+                            destinations = tuple(v.strip() for v in args.persist.split(",") if v.strip())
+                            if set(destinations) - {"postgres", "s3", "compass", "oci"}:
+                                raise ConfigurationError("Persistence destinations: postgres,s3,compass,oci")
+                            config.persist = destinations
+                        overrides = {
+                            key: getattr(args, key)
+                            for key in (
+                                "database_url",
+                                "s3_endpoint",
+                                "s3_bucket",
+                                "oci_subject",
+                                "registry_config",
+                                "persistence_required",
+                            )
+                            if getattr(args, key) is not None
+                        }
+                        config = type(config).model_validate(
+                            {
+                                **config.model_dump(),
+                                "database_url": config.database_url,
+                                **overrides,
+                                **{
+                                    key: getattr(config, key)
+                                    for key in (
+                                        "llm_api_key",
+                                        "agent_api_key",
+                                        "judge_api_key",
+                                        "s3_access_key",
+                                        "s3_secret_key",
+                                        "compass_token",
+                                    )
+                                },
+                            }
+                        )
+                        result.publication = publish(config, result)
+                        save_run(config, result)
+            emit(result.model_dump(mode="json"))
+            return result.exit_code
+        config = resolve_config(vars(args))
+        if args.command == "plan":
+            from abevalflow.workflow.planning import build_plan
+
+            emit(build_plan(config))
+            return 0
+        if args.command == "doctor":
+            from abevalflow.workflow.readiness import check_readiness
+
+            checks = check_readiness(config, cluster=not args.offline)
+            emit({"ready": all(c["ready"] for c in checks), "checks": checks})
+            return 0 if all(c["ready"] for c in checks) else 3
+        if args.command == "init":
+            from abevalflow.workflow.service import create_result, save_run
+            from abevalflow.workflow.workspace import run_lock
+
+            with run_lock(config.output, create=True):
+                save_run(config, create_result(config))
+            emit({"run_dir": str(config.output)})
+            return 0
+        from abevalflow.observability.otel import setup_tracer_provider, shutdown_tracer_provider
+        from abevalflow.workflow.service import run
+
+        setup_tracer_provider()
+        try:
+            with redirect_stdout(sys.stderr):
+                result = run(config)
+        finally:
+            shutdown_tracer_provider()
+        emit(
+            {
+                "run_id": result.run_id,
+                "run_dir": str(config.output),
+                "exit_code": result.exit_code,
+                "steps": [{"name": s.name, "status": s.status, "verdict": s.verdict} for s in result.steps],
+            }
+        )
+        return result.exit_code
+    except ConfigurationError as exc:
+        print(f"Configuration error: {exc}", file=sys.stderr)
+        return 2
+    except ValidationError as exc:
+        fields = ", ".join(".".join(map(str, error["loc"])) for error in exc.errors())
+        print(f"Invalid configuration fields: {fields}", file=sys.stderr)
+        return 2
+    except FileExistsError:
+        print("Run directory already exists; choose a new --output or --run-id", file=sys.stderr)
+        return 2
+    except (OSError, ValueError) as exc:
+        print(f"Unable to execute command ({type(exc).__name__})", file=sys.stderr)
+        return 2
+    except Exception as exc:
+        print(f"Runtime failure ({type(exc).__name__})", file=sys.stderr)
+        return 3

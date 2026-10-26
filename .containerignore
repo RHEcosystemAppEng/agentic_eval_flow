@@ -6,3 +6,7 @@
 *.pyc
 .env*
 .DS_Store
+
+.abeval
+.coverage*
+htmlcov

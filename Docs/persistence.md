@@ -1,5 +1,21 @@
 # Reports and persistence
 
+## CLI runs
+
+The CLI always generates local reports. Select destinations with `--persist` or
+`ABEVAL_PERSIST`: `postgres`, `s3`, `compass`, and `oci`. Persistence works for
+Tier 1, Tier 2, or combined runs. PostgreSQL credentials use `ABEVAL_DATABASE_URL`;
+S3 credentials use `ABEVAL_S3_ENDPOINT`, `ABEVAL_S3_ACCESS_KEY`, and
+`ABEVAL_S3_SECRET_KEY`. Existing `DATABASE_URL` and `MINIO_*` aliases are supported.
+
+`abeval publish --run-dir <directory> --persist postgres,s3` retries publication
+without repeating checks or trials. Database snapshots are transactional and
+idempotent by run ID; S3 keys use `<skill>/<run-id>/reports/` and
+`<skill>/<run-id>/run.json`. Publication outcomes are recorded separately from
+evaluation verdicts. Source copies and kubeconfigs are excluded from uploads.
+
+## Shared task interface
+
 The shared task's `enable-persistence` parameter defaults to `false`.
 When enabled, it aggregates available scan and AEH results, optionally pushes
 Compass Facts, attaches reports to the caller's image, and stores configured
@@ -31,7 +47,7 @@ diagnostics used by certification. Missing or invalid evidence fails the check.
 To produce the same report locally, run from this repository:
 
 ```sh
-PYTHONPATH=. python scripts/validate_skill_structure.py /path/to/pack/skills/my-skill \
+abeval validate skill /path/to/pack/skills/my-skill \
   --output reports/my-skill/skill-structure-validation.json
 ```
 
@@ -42,7 +58,7 @@ also accepts the optional Postgres `database-tls-route-host` secret key.
 `store_results.py` creates missing tables and uses the task run ID for
 idempotency. It stores a scorecard on its own when no AEH evaluation ran.
 Existing nullable provenance columns remain in the database model for deployed
-schema compatibility; no destructive database migration runs during cleanup.
+schema compatibility; table creation does not perform destructive database migrations.
 
 Reports use the submission metadata name when validation ran, otherwise the
 catalog identifier. Storage prefixes use the existing timestamp/name/run-ID

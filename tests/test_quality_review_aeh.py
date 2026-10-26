@@ -8,7 +8,7 @@ from unittest.mock import patch
 import yaml
 
 from abevalflow.llm_client import LLMResult
-from scripts.test_quality_review import (
+from abevalflow.review.submission import (
     _advisory_aeh_missing_files,
     review_submission,
 )
@@ -67,7 +67,7 @@ class TestReviewSubmissionAeh:
         }
         payload = __import__("json").dumps(fake)
         with patch(
-            "scripts.test_quality_review.llm_client.chat_completion_with_usage",
+            "abevalflow.review.submission.llm_client.chat_completion_with_usage",
             return_value=LLMResult(
                 content=payload,
                 prompt_tokens=1,

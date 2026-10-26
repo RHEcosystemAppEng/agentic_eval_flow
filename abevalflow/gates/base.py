@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 class GateType(StrEnum):
     """Type of gate in the unified scorecard."""
 
+    VALIDATION = "validation"
     ENGINE = "engine"
     SECURITY = "security"
     QUALITY = "quality"
@@ -80,7 +81,7 @@ class GateResult(BaseModel):
     maintaining implementation-specific policy configuration.
     """
 
-    gate_type: GateType = Field(description="Type of gate: engine, security, or quality")
+    gate_type: GateType = Field(description="Type of gate: validation, engine, security, or quality")
     gate_name: str = Field(description="Category name of the gate (e.g., 'evaluation', 'security', 'quality')")
     policy_key: str | None = Field(
         default=None,

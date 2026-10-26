@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from scripts.publish import (
+from abevalflow.persistence.s3 import (
     _build_artifact_prefix,
     upload_aeh_debug_artifacts,
     upload_aeh_run_artifacts,

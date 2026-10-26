@@ -1,0 +1,12 @@
+{
+  "version": "1.53.3",
+  "commit": "7ec9078b621d8aa5d2c0ea3b4e61f9e60b4bed2f",
+  "sha256": {
+    "score.py": "2bd5e8968c23a8ee6f9ced48f0e255d97a3f94b42b98345c42479d2ddd46903b",
+    "report.py": "fd358f4c7b0670d3925e230cbb37d4c0093c405f4dcea1e348a8cf1721cf72ae",
+    "LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+    "templates/instruction.md.tmpl": "47c6640d6eb44632973a90e8e84fc34901ab7ae4f7a64361c901dd36f52f43d6",
+    "templates/task.toml.tmpl": "7aab455ec8af845b7373c3b752e282e3d13563f0a31e9b65f7cb6a9362a41748",
+    "templates/test.sh.tmpl": "2cffcfd98433bf8c93a26b6bc51489eeee41b493fc87a43465b0982c9c222a4b"
+  }
+}

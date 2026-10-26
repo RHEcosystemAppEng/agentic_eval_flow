@@ -13,7 +13,7 @@ from pathlib import Path
 
 import yaml
 
-from scripts.swap_mock_mcp import swap_mock_mcp_servers
+from abevalflow.execution.mcp import swap_mock_mcp_servers
 
 
 def _write_submission(

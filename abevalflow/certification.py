@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Default path for certification profiles configuration
-DEFAULT_PROFILES_PATH = Path(__file__).parent.parent / "config" / "certification_profiles.yaml"
+DEFAULT_PROFILES_PATH = Path(__file__).parent / "config" / "certification_profiles.yaml"
 
 
 class CertificationLevel(StrEnum):

@@ -1,71 +1,226 @@
-# AEH runtime for Konflux skill evaluation
+# Agentic Eval Flow
 
-This repository supplies the images and Python code used by
-`konflux-shared-tasks/task/aeh-skill-eval`. That shared Tekton Task owns the
-workflow and fans out once per catalog skill. AEH runs through Harbor on
-Kubernetes/OpenShift, in single or control/treatment pairwise mode.
+`abevalflow` validates skills and runs Agent Eval Harness (AEH) evaluations through
+Harbor on Kubernetes/OpenShift. Install the `abeval` CLI locally or in a container.
+The same application services power combined runs and independent container phases.
 
-The supported flow is:
+## Install
 
-1. Materialize the caller's trusted source artifact into a private workspace per skill.
-2. Always validate skill structure and scan the skill with Cisco Skill Scanner and harness-eval.
-3. Validate and review an opted-in, changed skill with an AEH submission.
-4. Run AEH in separate trial pods and aggregate its judge results.
-5. Optionally produce scorecards, push Compass Facts, attach OCI reports, and store results in Postgres/MinIO.
-6. Emit independent Tier A and Tier B Konflux results. Tier B is `SKIPPED` when evaluation does not apply.
-
-Persistence is independently gated by `enable-persistence`. It can store
-scan-only scorecards for skills without AEH submissions or without an opted-in
-evaluation. Scanner findings remain available even when a scan exits nonzero.
-
-## Images
-
-All five images share `quay.io/ecosystem-appeng/agent-eval-harness`; each
-purpose has its own tag. Build them from this repository's root:
+Python 3.12 or newer is required. From a checkout:
 
 ```sh
-make images IMAGE_REPOSITORY=quay.io/ecosystem-appeng/agent-eval-harness VERSION=v3.0
+uv tool install .
+abeval --version
 ```
 
-| Purpose tag suffix | Containerfile | Used by |
-|---|---|---|
-| `-task` | [task utilities](containers/aeh-task/Containerfile) | Source preparation, validation, MCP configuration rewriting, advisory review, reporting, scorecards, storage, result serialization |
-| `-security-scan` | [Cisco scanner](containers/security-scan/Containerfile) | `security-scan` step |
-| `-skillmd-scan` | [SKILL.md scanner](containers/skillmd-scan/Containerfile) | `skillmd-scan` step |
-| `-runner` | [orchestrator](containers/agent-eval-harness/Containerfile) | `run-eval` step; creates trial pods and performs suite-level scoring |
-| `-trial` | [trial runtime](containers/aeh-trial/Containerfile) | Trial pods; Claude Code, stdio mock MCP server, AEH reward verifier |
+Install the optional capabilities you need:
 
-The shared task selects these independently through `task-image`,
-`security-scan-image`, `skillmd-scan-image`, `runner-image`, and `aeh-image`.
-`aeh-image` means the **trial pod image**. External trusted-artifact and ORAS
-steps retain their Konflux images.
+```sh
+uv tool install '.[llm,runner,storage,observability]'
+```
 
-See [the published test release](Docs/test-release-20261019.md),
-[image builds and release wiring](Docs/images.md),
-[the shared task contract](Docs/konflux-integration-guide.md),
-[submission files](Docs/submission-formats.md), and
-[persistence](Docs/persistence.md).
+| Extra | Capability |
+|---|---|
+| `llm` | Advisory skill and submission reviews |
+| `runner` | Pinned AEH and Harbor runtime, Kubernetes client, packaged scoring resources |
+| `storage` | PostgreSQL and S3-compatible storage clients |
+| `observability` | OpenTelemetry OTLP tracing |
+| `all` | All runtime capabilities |
+| `dev` | Tests, coverage, lint, and distribution build tools |
+
+The base installation can validate structure, validate submissions, and plan runs
+without model credentials, a database, or Harbor. Full Tier 1 needs scanner
+executables on PATH or Podman/Docker with the scanner images. Scanners and the
+trial agent runtime are separate from Python extras.
+
+## Two tiers
+
+**Tier 1** validates structure and runs deterministic quality and security scans.
+`--skill-review` additionally requests an advisory LLM review of `SKILL.md`.
+
+**Tier 2** validates an AEH submission, reviews its cases and judges unless
+`skip_quality_review: true`, runs single or pairwise evaluation through Harbor,
+and aggregates results. Submission review is separate from agent execution and
+from the judges configured in evaluation YAML.
+
+```sh
+abeval validate skill ./pack/skills/my-skill
+abeval validate submission ./submissions/pack/my-skill
+
+# Use the pinned scanner containers without installing scanner Python packages.
+abeval run ./pack/skills/my-skill --tiers 1 --scanner-runtime podman
+
+# Native scanners must provide skill-scanner and harness-eval on PATH.
+abeval run ./pack/skills/my-skill --tiers 1
+
+# Execute static checks followed by live evaluation.
+abeval run ./pack/skills/my-skill --tiers 1,2 \
+  --submission ./submissions/pack/my-skill --trial-image quay.io/example/trial@sha256:...
+```
+
+Tier 1 is the default. Available credentials never enable model calls or
+publication by themselves. A blocking Tier 1 failure skips Tier 2 while preserving
+reports. `--continue-on-tier1-failure` requests evaluation despite those findings
+and retains the failed Tier 1 verdict. Required scanner failures are runtime
+errors, not clean scans. Submission-review findings are advisory unless the
+submission's quality gate is blocking.
+
+For the checked-in example:
+
+```sh
+abeval run submissions/aeh-pairwise-example/skills/aeh-pairwise-example \
+  --source . --tiers 1 --scanner-runtime podman
+```
+
+## Configuration
+
+Every runtime option has an `ABEVAL_` environment equivalent: replace hyphens
+with underscores and uppercase the name. Flags override their corresponding
+environment variables. Evaluation definitions, cases, and judges remain in
+submission files. The CLI discovers `submissions/<pack>/<skill>` for the standard
+`<pack>/skills/<skill>` layout; use `--submission` for other layouts.
+
+```sh
+export ABEVAL_TIERS=1,2
+export ABEVAL_SCANNER_RUNTIME=podman
+export ABEVAL_NAMESPACE=agentic-plugins-evaluation
+export ABEVAL_TRIAL_IMAGE=quay.io/example/trial@sha256:...
+abeval plan ./pack/skills/my-skill
+```
+
+`plan` shows the selected operations, non-secret effective configuration, and
+configuration origins. It does not stage source, contact services, or run models.
+`doctor` checks the requested dependencies and workload-cluster permissions;
+`doctor --offline` checks only local prerequisites. Readiness checks do not
+invoke models or create trial pods.
+
+| Purpose | Environment variables |
+|---|---|
+| Review API | `ABEVAL_LLM_BASE_URL`, `ABEVAL_LLM_MODEL`, `ABEVAL_LLM_API_KEY` |
+| Agent API | `ABEVAL_AGENT_BASE_URL`, `ABEVAL_AGENT_API_KEY` |
+| Suite-level judge API | `ABEVAL_JUDGE_BASE_URL`, `ABEVAL_JUDGE_API_KEY` |
+| Cluster | `ABEVAL_KUBECONFIG` / `KUBECONFIG`, `ABEVAL_KUBE_CONTEXT`, `ABEVAL_NAMESPACE` |
+| Workload model Secret | `ABEVAL_CREDENTIALS_SECRET` (default `llm-credentials`) |
+| PostgreSQL | `ABEVAL_DATABASE_URL` |
+| S3 | `ABEVAL_S3_ENDPOINT`, `ABEVAL_S3_ACCESS_KEY`, `ABEVAL_S3_SECRET_KEY`, `ABEVAL_S3_BUCKET` |
+| Compass | `ABEVAL_COMPASS_TOKEN`; destination and fact identities remain in metadata |
+| OCI | `ABEVAL_OCI_SUBJECT`, `ABEVAL_REGISTRY_CONFIG` |
+| Tracing | `OTEL_EXPORTER_OTLP_ENDPOINT` |
+
+Existing `LLM_*`, `ANTHROPIC_*`, `OPENAI_*`, `AGENT_EVAL_K8S_*`, `DATABASE_URL`,
+and `MINIO_*` variables are accepted as aliases where applicable. Namespaced
+variables take precedence over aliases. `MINIO_INSECURE_SSL=1` is supported;
+`ABEVAL_S3_VERIFY_TLS=false` is the equivalent explicit setting.
+
+`--submission-review auto` honors `skip_quality_review`; `on` and `off` are explicit
+overrides. Disabling review conflicts with a blocking submission quality policy.
+`aeh_mode`, control/treatment config paths, model definitions, gate thresholds,
+and certification policies retain their submission-defined meanings.
+
+## Local orchestration with remote trials
+
+The CLI runs on your laptop; trial pods run on the selected workload cluster.
+
+```sh
+export KUBECONFIG=/path/to/workload.kubeconfig
+export ABEVAL_LLM_BASE_URL=https://gateway.example/v1
+export ABEVAL_LLM_MODEL=review-model
+export ABEVAL_LLM_API_KEY='...'
+
+abeval doctor ./pack/skills/my-skill --tiers 1,2 \
+  --scanner-runtime podman --namespace agentic-plugins-evaluation \
+  --trial-image quay.io/example/trial@sha256:...
+
+abeval run ./pack/skills/my-skill --tiers 1,2 \
+  --scanner-runtime podman --namespace agentic-plugins-evaluation \
+  --trial-image quay.io/example/trial@sha256:...
+```
+
+An explicit kubeconfig overrides in-cluster credential discovery. `--kube-context`
+selects a context without editing the user's kubeconfig. Without an explicit
+namespace, the kubeconfig context or in-cluster namespace is used, then `default`.
+The account needs pod creation, inspection, deletion, log access, and exec access.
+The remote namespace must contain the configured workload credentials Secret.
+Local API credentials do not automatically populate remote Secrets.
+
+The workload cluster must pull the trial image and reach the model/tool endpoints.
+The local orchestrator must reach the Kubernetes API and any review or suite-level
+judge endpoints. OpenShift writable-volume and verifier-directory preparation is
+provided by the packaged Harbor environment extension.
+
+## Reports and persistence
+
+A run creates an isolated source copy and saves evidence under
+`.abeval/runs/<run-id>/` by default. `--output` selects a new directory. Existing
+run directories are not overwritten, and concurrent writers are rejected.
+Reports are produced independently of publication and retained after failures.
+
+| Artifact | Contents |
+|---|---|
+| `run.json` | Versioned configuration, source identity, step outcomes, artifact paths, publication results |
+| `reports/scorecard.json`, `scorecard.md` | Gate results and policy recommendation |
+| `reports/certification.json` | Certification levels and checks |
+| `reports/report.json`, `report.md` | AEH results when evaluation ran |
+| Scanner JSON/SARIF and logs | Static evidence, including failed scans |
+| `reports/_ai_review.json` | Submission review and usage metrics when requested |
+
+Execution status, policy verdict, and publication status are separate. A failed
+upload does not change the skill's evaluation verdict. Selected persistence
+failures fail the command by default; `--no-persistence-required` makes them
+advisory. Each destination is attempted independently, including on failed runs.
+
+```sh
+export ABEVAL_DATABASE_URL='postgresql+psycopg://...'
+export ABEVAL_S3_ENDPOINT=https://minio.example
+export ABEVAL_S3_ACCESS_KEY='...'
+export ABEVAL_S3_SECRET_KEY='...'
+
+abeval run ./pack/skills/my-skill --tiers 1 --scanner-runtime podman --persist postgres,s3
+abeval publish --run-dir .abeval/runs/<run-id> --persist postgres,s3
+abeval report --run-dir .abeval/runs/<run-id>
+```
+
+PostgreSQL stores evaluation rows, trials, scans, scorecards, certification, and
+review metrics. Retries complete missing records without duplicating a run.
+S3 stores reports and the run manifest under `<skill>/<run-id>/`; source copies
+and kubeconfigs are excluded. Compass publishes the facts selected in metadata.
+OCI publication requires `--oci-subject repository@sha256:<digest>` and ORAS on
+PATH; reports are attached as `application/vnd.agentic-eval.reports.v1`.
+Credentials are excluded from serialized runtime configuration.
+
+The CLI writes structured JSON to stdout and execution diagnostics to stderr.
+
+Exit codes: `0` success; `1` blocking findings; `2` invalid invocation or
+configuration; `3` required runtime or publication failure. Advisory findings
+remain visible in reports without failing the command.
+
+## Container phases
+
+Initialize a run once, then invoke its declared phases from individual images:
+
+```sh
+abeval init ./pack/skills/my-skill --tiers 1 --output /workspace/run
+abeval phase prepare --run-dir /workspace/run
+abeval phase structure --run-dir /workspace/run
+abeval phase security --run-dir /workspace/run
+abeval phase quality --run-dir /workspace/run
+abeval phase report --run-dir /workspace/run
+```
+
+All phase containers must mount the run and authored source at the manifest's
+absolute paths. Runtime credentials are read from the current environment.
+A phase with existing evidence is not rerun implicitly. Publishing can be retried
+without repeating checks or trials. Existing `scripts/*.py` files are compatibility
+launchers for deployed task bundles; application behavior resides in the package.
 
 ## Development
 
 ```sh
-uv sync --extra dev --extra observability --locked
+uv sync --locked --extra dev --extra observability
 make test
-uv run --locked --extra dev ruff check abevalflow scripts tests containers
-uv run --locked --extra dev ruff format --check abevalflow scripts tests containers
+uv build
 ```
 
-Validate a local submission:
-
-```sh
-uv run --locked python scripts/validate.py submissions/aeh-pairwise-example \
-  --eval-engine aeh --aeh-mode pairwise
-```
-
-`abevalflow/` holds the AEH score adapter, OpenShift environment and task
-enrichment, metadata/report contracts, gates, certification, telemetry, and DB
-models. `scripts/` contains the entry points called by the shared task.
-`containers/` defines the five runtime purposes. `config/` contains the skill
-certification profile and optional persistence secret templates. Examples are
-AEH submissions; the shared task and its bundle release live in
-`konflux-shared-tasks`.
+See [architecture](Docs/architecture.md), [submission formats](Docs/submission-formats.md),
+[image builds](Docs/images.md), [persistence](Docs/persistence.md), and
+[Konflux integration](Docs/konflux-integration-guide.md).

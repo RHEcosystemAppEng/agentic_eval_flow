@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 
-from scripts.print_compass_facts_debug import main, print_compass_facts_debug
+from abevalflow.cli.compat.print_compass_facts_debug import main
+from abevalflow.reporting.compass import print_compass_facts_debug
 
 
 def test_reports_missing_scorecard(tmp_path, capsys):

@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from abevalflow.schemas import EvalEngine
-from scripts.validate import validate_submission
+from abevalflow.validation.submission import validate_submission
 from tests.test_validate_aeh import VALID_EVAL_YAML, create_aeh_submission
 
 

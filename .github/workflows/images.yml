@@ -17,3 +17,16 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build and check image
         run: make "${{ matrix.image }}" IMAGE_REPOSITORY=localhost/aeh-ci VERSION=check
+
+      - name: Verify installed application
+        if: matrix.image == 'aeh-task' || matrix.image == 'agent-eval-harness'
+        run: |
+          purpose=task
+          if [ "${{ matrix.image }}" = "agent-eval-harness" ]; then purpose=runner; fi
+          podman run --rm "localhost/aeh-ci:check-${purpose}" abeval --version
+
+      - name: Verify task generation
+        if: matrix.image == 'agent-eval-harness'
+        run: |
+          podman run --rm --network=none -v "$PWD/submissions:/input:ro" localhost/aeh-ci:check-runner \
+            python3 -c 'from pathlib import Path; from abevalflow.execution.runner import HarborRunner; r=HarborRunner(model="test-model",image="trial:test"); r._prepare_enriched_tasks(Path("/input/aeh-pairwise-example/eval-treatment.yaml"),Path("/tmp/tasks")); assert list(Path("/tmp/tasks").glob("*/task.toml"))'

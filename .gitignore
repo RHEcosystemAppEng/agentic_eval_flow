@@ -34,3 +34,6 @@ test-fact.json
 .coverage
 .coverage.*
 htmlcov/
+
+# Local evaluation runs
+.abeval/

@@ -9,6 +9,12 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from abevalflow.db.models import Base, EvaluationRun, Trial
+from abevalflow.persistence.postgres import (
+    _compute_content_hash,
+    map_result_to_run,
+    map_trials,
+    store,
+)
 from abevalflow.report import (
     AnalysisResult,
     AnalysisSummary,
@@ -16,12 +22,6 @@ from abevalflow.report import (
     Recommendation,
     TrialResult,
     VariantSummary,
-)
-from scripts.store_results import (
-    _compute_content_hash,
-    map_result_to_run,
-    map_trials,
-    store,
 )
 
 
@@ -249,7 +249,7 @@ class TestMainCLI:
                 "cli-run",
             ],
         )
-        from scripts.store_results import main
+        from abevalflow.cli.compat.store_results import main
 
         with pytest.raises(SystemExit) as exc_info:
             main()
@@ -268,7 +268,7 @@ class TestMainCLI:
                 "bad-run",
             ],
         )
-        from scripts.store_results import main
+        from abevalflow.cli.compat.store_results import main
 
         with pytest.raises(SystemExit) as exc_info:
             main()

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import json
 
+from abevalflow.cli.compat import write_metrics_checkpoint
 from abevalflow.observability.context import MetricsContext
-from scripts import write_metrics_checkpoint
 
 
 def _run(monkeypatch, *args: str) -> None:

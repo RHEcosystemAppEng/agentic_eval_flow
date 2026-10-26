@@ -409,7 +409,7 @@ class TestValidationJsonHandling:
 
     def test_missing_validation_json_fails_validation(self, tmp_path):
         """Missing validation.json should result in validation_passed=False."""
-        from scripts.aggregate_scorecard import aggregate_scorecard
+        from abevalflow.policy.aggregation import aggregate_scorecard
 
         submission_dir = tmp_path / "submissions" / "test-skill"
         submission_dir.mkdir(parents=True)
@@ -446,7 +446,7 @@ class TestValidationJsonHandling:
 
     def test_submission_validation_alone_does_not_pass_skill_structure(self, tmp_path):
         """Submission validation cannot substitute for skill structure evidence."""
-        from scripts.aggregate_scorecard import aggregate_scorecard
+        from abevalflow.policy.aggregation import aggregate_scorecard
 
         submission_dir = tmp_path / "submissions" / "test-skill"
         submission_dir.mkdir(parents=True)
@@ -486,7 +486,7 @@ class TestValidationJsonHandling:
 
     def test_present_validation_json_invalid_fails(self, tmp_path):
         """Present validation.json with valid=false should fail validation."""
-        from scripts.aggregate_scorecard import aggregate_scorecard
+        from abevalflow.policy.aggregation import aggregate_scorecard
 
         submission_dir = tmp_path / "submissions" / "test-skill"
         submission_dir.mkdir(parents=True)
@@ -536,7 +536,7 @@ class TestHasEvalAssets:
     """
 
     def test_aeh_single_eval_yaml_detected(self, tmp_path):
-        from scripts.aggregate_scorecard import _has_eval_assets
+        from abevalflow.policy.aggregation import _has_eval_assets
 
         submission_dir = tmp_path / "submission"
         submission_dir.mkdir(parents=True)
@@ -544,14 +544,14 @@ class TestHasEvalAssets:
         assert _has_eval_assets(submission_dir) is True
 
     def test_aeh_cases_dir_detected(self, tmp_path):
-        from scripts.aggregate_scorecard import _has_eval_assets
+        from abevalflow.policy.aggregation import _has_eval_assets
 
         submission_dir = tmp_path / "submission"
         (submission_dir / "cases" / "case-001").mkdir(parents=True)
         assert _has_eval_assets(submission_dir) is True
 
     def test_aeh_pairwise_default_filenames_detected(self, tmp_path):
-        from scripts.aggregate_scorecard import _has_eval_assets
+        from abevalflow.policy.aggregation import _has_eval_assets
 
         submission_dir = tmp_path / "submission"
         submission_dir.mkdir(parents=True)
@@ -560,7 +560,7 @@ class TestHasEvalAssets:
         assert _has_eval_assets(submission_dir) is True
 
     def test_aeh_pairwise_custom_filenames_from_metadata_detected(self, tmp_path):
-        from scripts.aggregate_scorecard import _has_eval_assets
+        from abevalflow.policy.aggregation import _has_eval_assets
 
         submission_dir = tmp_path / "submission"
         submission_dir.mkdir(parents=True)
@@ -571,7 +571,7 @@ class TestHasEvalAssets:
         assert _has_eval_assets(submission_dir) is True
 
     def test_no_eval_assets_at_all_is_false(self, tmp_path):
-        from scripts.aggregate_scorecard import _has_eval_assets
+        from abevalflow.policy.aggregation import _has_eval_assets
 
         submission_dir = tmp_path / "submission"
         submission_dir.mkdir(parents=True)
@@ -583,7 +583,7 @@ class TestHasEvalAssets:
 
         must mark the Trusted-level ``evaluation_assets`` check as passed.
         """
-        from scripts.aggregate_scorecard import aggregate_scorecard
+        from abevalflow.policy.aggregation import aggregate_scorecard
 
         submission_dir = tmp_path / "submissions" / "cve-validation"
         submission_dir.mkdir(parents=True)
@@ -622,7 +622,7 @@ class TestHasEvalAssets:
 
 
 def test_aggregate_scorecard_cli_writes_reports_and_tekton_results(tmp_path, monkeypatch):
-    from scripts.aggregate_scorecard import main
+    from abevalflow.cli.compat.aggregate_scorecard import main
 
     submission_dir = tmp_path / "submissions" / "demo"
     submission_dir.mkdir(parents=True)

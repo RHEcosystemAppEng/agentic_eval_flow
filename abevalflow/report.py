@@ -1,7 +1,7 @@
 """Pydantic models for A/B evaluation analysis reports.
 
 These models define the structure of the JSON report produced by
-``scripts/analyze.py``. They serve as the contract between the analysis
+the AEH aggregation service. They serve as the contract between the analysis
 step and any downstream consumers (DB persistence, PR comments, dashboards).
 """
 

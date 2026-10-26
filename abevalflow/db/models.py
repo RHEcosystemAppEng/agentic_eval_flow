@@ -89,7 +89,7 @@ class EvaluationRun(Base):
     control_median_reward: Mapped[float | None] = mapped_column(Float)
     control_std_reward: Mapped[float | None] = mapped_column(Float)
 
-    # Full report for flexibility / future queries
+    # Complete normalized report
     report_json: Mapped[dict] = mapped_column(_JsonVariant, nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow)
@@ -184,7 +184,7 @@ class ScorecardRow(Base):
 
     scorecard_json duplicates data normalized into gate_results and certifications.
     Kept intentionally for fast single-row API responses without JOINs and for
-    preserving the exact original structure for debugging. Revisit after 6 months.
+    preserving the exact original structure for debugging.
     """
 
     __tablename__ = "scorecards"

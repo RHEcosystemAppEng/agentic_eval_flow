@@ -408,13 +408,9 @@ class SubmissionMetadata(BaseModel):
     aeh_mode: AehMode = Field(
         default=AehMode.SINGLE,
         description=(
-            "AEH evaluation mode for THIS submission: 'single' (default) or "
-            "'pairwise' (vanilla-vs-skilled control/treatment A/B comparison). "
-            "Overrides the pipeline-wide AEH_MODE param for just this skill's "
-            "Matrix leg, so a catalog-wide .tekton/*.yaml default (always "
-            "'single') never has to flip for every other skill just to let "
-            "one submission run pairwise. Only meaningful when eval_engine "
-            "is 'aeh'; requires "
+            "AEH mode: single or pairwise control/treatment comparison. "
+            "The submission setting takes precedence over deployment defaults. "
+            "Pairwise mode requires "
             "aeh_control_config / aeh_treatment_config files alongside this "
             "metadata.yaml when set to 'pairwise'."
         ),

@@ -52,6 +52,7 @@ class Scorecard(BaseModel):
     )
 
     recommendation: Recommendation = Field(description="Unified verdict: pass, warn, or fail")
+    evidence_complete: bool = Field(default=True, description="Whether all selected evaluation operations completed")
     recommendation_reason: str = Field(
         description="Human-readable explanation of the recommendation",
     )

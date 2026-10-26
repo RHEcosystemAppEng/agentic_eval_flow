@@ -1,27 +1,21 @@
-# Shared task steps: source preparation, validation, review, reporting, storage.
-# No upstream harness, agent CLI, mock server, or scanner executables.
+# Validation, advisory review, reporting, and persistence runtime.
 FROM registry.access.redhat.com/ubi9/python-312:latest
 USER 0
-COPY pyproject.toml README.md /opt/agent-eval-harness/
-COPY abevalflow/__init__.py abevalflow/aeh_scoring.py abevalflow/certification.py \
-    abevalflow/compass_facts.py abevalflow/llm_client.py abevalflow/operational_policy.py \
-    abevalflow/report.py abevalflow/schemas.py abevalflow/scorecard.py abevalflow/skill_structure.py \
-    /opt/agent-eval-harness/abevalflow/
-COPY abevalflow/db /opt/agent-eval-harness/abevalflow/db
-COPY abevalflow/engines /opt/agent-eval-harness/abevalflow/engines
-COPY abevalflow/gates /opt/agent-eval-harness/abevalflow/gates
-COPY abevalflow/observability /opt/agent-eval-harness/abevalflow/observability
-COPY config/certification_profiles.yaml /opt/agent-eval-harness/config/certification_profiles.yaml
-COPY scripts/__init__.py scripts/validate.py scripts/validate_skill_structure.py scripts/swap_mock_mcp.py scripts/test_quality_review.py \
-    scripts/write_metrics_checkpoint.py scripts/analyze.py scripts/aggregate_scorecard.py \
-    scripts/print_compass_facts_debug.py scripts/store_results.py scripts/publish.py \
-    /opt/agent-eval-harness/scripts/
-RUN pip install --no-cache-dir "/opt/agent-eval-harness[observability]"
+COPY --from=ghcr.io/astral-sh/uv:0.13.0 /uv /usr/local/bin/uv
+COPY pyproject.toml README.md uv.lock /opt/agent-eval-harness/
+WORKDIR /opt/agent-eval-harness
+RUN uv export --frozen --no-dev --extra llm --extra storage --extra observability --no-emit-project --no-hashes --output-file /tmp/runtime-requirements.txt \
+    && pip install --no-cache-dir -r /tmp/runtime-requirements.txt \
+    && rm /tmp/runtime-requirements.txt
+COPY abevalflow /opt/agent-eval-harness/abevalflow
+COPY scripts /opt/agent-eval-harness/scripts
+RUN pip install --no-cache-dir --no-deps /opt/agent-eval-harness \
+    && abeval --version \
+    && python3 -c "from abevalflow.certification import get_available_profiles; assert 'skill' in get_available_profiles()"
 COPY containers/agent-eval-harness/sitecustomize.py /tmp/sitecustomize.py
 RUN python3 -c "import shutil, site; shutil.copy('/tmp/sitecustomize.py', site.getsitepackages()[0] + '/sitecustomize.py')" \
     && rm /tmp/sitecustomize.py
-RUN PYTHONPATH=/opt/agent-eval-harness python3 -c "import scripts.validate; import scripts.validate_skill_structure; import scripts.aggregate_scorecard; import scripts.store_results; import scripts.publish; import openai; import psycopg; import minio"
-ENV PYTHONPATH=/opt/agent-eval-harness HOME=/workspace
+ENV HOME=/workspace
 RUN mkdir -p /workspace /logs /tests /solution /harbor /installed-agent \
     && chgrp -R 0 /workspace /logs /tests /solution /harbor /installed-agent /opt/agent-eval-harness \
     && chmod -R g=u /workspace /logs /tests /solution /harbor /installed-agent /opt/agent-eval-harness

@@ -1,27 +1,42 @@
 [project]
 name = "abevalflow"
-version = "0.1.0"
-description = "AEH runtime and reporting for Konflux shared skill-evaluation tasks"
+version = "0.2.0"
+description = "Installable skill validation and AEH evaluation workflows"
 readme = "README.md"
 license = "Apache-2.0"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "pydantic>=2.0",
     "pyyaml>=6.0",
     "tenacity>=8.2",
-    "sqlalchemy>=2.0",
-    "psycopg[binary]>=3.1",
-    "minio>=7.0",
-    "openai>=1.0",
 ]
 
+[project.scripts]
+abeval = "abevalflow.cli.main:main"
+
 [project.optional-dependencies]
+llm = ["openai>=1.0"]
+storage = ["sqlalchemy>=2.0", "psycopg[binary]>=3.1", "minio>=7.0"]
+runner = [
+    "agent-eval-harness @ git+https://github.com/opendatahub-io/agent-eval-harness.git@7ec9078b621d8aa5d2c0ea3b4e61f9e60b4bed2f",
+    "harbor==0.24.0",
+    "kubernetes>=32.0.0,<37",
+    "anthropic[vertex]",
+    "jinja2>=3.1",
+    "truststore>=0.9,<1",
+]
+all = ["abevalflow[llm,storage,runner,observability]"]
 observability = [
     "opentelemetry-api>=1.20",
     "opentelemetry-sdk>=1.20",
     "opentelemetry-exporter-otlp-proto-grpc>=1.20",
 ]
 dev = [
+    "sqlalchemy>=2.0",
+    "psycopg[binary]>=3.1",
+    "minio>=7.0",
+    "openai>=1.0",
+    "build>=1.2",
     "pytest>=8.0",
     "pytest-cov>=4.1",
     "pytest-asyncio>=0.23",
@@ -34,6 +49,7 @@ testpaths = ["tests"]
 pythonpath = ["."]
 
 [tool.ruff]
+extend-exclude = ["abevalflow/_vendor"]
 target-version = "py311"
 line-length = 120
 
@@ -47,3 +63,9 @@ packages = ["abevalflow"]
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.coverage.run]
+omit = ["abevalflow/_vendor/*"]

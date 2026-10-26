@@ -16,6 +16,12 @@ from abevalflow.db.models import (
     ScorecardRow,
 )
 from abevalflow.gates.base import GateMode, GateResult, GateType
+from abevalflow.persistence.postgres import (
+    map_certifications,
+    map_gate_results,
+    map_scorecard_to_row,
+    store,
+)
 from abevalflow.report import (
     AnalysisResult,
     AnalysisSummary,
@@ -27,12 +33,6 @@ from abevalflow.report import (
 from abevalflow.schemas import CombinationMode, GatePolicy
 from abevalflow.scorecard import Recommendation as ScorecardRecommendation
 from abevalflow.scorecard import Scorecard
-from scripts.store_results import (
-    map_certifications,
-    map_gate_results,
-    map_scorecard_to_row,
-    store,
-)
 
 
 def _sample_result(name: str = "my-submission") -> AnalysisResult:

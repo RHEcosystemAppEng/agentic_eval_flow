@@ -5,7 +5,7 @@ from pathlib import Path
 import yaml
 
 from abevalflow.schemas import EvalEngine
-from scripts.validate import validate_submission
+from abevalflow.validation.submission import validate_submission
 
 VALID_METADATA = {
     "schema_version": "1.0",

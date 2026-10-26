@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import yaml
 
-from scripts.run_aeh import (
+from abevalflow.execution.runner import (
     RUNNERS,
     BaseRunner,
     HarborRunner,
@@ -121,7 +121,7 @@ class TestHarborRunner:
         call_args = mock_run.call_args[0][0]
 
         assert "-m" in call_args
-        assert "agent_eval.harbor.run" in call_args
+        assert "abevalflow.execution.upstream" in call_args
         assert "--config" in call_args
         assert "--output" in call_args
         # kubernetes mode uses OpenShiftEnvironment import path (not --env)
@@ -309,21 +309,21 @@ class TestBaseRunner:
 
 class TestEvalDirName:
     def test_fallback_submission_name(self, tmp_path):
-        from scripts.run_aeh import eval_dir_name
+        from abevalflow.execution.runner import eval_dir_name
 
         config_path = tmp_path / "eval.yaml"
         config_path.write_text(yaml.dump({"execution": {"prompt": "hi"}}))
         assert eval_dir_name(config_path, fallback="sample-skill") == "sample-skill"
 
     def test_sanitizes_name(self, tmp_path):
-        from scripts.run_aeh import eval_dir_name
+        from abevalflow.execution.runner import eval_dir_name
 
         config_path = tmp_path / "eval.yaml"
         config_path.write_text(yaml.dump({"name": "Forge Eval Rubrics"}))
         assert eval_dir_name(config_path, fallback="sub") == "forge-eval-rubrics"
 
     def test_resolve_prefers_eval_name_then_submission(self, tmp_path):
-        from scripts.run_aeh import resolve_aeh_run_dir
+        from abevalflow.execution.runner import resolve_aeh_run_dir
 
         reports = tmp_path / "reports"
         run_id = "aeh-harbor-forge-nsenter-nfz69"
@@ -341,7 +341,7 @@ class TestEvalDirName:
         assert found == actual
 
     def test_resolve_falls_back_to_submission_dir(self, tmp_path):
-        from scripts.run_aeh import resolve_aeh_run_dir
+        from abevalflow.execution.runner import resolve_aeh_run_dir
 
         reports = tmp_path / "reports"
         run_id = "run-1"
@@ -493,7 +493,7 @@ class TestCLI:
         import sys
         from unittest.mock import patch as mock_patch
 
-        from scripts.run_aeh import main
+        from abevalflow.cli.compat.run_aeh import main
 
         output = tmp_path / "output"
 
@@ -513,7 +513,7 @@ class TestCLI:
         import sys
         from unittest.mock import patch as mock_patch
 
-        from scripts.run_aeh import main
+        from abevalflow.cli.compat.run_aeh import main
 
         output = tmp_path / "output"
 
@@ -533,7 +533,7 @@ class TestCLI:
         import sys
         from unittest.mock import patch as mock_patch
 
-        from scripts.run_aeh import main
+        from abevalflow.cli.compat.run_aeh import main
 
         config = tmp_path / "eval.yaml"
         config.write_text(yaml.dump({"skill": "test"}))

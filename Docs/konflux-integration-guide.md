@@ -67,3 +67,17 @@ uses in-cluster credentials. The workload namespace needs pod creation,
 inspection, deletion, and exec permissions; LLM credentials must be available
 in the workload cluster under `llm-credentials`. The former
 `workload-credentials-secret` task input was unused and has been removed.
+
+## Installed application interface
+
+The task and runner images install the `abeval` CLI and importable application
+services. Existing `scripts/*.py` paths are argument-compatible launchers; they
+contain no evaluation logic. The shared task bundle continues to use those
+launchers and retains its existing parameters and result names.
+
+For local execution, use `abeval run`, `plan`, and `doctor` as described in the
+[README](../README.md). Independent container execution uses `abeval init` and
+`abeval phase` with a shared run manifest. The CLI owns configuration resolution,
+source staging, tier progression, normalized results, reporting, and explicit
+publication. Trusted artifact retrieval, matrix fanout, Secret injection, and
+Tekton result-file locations remain CI responsibilities.

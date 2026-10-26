@@ -1,0 +1,22 @@
+default_profile: skill
+profiles:
+  skill:
+    description: Skills with prompts and code - focus on A/B testing and execution
+    foundational:
+      checks:
+      - valid_skill_structure
+      - basic_security_validation
+      - basic_execution_validation
+      - content_quality_review
+      - metadata_compliance
+    trusted:
+      checks:
+      - evaluation_assets
+      - functional_validation
+      - instruction_quality
+      - operational_policy_compliance
+    certified:
+      checks:
+      - enterprise_structure_validation
+      - enterprise_behavioral_testing
+      - advanced_agent_validation
