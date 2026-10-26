@@ -1,0 +1,163 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: mcp-eval-pipeline
+  labels:
+    app.kubernetes.io/name: abevalflow
+    app.kubernetes.io/component: konflux
+spec:
+  description: >-
+    MCP server evaluation pipeline. Orchestrates three deterministic checks
+    (static, conformance, behavioral) and publishes results to Compass.
+    Expects the MCP server to be pre-deployed and running.
+
+    Static evaluation runs in-place (no server needed).
+    Conformance and behavioral tasks run as K8s Jobs on the target cluster
+    to reach the deployed MCP service via internal DNS.
+
+  params:
+    # === Evaluation target ===
+    - name: mcp-server-url
+      type: string
+      description: >-
+        HTTP(S) endpoint of the deployed MCP server.
+        Example: http://mcp-server.default.svc.cluster.local:8080
+    - name: submission-name
+      type: string
+      description: >-
+        Name for the submission/reports directory.
+        Reports are written to: reports/<submission-name>/phase-{1,2,3}-*.json
+    - name: namespace-name
+      type: string
+      description: >-
+        Kubernetes namespace where the MCP server is deployed.
+        Used for conformance/behavioral K8s Job execution.
+    - name: service-name
+      type: string
+      default: "mcp-server"
+      description: K8s Service name of the deployed MCP server.
+    - name: service-port
+      type: string
+      default: "8080"
+      description: Port on which the MCP service listens.
+
+    # === Evaluation parameters ===
+    - name: mcp-eval-image
+      type: string
+      default: "quay.io/ecosystem-appeng/abevalflow-mcp-eval:0.1"
+      description: >-
+        MCP eval image with scanners (gitleaks, semgrep, licensee) and
+        probe/mcpchecker dependencies. Also includes scripts.mcp and
+        abevalflow.mcp at PYTHONPATH=/opt.
+    - name: source-subdir
+      type: string
+      default: "."
+      description: >-
+        Relative path within workspace of MCP server source to scan
+        (for static eval). Defaults to workspace root.
+    - name: static-eval-mode
+      type: string
+      default: "report"
+      description: >-
+        Static evaluation mode: "report" (findings only) or "block"
+        (fail task if findings detected).
+
+    # === Compass publishing ===
+    - name: compass-url
+      type: string
+      default: "https://compass.stage.redhat.com/api/soundcheck/facts/"
+      description: Compass SoundCheck Facts API endpoint.
+    - name: compass-dry-run
+      type: string
+      default: "true"
+      description: >-
+        Set to "false" to publish facts to Compass. Default is dry-run mode
+        (log payloads without sending).
+    - name: entity-ref
+      type: string
+      description: >-
+        Compass entity ref for the MCP server, e.g. mcpserver:default/my-server.
+        Required for Compass publish step.
+
+  workspaces:
+    - name: workspace
+      description: >-
+        Shared workspace for reports and artifacts. Both local (static eval)
+        and K8s-based (conformance/behavioral) tasks access this workspace.
+
+  tasks:
+    # === Phase 1: Static Evaluation (offline) ===
+    - name: static-eval
+      taskRef:
+        name: mcp-static-eval
+      params:
+        - name: mcp-eval-image
+          value: $(params.mcp-eval-image)
+        - name: source-subdir
+          value: $(params.source-subdir)
+        - name: mode
+          value: $(params.static-eval-mode)
+      workspaces:
+        - name: source
+          workspace: workspace
+
+    # === Phase 2: Conformance Evaluation (requires deployed server) ===
+    - name: conformance-eval
+      runAfter:
+        - static-eval
+      taskRef:
+        name: mcp-conformance-eval
+      params:
+        - name: mcp-eval-image
+          value: $(params.mcp-eval-image)
+        - name: namespace-name
+          value: $(params.namespace-name)
+        - name: service-name
+          value: $(params.service-name)
+        - name: service-port
+          value: $(params.service-port)
+        - name: submission-name
+          value: $(params.submission-name)
+      workspaces:
+        - name: source
+          workspace: workspace
+
+    # === Phase 3: Behavioral Evaluation (mcpchecker) ===
+    - name: behavioral-eval
+      runAfter:
+        - conformance-eval
+      taskRef:
+        name: mcp-behavioral-eval
+      params:
+        - name: namespace-name
+          value: $(params.namespace-name)
+        - name: service-name
+          value: $(params.service-name)
+        - name: service-port
+          value: $(params.service-port)
+        - name: submission-name
+          value: $(params.submission-name)
+      workspaces:
+        - name: source
+          workspace: workspace
+
+    # === Compass Publishing ===
+    - name: compass-publish
+      runAfter:
+        - behavioral-eval
+      taskRef:
+        name: mcp-compass-publish
+      params:
+        - name: mcp-eval-image
+          value: $(params.mcp-eval-image)
+        - name: submission-name
+          value: $(params.submission-name)
+        - name: entity-ref
+          value: $(params.entity-ref)
+        - name: compass-url
+          value: $(params.compass-url)
+        - name: dry-run
+          value: $(params.compass-dry-run)
+      workspaces:
+        - name: source
+          workspace: workspace
