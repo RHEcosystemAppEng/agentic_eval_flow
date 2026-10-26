@@ -2,10 +2,11 @@ schema_version: "1.0"
 name: openclaw-forge
 description: >-
   AEH OpenShell OpenClaw Forge eval (morning briefing + analysis panel)
-  against a shared forge-saw gateway. Graph tokens come from the
-  openshell-credentials Secret via $M365_* interpolation — do not commit them.
+  against a namespace-local Forge SAW gateway. The pinned Chief of Staff image
+  is the sole source of persona, skills, schemas and tools; this submission
+  supplies only cases, scenes, execution configuration and scorers.
 eval_engine: aeh_openshell_openclaw
-persona: rh-developer
+persona: chief-of-staff
 version: "0.1.0"
 author: Agentic Eval Flow Team
 tags:
