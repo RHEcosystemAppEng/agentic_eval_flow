@@ -109,7 +109,7 @@ def test_enrich_copies_skills_from_pack_root_skills_subdir(tmp_path: Path):
     submission uses so the SAME plugin_dirs entry also resolves the pack's
     mcps.json for the mock-MCP swap step (see aeh-skill-eval.yaml). The real
     skill lives two levels down: <plugin_dirs entry>/skills/<name>/SKILL.md.
-    Mirrors scripts/validate.py's _check_aeh_plugin_dirs 'skills_sub' case.
+    Mirrors submission validation's _check_aeh_plugin_dirs 'skills_sub' case.
     """
     submission = tmp_path / "submissions" / "rh-sre" / "cve-validation"
     pack_root = tmp_path / "rh-sre"

@@ -1,11 +1,10 @@
 """Artifact publication integrity and separation from evaluation verdicts."""
 
 import json
-import tarfile
 from unittest.mock import MagicMock, patch
 
 from abevalflow.config.runtime import resolve_config
-from abevalflow.persistence.service import publish, publish_oci, publish_s3
+from abevalflow.persistence.service import publish, publish_s3
 from abevalflow.results.run import RunResult
 
 
@@ -40,17 +39,6 @@ def test_s3_creates_missing_bucket(catalog):
         publish_s3(config, result)
     client.make_bucket.assert_called_once_with("ab-eval-reports")
     assert factory.call_args.kwargs["secure"] is False
-
-
-def test_oci_archive_contains_only_shareable_evidence(catalog):
-    config, result = evidence(catalog, oci_subject="registry.example/image@sha256:" + "a" * 64)
-    with patch("subprocess.run", return_value=MagicMock(stdout='{"digest": "sha256:artifact"}')) as command:
-        details = publish_oci(config, result)
-    with tarfile.open(config.output / "reports.tar.gz") as archive:
-        assert "run.json" in archive.getnames()
-        assert not any("kubeconfig" in name for name in archive.getnames())
-    assert command.call_args.args[0][0] == "oras"
-    assert details["artifact"]["digest"] == "sha256:artifact"
 
 
 def test_publication_requires_explicit_destination(catalog):

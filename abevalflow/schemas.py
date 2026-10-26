@@ -33,7 +33,7 @@ class SecurityScanMode(StrEnum):
 
 
 class AehMode(StrEnum):
-    """AEH evaluation mode. Mirrors scripts/validate.py --aeh-mode choices.
+    """AEH evaluation mode. Mirrors submission validation --aeh-mode choices.
 
     'single' evaluates the skilled agent alone against eval.yaml's own
     threshold (the catalog-wide default — see .tekton/*.yaml AEH_MODE

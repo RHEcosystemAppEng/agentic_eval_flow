@@ -15,9 +15,11 @@ class Operations:
     """Run isolated operations using explicit configuration and a shared artifact layout."""
 
     def __init__(self, config: RuntimeConfig):
+        from abevalflow.workflow.workspace import staged_source_root
+
         self.config = config
         self.reports = config.output / "reports"
-        self.source = config.output / "source"
+        self.source = staged_source_root(config)
         self.skill = self.source / config.skill.relative_to(config.source)
         self.submission = self.source / config.submission.relative_to(config.source) if config.submission else None
 
@@ -61,6 +63,8 @@ class Operations:
                     str(self.skill),
                     "--format",
                     "json",
+                    "--format",
+                    "sarif",
                     "--output-json",
                     str(output),
                     "--output-sarif",
@@ -165,8 +169,9 @@ class Operations:
 
     def evaluate(self, result: RunResult) -> StepResult:
         from abevalflow.aeh_scoring import resolve_evaluation_threshold
+        from abevalflow.execution.artifacts import eval_dir_name
         from abevalflow.execution.cluster import runner_environment
-        from abevalflow.execution.runner import HarborRunner, eval_dir_name
+        from abevalflow.execution.harbor import HarborRunner
         from abevalflow.results.aeh import aggregate_aeh_results
 
         config = self.config

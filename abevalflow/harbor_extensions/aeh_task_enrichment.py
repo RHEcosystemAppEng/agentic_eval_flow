@@ -25,13 +25,6 @@ from abevalflow.execution.mcp import fixture_server_names
 
 logger = logging.getLogger(__name__)
 
-# Artifacts produced by agent_eval.harbor.tasks._generate_tool_interception
-_INTERCEPTION_MARKERS = (
-    "hooks/tools.py",
-    "tool_handlers.yaml",
-    ".claude/settings.json",
-)
-
 # Shared, plugin-level schema: submissions/<plugin>/mcp-servers/<server>/
 # schema.json -- a sibling of every skill's own submission dir (NOT inside
 # any one skill's submission_root, and NOT the real <plugin>/ source tree
@@ -169,9 +162,6 @@ def _enrich_one_task(
     tests_dir = task_dir / "tests"
     tests_dir.mkdir(parents=True, exist_ok=True)
 
-    # Snapshot interception artifacts before any destructive copies
-    preserved = _snapshot_interception(env_dir)
-
     # Keep judge ground truth in the verifier's inputs, outside the agent workspace.
     annotations_src = _find_annotations(submission_root, dataset_rel, case_id)
     task_config = tomllib.loads((task_dir / "task.toml").read_text())
@@ -224,7 +214,7 @@ def _enrich_one_task(
             cfg["reward"] = reward_inject
         bundled.write_text(yaml.safe_dump(cfg, sort_keys=False, allow_unicode=True))
 
-    # 4) Copy plugin skill trees + point Harbor at them
+    # Copy plugin skill trees and point Harbor at them.
     #    Only replace environment/skills/ — never wipe hooks/ or .claude/
     copied_skills = False
     for rel in plugin_dirs:
@@ -244,8 +234,7 @@ def _enrich_one_task(
     if copied_skills:
         task_config.setdefault("environment", {})["skills_dir"] = f"{workdir}/skills"
 
-    # 5) Restore / ensure tool interception + MCP hook artifacts
-    _restore_interception(env_dir, preserved)
+    # Retain generated hooks and supply any missing submission handler configuration.
     _ensure_submission_tool_handlers(env_dir, config_path)
     if wants_interception and not _has_interception(env_dir):
         logger.warning(
@@ -254,12 +243,7 @@ def _enrich_one_task(
             task_dir.name,
         )
 
-    # 6) Mock MCP: shared schema (plugin-level) + this case's own fixture.
-    #    See module docstring -- mcps.json itself is swapped once for the
-    #    whole job (aeh-skill-eval.yaml's swap-mock-mcp), to a FIXED stdio
-    #    command referencing these same workspace-relative paths; placing
-    #    different fixture content per task here is what makes each case's
-    #    mock behave differently despite that one shared command.
+    # Every task supplies its own fixtures at the stable paths in the mock command.
     if mock_server_names:
         _stage_mock_mcp_files(
             env_dir,
@@ -312,25 +296,6 @@ def _stage_mock_mcp_files(
             # This case doesn't exercise this server -- stub it so the mock
             # still starts; every call falls through to outputExample.
             fixture_dest.write_text(_EMPTY_FIXTURE_STUB)
-
-
-def _snapshot_interception(env_dir: Path) -> dict[str, bytes]:
-    """Read interception files so enrichment cannot accidentally drop them."""
-    snapped: dict[str, bytes] = {}
-    for rel in _INTERCEPTION_MARKERS:
-        path = env_dir / rel
-        if path.is_file():
-            snapped[rel] = path.read_bytes()
-    return snapped
-
-
-def _restore_interception(env_dir: Path, preserved: dict[str, bytes]) -> None:
-    for rel, data in preserved.items():
-        dest = env_dir / rel
-        if dest.is_file():
-            continue
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(data)
 
 
 def _ensure_submission_tool_handlers(env_dir: Path, config_path: Path) -> None:

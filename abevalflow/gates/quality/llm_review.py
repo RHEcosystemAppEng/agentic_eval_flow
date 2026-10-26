@@ -7,19 +7,16 @@ import logging
 from pathlib import Path
 
 from abevalflow.gates.base import Finding, GateMode, GateResult, GateType, Severity
-from abevalflow.gates.quality import register_quality_gate
-from abevalflow.gates.quality.base import QualityGate
 from abevalflow.observability.decorators import timed_gate
 from abevalflow.schemas import GatePolicy
 
 logger = logging.getLogger(__name__)
 
 
-@register_quality_gate("llm-review")
-class LLMReviewGate(QualityGate):
+class LLMReviewGate:
     """LLM-based quality review gate.
 
-    Reads _ai_review.json produced by scripts/test_quality_review.py.
+    Reads _ai_review.json produced by the submission review phase.
     Evaluates coherence, coverage, clarity, feasibility, and robustness.
     """
 

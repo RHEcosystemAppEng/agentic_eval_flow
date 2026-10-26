@@ -39,3 +39,13 @@ jobs:
           /tmp/abeval-wheel/bin/abeval --version
           /tmp/abeval-wheel/bin/abeval validate skill "$GITHUB_WORKSPACE/submissions/aeh-pairwise-example/skills/aeh-pairwise-example"
           /tmp/abeval-wheel/bin/python -c "from abevalflow.certification import get_available_profiles; assert 'skill' in get_available_profiles()"
+          skill="$GITHUB_WORKSPACE/submissions/aeh-pairwise-example/skills/aeh-pairwise-example"
+          env PATH=/usr/bin:/bin /tmp/abeval-wheel/bin/abeval run "$skill" --source "$skill" --output /tmp/abeval-tier1 > /tmp/abeval-tier1.json || test "$?" -eq 1
+          /tmp/abeval-wheel/bin/python - <<'PY'
+          import json
+          from pathlib import Path
+          result = json.loads(Path('/tmp/abeval-tier1.json').read_text())
+          assert result['exit_code'] in (0, 1), result
+          assert {s['name'] for s in result['steps']} == {'prepare', 'structure', 'security', 'quality', 'report'}
+          assert all(s['status'] == 'completed' for s in result['steps']), result
+          PY

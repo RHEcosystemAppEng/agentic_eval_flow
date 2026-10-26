@@ -1,18 +1,8 @@
-"""Unified LLM client using the OpenAI-compatible API.
-
-Supports all three pipeline LLM modes through a single interface:
-  - LiteLLM proxy (default): exposes /v1/chat/completions
-  - Direct API: OpenAI / Anthropic keys via OpenAI-compatible SDK
-  - Self-hosted: vLLM / ollama expose OpenAI-compatible endpoints
-
-Configuration is resolved from environment variables so that Tekton tasks
-can inject values from Secrets and ConfigMaps.
-"""
+"""Explicitly configured completions with token accounting and optional tracing."""
 
 from __future__ import annotations
 
 import logging
-import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -44,36 +34,12 @@ def _set_span_status_error(span, description: str):
         pass
 
 
-DEFAULT_BASE_URL = "http://litellm.ab-eval-flow.svc:4000/v1"
-DEFAULT_MODEL = "claude-sonnet-4-20250514"
-
-
-def _resolve_config() -> dict:
-    """Build client kwargs from environment variables."""
-    base_url = os.environ.get("LLM_BASE_URL", DEFAULT_BASE_URL)
-    api_key = os.environ.get("LLM_API_KEY", "not-set")
-    return {"base_url": base_url, "api_key": api_key}
-
-
-def get_client() -> OpenAI:
-    """Return a configured OpenAI client."""
-    from openai import OpenAI
-
-    cfg = _resolve_config()
-    logger.info("LLM client → base_url=%s", cfg["base_url"])
-    return OpenAI(**cfg)
-
-
-def get_model() -> str:
-    """Return the model identifier from env or default."""
-    return os.environ.get("LLM_MODEL", DEFAULT_MODEL)
-
-
 def chat_completion_with_usage(
     messages: list[dict[str, str]],
     *,
-    model: str | None = None,
-    temperature: float = 0.3,
+    client: OpenAI,
+    model: str,
+    temperature: float | None = 0.3,
     max_tokens: int = 4096,
     **kwargs,
 ) -> LLMResult:
@@ -84,31 +50,33 @@ def chat_completion_with_usage(
     from abevalflow.observability.otel import get_tracer
 
     tracer = get_tracer("abevalflow.llm")
-    client = get_client()
-    resolved_model = model or get_model()
 
     with tracer.start_as_current_span(
         "llm.chat_completion",
         attributes={
-            "llm.model": resolved_model,
-            "llm.temperature": temperature,
-            "llm.max_tokens": max_tokens,
-            "llm.messages_count": len(messages),
+            key: value
+            for key, value in {
+                "llm.model": model,
+                "llm.temperature": temperature,
+                "llm.max_tokens": max_tokens,
+                "llm.messages_count": len(messages),
+            }.items()
+            if value is not None
         },
     ) as span:
         logger.info(
-            "chat_completion → model=%s, messages=%d, temperature=%.1f",
-            resolved_model,
+            "chat_completion → model=%s, messages=%d, temperature=%s",
+            model,
             len(messages),
             temperature,
         )
 
         try:
             response = client.chat.completions.create(
-                model=resolved_model,
+                model=model,
                 messages=messages,
-                temperature=temperature,
                 max_tokens=max_tokens,
+                **({"temperature": temperature} if temperature is not None else {}),
                 **kwargs,
             )
         except Exception as exc:
@@ -137,21 +105,5 @@ def chat_completion_with_usage(
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             total_tokens=prompt_tokens + completion_tokens,
-            model=resolved_model,
+            model=model,
         )
-
-
-def chat_completion(
-    messages: list[dict[str, str]],
-    *,
-    model: str | None = None,
-    temperature: float = 0.3,
-    max_tokens: int = 4096,
-    **kwargs,
-) -> str:
-    """Send a chat completion request and return the assistant message content.
-
-    For token usage, use ``chat_completion_with_usage()`` instead.
-    """
-    result = chat_completion_with_usage(messages, model=model, temperature=temperature, max_tokens=max_tokens, **kwargs)
-    return result.content

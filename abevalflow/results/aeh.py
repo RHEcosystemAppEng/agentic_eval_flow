@@ -102,27 +102,6 @@ def _is_likert_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 5
 
 
-def _fmt_likert_cell(value: Any) -> str:
-    if isinstance(value, bool):
-        return "pass" if value else "fail"
-    if _is_likert_int(value):
-        return f"{value}/5"
-    if isinstance(value, (int, float)):
-        return str(value)
-    return "—"
-
-
-def _fmt_judge_mean_for_log(mean: Any, pass_rate: Any) -> str:
-    """Label Likert means as /5 so a floor of 1 is not read as unit-scale 1.000."""
-    if not isinstance(mean, (int, float)):
-        return "—"
-    if pass_rate is None and (_is_likert_int(mean) or (isinstance(mean, float) and 1.0 <= mean <= 5.0)):
-        if mean <= 5.0 and mean >= 1.0 and (pass_rate is None):
-            if float(mean) == int(mean) and 1 <= int(mean) <= 5:
-                return f"{mean:.2f}/5"
-    return f"{mean:.3f}"
-
-
 def _mean_reward_from_per_case(
     per_case: Any,
     score_ranges: dict[str, tuple[float, float]] | None = None,
@@ -174,7 +153,7 @@ def _extract_mean_reward(
 
     Missing or all-errored scoring judges yield None — never a silent 0.0 quality
     score. Declared mean_reward is used when present unless judge errors made
-    quality scoring unavailable (OpenShell often omits mean_reward entirely).
+    quality scoring unavailable when mean_reward is absent.
 
     ``score_ranges`` (see :func:`abevalflow.aeh_scoring.load_judge_score_ranges`)
     disambiguates bare numeric judge values when recomputing from per-case data.
@@ -240,54 +219,6 @@ def _empty_control_summary() -> dict[str, Any]:
         "median_reward": None,
         "std_reward": None,
     }
-
-
-def _log_judge_tables(report: dict[str, Any]) -> None:
-    """Print a concise per-judge and per-case table for analyze/evaluate logs."""
-    judges = report.get("judges") or {}
-    if isinstance(judges, dict) and judges:
-        logger.info("Judge aggregates:")
-        logger.info("  %-32s %10s %10s %8s", "name", "mean", "pass_rate", "errors")
-        for name, data in judges.items():
-            if not isinstance(data, dict):
-                logger.info("  %-32s %s", name, data)
-                continue
-            mean = data.get("mean")
-            rate = data.get("pass_rate")
-            erred = data.get("errored_cases") or 0
-            mean_s = _fmt_judge_mean_for_log(mean, rate) if isinstance(mean, (int, float)) else "—"
-            rate_s = f"{rate:.0%}" if isinstance(rate, (int, float)) else "—"
-            logger.info("  %-32s %10s %10s %8s", name, mean_s, rate_s, erred)
-
-    per_case = report.get("per_case") or {}
-    if not isinstance(per_case, dict) or not per_case:
-        return
-    judge_names: list[str] = []
-    for case_data in per_case.values():
-        if isinstance(case_data, dict):
-            for name in case_data:
-                if name != "reward" and name not in judge_names:
-                    judge_names.append(name)
-    if not judge_names:
-        return
-    header = "  %-22s" + " %s" * len(judge_names)
-    logger.info("Per-case judges:")
-    logger.info(header, "case", *[n[:16] for n in judge_names])
-    for case_id, case_data in per_case.items():
-        cells: list[str] = []
-        for name in judge_names:
-            cell = "—"
-            if isinstance(case_data, dict):
-                rec = case_data.get(name)
-                if isinstance(rec, dict):
-                    if rec.get("error"):
-                        cell = "ERR"
-                    elif "value" in rec:
-                        cell = _fmt_likert_cell(rec.get("value"))
-                elif rec is not None:
-                    cell = str(rec)
-            cells.append(cell)
-        logger.info(header, str(case_id)[:22], *cells)
 
 
 def _grounded_variant_stats(trials: list[dict[str, Any]]) -> dict[str, Any]:
@@ -622,26 +553,3 @@ def aggregate_aeh_results(
         eval_engine=eval_engine,
         config_path=config_path,
     )
-
-
-def find_latest_run_dir(reports_dir: Path, submission_name: str) -> Path | None:
-    """Find the most recent run directory for a submission.
-
-    Layout: reports/<submission_name>/<run_id>/summary.yaml
-
-    Args:
-        reports_dir: Root reports directory
-        submission_name: Name of the submission
-
-    Returns:
-        Path to the latest run dir, or None if not found
-    """
-    submission_dir = reports_dir / submission_name
-    if not submission_dir.exists():
-        return None
-
-    run_dirs = [d for d in submission_dir.iterdir() if d.is_dir() and (d / "summary.yaml").exists()]
-    if not run_dirs:
-        return None
-
-    return sorted(run_dirs, key=lambda d: d.stat().st_mtime, reverse=True)[0]

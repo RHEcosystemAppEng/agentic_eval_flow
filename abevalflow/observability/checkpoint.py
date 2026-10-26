@@ -1,9 +1,6 @@
 """Record review token usage in the shared metrics checkpoint format."""
 
-import logging
 from pathlib import Path
-
-logger = logging.getLogger(__name__)
 
 from abevalflow.observability.context import MetricsContext
 
@@ -19,16 +16,3 @@ def checkpoint_review(run_id: str, name: str, reports: Path, assessment: dict) -
     if context.total_tokens:
         reports.mkdir(parents=True, exist_ok=True)
         context.checkpoint(reports)
-
-
-def checkpoint_review_file(run_id: str, name: str, reports: Path, review_file: Path | None) -> None:
-    """Read an optional advisory review and record its token usage."""
-    import json
-
-    if review_file is None or not review_file.is_file():
-        return
-    try:
-        assessment = json.loads(review_file.read_text())
-        checkpoint_review(run_id, name, reports, assessment)
-    except (OSError, ValueError, TypeError) as exc:
-        logger.warning("Could not read review tokens: %s", exc)

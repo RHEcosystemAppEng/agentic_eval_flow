@@ -1,4 +1,4 @@
-"""Tests for AEH (Agent-Eval-Harness) validation in scripts/validate.py."""
+"""Tests for AEH (Agent-Eval-Harness) validation in submission validation."""
 
 from pathlib import Path
 

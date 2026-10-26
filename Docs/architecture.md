@@ -5,16 +5,16 @@ importable services; shell launchers do not contain application logic.
 
 | Package | Responsibility |
 |---|---|
-| `cli` | Arguments, terminal output, exit codes, compatibility command interfaces |
+| `cli` | Arguments, terminal output, and exit codes |
 | `config` | Submission loading, environment aliases, explicit overrides, packaged policies |
 | `workflow` | Plans, dependencies, isolated workspaces, execution, finalization |
 | `validation` | Submission checks and scanner execution |
 | `review` | Configured skill and submission review services |
 | `execution` | Backend contracts, Harbor adapter, remote cluster environment, artifact collection |
 | `results` | Versioned run evidence, normalized AEH results, atomic JSON writes |
-| `policy`, `certification`, `scorecard` | Gate aggregation and certification decisions |
-| `reporting` | Markdown, certification JSON, and diagnostic presentation |
-| `persistence` | Explicit PostgreSQL, S3, Compass, and OCI publication |
+| `certification`, `scorecard` | Gate aggregation and certification decisions |
+| `reporting` | Markdown, scorecards, and certification JSON |
+| `persistence` | Explicit PostgreSQL, S3, and Compass publication |
 | `harbor_extensions` | Application-owned Harbor task inputs and MCP fixture preparation |
 | `observability` | Tracing, timing, token usage, costs, and checkpoints |
 
@@ -33,14 +33,22 @@ copy; MCP rewrites and generated configurations do not modify authored inputs.
 Report generation is independent of publication. External clients are loaded
 only for requested capabilities. PostgreSQL writes use a transaction per snapshot;
 S3 uses stable run prefixes. Publication destinations do not depend on each other.
+The consuming pipeline converts `run.json` into CI results and owns OCI evidence
+attachment; no Konflux-specific commands or registry clients are packaged.
 
 ## Dependency boundaries
 
-Package services do not import `scripts`. Compatibility launchers import command
-interfaces, which call package services. CLI-only argument parsing remains under
-`cli`. Environment resolution is concentrated in `config`; the remote runner
+The packaged `abevalflow/config/certification_profiles.yaml` is the source for
+certification profiles.
+
+Tier 1 scanners are pinned base dependencies, installed unchanged alongside the
+CLI. Default local execution resolves their entrypoints from the CLI's Python
+environment; it also works with isolated tool installs that expose only `abeval`.
+Explicit command overrides and Podman/Docker execution are optional alternatives.
+
+The installed CLI calls package services; services do not import CLI modules. Argument parsing remains under `cli`. Environment resolution is concentrated in `config`; the remote runner
 receives an explicit child environment. Review services receive explicit client
-configuration. Pure scoring and policy functions operate without network access.
+configuration and share the completion/token-accounting service. Pure scoring and policy functions operate without network access.
 
 AEH runs in an external, complete source installation. The runtime installer
 pins the upstream revision and installs it unchanged in an isolated environment.

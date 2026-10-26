@@ -33,59 +33,6 @@ def eval_dir_name(config_path: Path, fallback: str | None = None) -> str:
     return fallback_name
 
 
-def resolve_aeh_run_dir(
-    reports_root: Path,
-    run_id: str,
-    *,
-    eval_name: str,
-    submission_name: str | None = None,
-) -> Path | None:
-    """Find ``reports/<leaf>/<run_id>`` that contains summary.yaml or run_result.json.
-
-    Looks at eval_name, then submission_name, then any leaf under reports_root.
-    """
-    leaves: list[str] = []
-    for leaf in (eval_name, submission_name):
-        if leaf and leaf not in leaves:
-            leaves.append(leaf)
-    candidates = [reports_root / leaf / run_id for leaf in leaves]
-    if reports_root.is_dir():
-        for child in sorted(reports_root.iterdir()):
-            if child.is_dir():
-                candidates.append(child / run_id)
-
-    seen: set[Path] = set()
-    for cand in candidates:
-        try:
-            key = cand.resolve()
-        except OSError:
-            key = cand
-        if key in seen:
-            continue
-        seen.add(key)
-        if (cand / "summary.yaml").is_file() or (cand / "run_result.json").is_file():
-            return cand
-    return None
-
-
-def _sync_output_dir(requested: Path, actual: Path) -> None:
-    """Copy harness results into ``--output`` when eval_name() used a different leaf."""
-    if not actual.is_dir():
-        return
-    if not ((actual / "summary.yaml").is_file() or (actual / "run_result.json").is_file()):
-        return
-    try:
-        if requested.resolve() == actual.resolve():
-            return
-    except OSError:
-        pass
-    if (requested / "summary.yaml").is_file() or (requested / "run_result.json").is_file():
-        return
-    print(f"WARN: OpenShell wrote {actual}; copying into --output {requested}")
-    requested.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(actual, requested, dirs_exist_ok=True)
-
-
 def _output_paths_from_config(config: Path) -> list[str]:
     """Read outputs[].path from eval.yaml (default: ['output'])."""
     try:

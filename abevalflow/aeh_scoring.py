@@ -1,7 +1,7 @@
 """Shared AEH scoring helpers used by the engine adapter and aggregate script.
 
 Keeps pairwise win-rate / gate logic and numeric judge pass/fail heuristics
-aligned across call sites (engine, aggregate_aeh, Tekton PARSE scripts).
+aligned across call sites (engine, aggregate_aeh, report consumers).
 """
 
 from __future__ import annotations
@@ -123,7 +123,7 @@ def numeric_judge_is_low(value: int | float) -> bool:
 def load_judge_score_ranges(config_path: Path | str | None) -> dict[str, tuple[float, float]]:
     """Read each judge's declared ``score_range`` from an eval*.yaml config.
 
-    Lets callers (``aggregate_aeh.py``, Tekton PARSE scripts) disambiguate a
+    Lets callers (``the AEH result aggregator``, report consumers) disambiguate a
     bare numeric judge value like ``1`` using the judge's own declared scale
     instead of guessing from the value's Python type/magnitude -- see
     :func:`_normalize_numeric_value`. A judge declared ``score_range: [0, 1]``
@@ -224,7 +224,7 @@ def case_reward_from_judges(
 ) -> float | None:
     """Derive a single grounded reward from one case's judge results.
 
-    This is the canonical reward computation shared by ``aggregate_aeh.py``
+    This is the canonical reward computation shared by ``the AEH result aggregator``
     (report generation) and the AEH engine's pairwise gate (disagreement
     detection) so the two never silently drift apart, as happened when the
     report's ``trials[]``/``summary`` blocks were computed independently of

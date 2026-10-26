@@ -122,3 +122,17 @@ def test_explicit_source_contains_all_inputs(catalog, tmp_path):
     outside.mkdir()
     with pytest.raises(ConfigurationError, match="Submission must be inside"):
         resolve_config({**catalog, "submission": outside}, {})
+
+
+@pytest.mark.parametrize("runtime", ["podman", "docker"])
+@pytest.mark.parametrize(
+    "provided", [{}, {"security_image": "evaluation:check"}, {"quality_image": "evaluation:check"}]
+)
+def test_container_scanning_requires_explicit_images(catalog, runtime, provided):
+    with pytest.raises(ConfigurationError, match="Container scanning requires"):
+        resolve_config({**catalog, "scanner_runtime": runtime, **provided}, {})
+
+
+def test_oci_is_not_an_application_persistence_destination(catalog):
+    with pytest.raises(ConfigurationError, match="postgres,s3,compass"):
+        resolve_config({**catalog, "persist": "oci"}, {})

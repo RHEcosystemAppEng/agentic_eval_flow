@@ -7,7 +7,7 @@ Result files from AEH:
   - summary.yaml: Per-judge means, per-case results, run metadata, pairwise results
   - run_result.json: Execution metadata (duration, cost, tokens, mean_reward)
 
-The adapter reads report.json (produced by aggregate_aeh.py) or falls back
+The adapter reads report.json (produced by the AEH result aggregator) or falls back
 to reading summary.yaml + run_result.json directly.
 
 Judge types supported (passthrough - no interpretation):
@@ -32,23 +32,17 @@ from abevalflow.aeh_scoring import (
     numeric_judge_is_low,
     pairwise_outcome,
 )
-from abevalflow.engines import register_engine
-from abevalflow.engines.base import EvalEngine
 from abevalflow.gates.base import Finding, GateResult, GateType, Severity
 from abevalflow.schemas import GatePolicy
 
 logger = logging.getLogger(__name__)
 
-# Back-compat alias for imports/tests
-DEFAULT_PAIRWISE_THRESHOLD = DEFAULT_AEH_THRESHOLD
 
-
-@register_engine("aeh")
-class AEHEngine(EvalEngine):
+class AEHEngine:
     """Agent-Eval-Harness evaluation engine.
 
     Reads AEH output (summary.yaml, run_result.json) or the unified
-    report.json produced by aggregate_aeh.py.
+    report.json produced by the AEH result aggregator.
 
     Supports both single-run and pairwise A/B comparison modes.
     """
@@ -59,7 +53,7 @@ class AEHEngine(EvalEngine):
         """Read AEH results from reports directory.
 
         Priority order:
-        1. report.json (unified format from aggregate_aeh.py)
+        1. report.json (unified format from the AEH result aggregator)
         2. summary.yaml + run_result.json (raw AEH output)
         3. Search subdirectories for run outputs
 
@@ -251,7 +245,7 @@ class AEHEngine(EvalEngine):
         # Use default pairwise threshold if not specified
         threshold = gate_policy.threshold
         if threshold is None:
-            threshold = DEFAULT_PAIRWISE_THRESHOLD
+            threshold = DEFAULT_AEH_THRESHOLD
 
         pairwise = raw_result.get("pairwise", {})
         outcome = pairwise_outcome(
@@ -494,7 +488,7 @@ class AEHEngine(EvalEngine):
     def get_default_threshold(self) -> float:
         """AEH default threshold is 0.5.
 
-        This aligns with the recommendation logic in aggregate_aeh.py.
+        This aligns with the recommendation logic in the AEH result aggregator.
         For single mode: mean_reward >= 0.5 to pass.
         For pairwise mode: win_rate >= 0.5, or all-ties, to pass.
         """

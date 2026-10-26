@@ -1,16 +1,13 @@
 """End-to-end checks for the supported AEH report and CLI contracts."""
 
 import json
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
-from abevalflow.cli.compat.analyze import main as render_report
-from abevalflow.engines import get_all_engines, get_engine
 from abevalflow.report import AnalysisResult
+from abevalflow.reporting.markdown import render_markdown
 from abevalflow.results.aeh import aggregate_single_run
 from abevalflow.schemas import SubmissionMetadata
 
@@ -38,8 +35,7 @@ def test_aggregate_report_renders_without_changing_verdict(tmp_path):
     original = report.read_bytes()
     result = AnalysisResult.model_validate_json(original)
 
-    assert render_report(["--report-json", str(report)]) == 0
-    rendered = report.with_suffix(".md").read_text()
+    rendered = render_markdown(result)
     assert result.submission_name in rendered
     assert result.summary.recommendation.value.upper() in rendered
     assert report.read_bytes() == original
@@ -47,37 +43,8 @@ def test_aggregate_report_renders_without_changing_verdict(tmp_path):
 
 @pytest.mark.parametrize("engine", ["harbor", "ase", "both", "a2a", "mcpchecker", "aeh_openshell_openclaw"])
 def test_removed_engines_are_rejected(engine):
-    assert get_all_engines() == ["aeh"]
-    with pytest.raises(KeyError):
-        get_engine(engine)
     with pytest.raises(ValidationError):
         SubmissionMetadata(name="my-skill", eval_engine=engine)
-
-
-def test_publisher_accepts_shared_task_arguments(tmp_path):
-    result = subprocess.run(
-        [
-            sys.executable,
-            "scripts/publish.py",
-            "--report-dir",
-            str(tmp_path),
-            "--submission-name",
-            "my-skill",
-            "--pipeline-run-id",
-            "run-1",
-            "--eval-engine",
-            "aeh",
-            "--workspace-root",
-            str(tmp_path),
-            "--report-prefix",
-            "my-prefix",
-        ],
-        cwd=ROOT,
-        env={"PYTHONPATH": str(ROOT)},
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stderr
 
 
 def test_repository_submissions_validate():

@@ -6,7 +6,7 @@ level to be achieved.
 
 Levels are hierarchical: Certified requires Trusted, Trusted requires Foundational.
 
-Profiles can be loaded from config/certification_profiles.yaml to provide
+Profiles can be loaded from abevalflow/config/certification_profiles.yaml to provide
 the skill certification profile.
 """
 
@@ -44,17 +44,18 @@ class CertificationLevel(StrEnum):
 class CheckId(StrEnum):
     """Identifiers for all certification checks.
 
-    Checks are grouped by certification level.
+    Checks are grouped by certification level. Historical IDs without an evaluator
+    remain readable in stored results and fail when selected.
     """
 
-    # Foundational checks (6-10 in the spec)
+    # Foundational checks
     VALID_SKILL_STRUCTURE = "valid_skill_structure"
     BASIC_SECURITY_VALIDATION = "basic_security_validation"
     BASIC_EXECUTION_VALIDATION = "basic_execution_validation"
     CONTENT_QUALITY_REVIEW = "content_quality_review"
     METADATA_COMPLIANCE = "metadata_compliance"
 
-    # Trusted checks (11-18 in the spec)
+    # Trusted checks
     EVALUATION_ASSETS = "evaluation_assets"
     ADVANCED_SECURITY_VALIDATION = "advanced_security_validation"
     FUNCTIONAL_VALIDATION = "functional_validation"
@@ -64,7 +65,7 @@ class CheckId(StrEnum):
     EFFICIENCY_COST_PROFILING = "efficiency_cost_profiling"
     DATA_PRIVACY_PII_HANDLING = "data_privacy_pii_handling"
 
-    # Certified checks (1-7 in the spec)
+    # Certified checks
     ENTERPRISE_STRUCTURE_VALIDATION = "enterprise_structure_validation"
     ENTERPRISE_SECURITY_REVIEW = "enterprise_security_review"
     ENTERPRISE_BEHAVIORAL_TESTING = "enterprise_behavioral_testing"
@@ -87,7 +88,6 @@ TRUSTED_CHECKS = [
     CheckId.ADVANCED_SECURITY_VALIDATION,
     CheckId.FUNCTIONAL_VALIDATION,
     CheckId.INSTRUCTION_QUALITY,
-    # CheckId.REGISTRY_GOVERNANCE,  # Not yet implemented
     CheckId.OPERATIONAL_POLICY_COMPLIANCE,
 ]
 
@@ -96,7 +96,6 @@ CERTIFIED_CHECKS = [
     CheckId.ENTERPRISE_SECURITY_REVIEW,
     CheckId.ENTERPRISE_BEHAVIORAL_TESTING,
     CheckId.ADVANCED_AGENT_VALIDATION,
-    # CheckId.CONTINUOUS_OPTIMIZATION,  # Not yet implemented
 ]
 
 
@@ -110,7 +109,7 @@ def _load_profiles_yaml(profiles_path: Path | None = None) -> dict[str, Any]:
     """Load certification profiles from YAML file.
 
     Args:
-        profiles_path: Path to profiles YAML. Defaults to config/certification_profiles.yaml
+        profiles_path: Path to profiles YAML. Defaults to abevalflow/config/certification_profiles.yaml
 
     Returns:
         Parsed YAML content as dict
@@ -131,7 +130,7 @@ def get_available_profiles(profiles_path: Path | None = None) -> list[str]:
     """Get list of available profile names.
 
     Args:
-        profiles_path: Path to profiles YAML. Defaults to config/certification_profiles.yaml
+        profiles_path: Path to profiles YAML. Defaults to abevalflow/config/certification_profiles.yaml
 
     Returns:
         List of configured skill profile names
@@ -144,7 +143,7 @@ def get_default_profile_name(profiles_path: Path | None = None) -> str:
     """Get the default profile name from configuration.
 
     Args:
-        profiles_path: Path to profiles YAML. Defaults to config/certification_profiles.yaml
+        profiles_path: Path to profiles YAML. Defaults to abevalflow/config/certification_profiles.yaml
 
     Returns:
         Default profile name (e.g., 'skill')
@@ -166,7 +165,7 @@ def load_profile(
 
     Args:
         profile_name: Name of profile to load. If None, uses default from config.
-        profiles_path: Path to profiles YAML. Defaults to config/certification_profiles.yaml
+        profiles_path: Path to profiles YAML. Defaults to abevalflow/config/certification_profiles.yaml
 
     Returns:
         CertificationPolicy with checks configured per the profile
@@ -837,17 +836,6 @@ def compute_certification(
         ),
     )
 
-    all_checks.setdefault(
-        CheckId.REGISTRY_GOVERNANCE,
-        CheckResult(
-            check_id=CheckId.REGISTRY_GOVERNANCE,
-            name="Registry Governance",
-            passed=False,
-            score=0.0,
-            message="Registry governance check not implemented",
-        ),
-    )
-
     if operational_policy_result is not None:
         all_checks[CheckId.OPERATIONAL_POLICY_COMPLIANCE] = operational_policy_result
     else:
@@ -858,7 +846,7 @@ def compute_certification(
                 name="Operational Policy Compliance",
                 passed=False,
                 score=0.0,
-                message="Operational policy check not implemented",
+                message="No operational policy result provided",
             ),
         )
 
@@ -875,17 +863,6 @@ def compute_certification(
                 message="No behavioral testing data provided",
             ),
         )
-
-    all_checks.setdefault(
-        CheckId.CONTINUOUS_OPTIMIZATION,
-        CheckResult(
-            check_id=CheckId.CONTINUOUS_OPTIMIZATION,
-            name="Continuous Optimization",
-            passed=False,
-            score=0.0,
-            message="Continuous optimization not implemented",
-        ),
-    )
 
     def get_checks_for_level(
         level_name: str,

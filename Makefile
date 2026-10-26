@@ -1,13 +1,10 @@
 CONTAINER_ENGINE ?= podman
 IMAGE_REPOSITORY ?= quay.io/ecosystem-appeng/agent-eval-harness
-VERSION ?= v4.0
+VERSION ?= v5.0
 PLATFORM ?= linux/amd64
-IMAGES := agent-eval-harness aeh-task aeh-trial security-scan skillmd-scan
+IMAGES := agent-eval-harness aeh-trial
 PURPOSE_agent-eval-harness := runner
-PURPOSE_aeh-task := task
 PURPOSE_aeh-trial := trial
-PURPOSE_security-scan := security-scan
-PURPOSE_skillmd-scan := skillmd-scan
 
 .PHONY: images test $(IMAGES)
 images: $(IMAGES)
@@ -16,6 +13,6 @@ $(IMAGES):
 
 test:
 	uv run --locked --extra dev --extra observability pytest tests/ -q \
-		--cov=abevalflow --cov=scripts --cov-report=term-missing --cov-fail-under=80
-	uv run --locked --extra dev --extra observability ruff check abevalflow scripts tests containers
-	uv run --locked --extra dev --extra observability ruff format --check abevalflow scripts tests containers
+		--cov=abevalflow --cov-report=term-missing --cov-fail-under=80
+	uv run --locked --extra dev --extra observability ruff check abevalflow tests containers
+	uv run --locked --extra dev --extra observability ruff format --check abevalflow tests containers

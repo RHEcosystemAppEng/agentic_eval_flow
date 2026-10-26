@@ -72,10 +72,18 @@ def test_doctor_offline_checks_requested_capabilities_only(catalog):
 
 
 def test_container_scanners_do_not_require_host_python_scanner_packages(catalog):
-    config = resolve_config({**catalog, "scanner_runtime": "podman"}, {})
+    config = resolve_config(
+        {
+            **catalog,
+            "scanner_runtime": "podman",
+            "security_image": "evaluator:check",
+            "quality_image": "evaluator:check",
+        },
+        {},
+    )
     with patch("shutil.which", return_value="/bin/podman"):
         checks = check_readiness(config, cluster=False)
-    assert checks == [{"name": "podman", "ready": True, "detail": "Scanner executable must be on PATH"}]
+    assert checks == [{"name": "podman", "ready": True, "detail": "Scanner executable must be installed"}]
 
 
 def test_doctor_reports_model_and_storage_configuration(catalog):
@@ -127,7 +135,15 @@ def test_cluster_failure_does_not_expose_sdk_credentials(catalog, tmp_path, monk
 def test_scanner_container_paths_are_translated(catalog):
     from abevalflow.validation.scanners import scanner_command
 
-    config = resolve_config({**catalog, "scanner_runtime": "docker"}, {})
+    config = resolve_config(
+        {
+            **catalog,
+            "scanner_runtime": "docker",
+            "security_image": "evaluator:check",
+            "quality_image": "evaluator:check",
+        },
+        {},
+    )
     command = scanner_command(config, "security", ["skill-scanner", "scan", str(config.output / "source/skill")])
     assert command[0] == "docker"
     assert "--network=none" in command

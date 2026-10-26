@@ -1,4 +1,4 @@
-"""Tests for scripts/run_aeh.py - AEH runner dispatcher."""
+"""Harbor execution, pairwise comparison, contracts."""
 
 from __future__ import annotations
 
@@ -8,14 +8,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 import yaml
 
-from abevalflow.execution.runner import (
-    RUNNERS,
-    BaseRunner,
-    HarborRunner,
-    RunnerError,
-    get_runner,
-    materialize_aeh_case_outputs,
-)
+from abevalflow.execution.artifacts import materialize_aeh_case_outputs
+from abevalflow.execution.base import RunnerError
+from abevalflow.execution.harbor import HarborRunner
 
 
 @pytest.fixture(autouse=True)
@@ -39,35 +34,6 @@ def external_aeh_runtime(tmp_path, monkeypatch):
         path.write_text("")
     monkeypatch.setenv("ABEVAL_AEH_ROOT", str(runtime.root))
     return runtime
-
-
-class TestRunnerRegistry:
-    """Test runner registration and lookup."""
-
-    def test_harbor_runner_registered(self):
-        """Harbor runner should be registered."""
-        assert "harbor" in RUNNERS
-        assert RUNNERS["harbor"] is HarborRunner
-
-    def test_get_runner_harbor(self):
-        """get_runner should return HarborRunner for 'harbor'."""
-        runner = get_runner("harbor")
-        assert isinstance(runner, HarborRunner)
-
-    def test_get_runner_unknown_raises(self):
-        """get_runner should raise ValueError for unknown runner."""
-        try:
-            get_runner("unknown")
-            assert False, "Should have raised ValueError"
-        except ValueError as e:
-            assert "unknown" in str(e).lower()
-            assert "harbor" in str(e).lower()
-
-    def test_get_runner_passes_kwargs(self):
-        """get_runner should pass kwargs to runner constructor."""
-        runner = get_runner("harbor", model="test-model", judge_model="test-judge")
-        assert runner.model == "test-model"
-        assert runner.judge_model == "test-judge"
 
 
 class TestMaterializeAehCaseOutputs:
@@ -333,53 +299,18 @@ class TestBaseRunner:
 
 class TestEvalDirName:
     def test_fallback_submission_name(self, tmp_path):
-        from abevalflow.execution.runner import eval_dir_name
+        from abevalflow.execution.artifacts import eval_dir_name
 
         config_path = tmp_path / "eval.yaml"
         config_path.write_text(yaml.dump({"execution": {"prompt": "hi"}}))
         assert eval_dir_name(config_path, fallback="sample-skill") == "sample-skill"
 
     def test_sanitizes_name(self, tmp_path):
-        from abevalflow.execution.runner import eval_dir_name
+        from abevalflow.execution.artifacts import eval_dir_name
 
         config_path = tmp_path / "eval.yaml"
         config_path.write_text(yaml.dump({"name": "Forge Eval Rubrics"}))
         assert eval_dir_name(config_path, fallback="sub") == "forge-eval-rubrics"
-
-    def test_resolve_prefers_eval_name_then_submission(self, tmp_path):
-        from abevalflow.execution.runner import resolve_aeh_run_dir
-
-        reports = tmp_path / "reports"
-        run_id = "aeh-harbor-forge-nsenter-nfz69"
-        actual = reports / "forge-eval-rubrics" / run_id
-        actual.mkdir(parents=True)
-        (actual / "summary.yaml").write_text("mean_reward: 1.0\n")
-        (reports / "sample-skill" / run_id).mkdir(parents=True)
-
-        found = resolve_aeh_run_dir(
-            reports,
-            run_id,
-            eval_name="forge-eval-rubrics",
-            submission_name="sample-skill",
-        )
-        assert found == actual
-
-    def test_resolve_falls_back_to_submission_dir(self, tmp_path):
-        from abevalflow.execution.runner import resolve_aeh_run_dir
-
-        reports = tmp_path / "reports"
-        run_id = "run-1"
-        sub = reports / "sample-skill" / run_id
-        sub.mkdir(parents=True)
-        (sub / "run_result.json").write_text("{}")
-
-        found = resolve_aeh_run_dir(
-            reports,
-            run_id,
-            eval_name="forge-eval-rubrics",
-            submission_name="sample-skill",
-        )
-        assert found == sub
 
 
 class TestPairwiseExecution:
@@ -507,100 +438,3 @@ class TestPairwiseExecution:
                 assert False, "Should have raised RunnerError"
             except RunnerError as e:
                 assert "summary.yaml" in str(e).lower()
-
-
-class TestCLI:
-    """Test CLI argument parsing."""
-
-    def test_cli_single_missing_config_fails(self, tmp_path):
-        """CLI single command should fail without --config."""
-        import sys
-        from unittest.mock import patch as mock_patch
-
-        from abevalflow.cli.compat.run_aeh import main
-
-        output = tmp_path / "output"
-
-        with mock_patch.object(
-            sys,
-            "argv",
-            ["run_aeh.py", "single", "--output", str(output)],
-        ):
-            try:
-                main()
-            except SystemExit as e:
-                # argparse exits with 2 for missing required args
-                assert e.code == 2
-
-    def test_cli_pairwise_missing_configs_fails(self, tmp_path):
-        """CLI pairwise command should fail without control/treatment configs."""
-        import sys
-        from unittest.mock import patch as mock_patch
-
-        from abevalflow.cli.compat.run_aeh import main
-
-        output = tmp_path / "output"
-
-        with mock_patch.object(
-            sys,
-            "argv",
-            ["run_aeh.py", "pairwise", "--output", str(output), "--run-id", "test"],
-        ):
-            try:
-                main()
-            except SystemExit as e:
-                # argparse exits with 2 for missing required args
-                assert e.code == 2
-
-    def test_cli_harbor_requires_model(self, tmp_path):
-        """CLI harbor runner should fail without --model."""
-        import sys
-        from unittest.mock import patch as mock_patch
-
-        from abevalflow.cli.compat.run_aeh import main
-
-        config = tmp_path / "eval.yaml"
-        config.write_text(yaml.dump({"skill": "test"}))
-        output = tmp_path / "output"
-
-        with mock_patch.object(
-            sys,
-            "argv",
-            [
-                "run_aeh.py",
-                "single",
-                "--runner",
-                "harbor",
-                "--config",
-                str(config),
-                "--output",
-                str(output),
-            ],
-        ):
-            # Should fail because harbor requires --model
-            exit_code = main()
-            assert exit_code == 1  # RunnerError exits with 1
-
-
-class TestRunnerExtensibility:
-    """Test that new runners can be added easily."""
-
-    def test_custom_runner_registration(self):
-        """Custom runners can be added to RUNNERS dict."""
-
-        class CustomRunner(BaseRunner):
-            name = "custom"
-
-            def _execute(self, config, output, **opts):
-                return 0
-
-        # Register
-        RUNNERS["custom"] = CustomRunner
-
-        try:
-            runner = get_runner("custom")
-            assert isinstance(runner, CustomRunner)
-            assert runner.name == "custom"
-        finally:
-            # Cleanup
-            del RUNNERS["custom"]

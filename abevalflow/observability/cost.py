@@ -1,6 +1,6 @@
 """Cost estimation from token counts and per-model pricing.
 
-Reads model_costs.yaml for per-model rates (USD per 1K tokens).
+Reads an explicitly supplied pricing file for model rates (USD per 1K tokens).
 Lookup order: exact match → prefix match → _default entry → zero.
 """
 
@@ -14,11 +14,9 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
-_COSTS_PATH = Path(__file__).resolve().parents[2] / "config" / "observability" / "model_costs.yaml"
-
 
 @lru_cache(maxsize=1)
-def _load_model_costs(path: Path = _COSTS_PATH) -> dict[str, dict[str, float]]:
+def _load_model_costs(path: Path) -> dict[str, dict[str, float]]:
     if not path.is_file():
         logger.warning("Model costs file not found: %s", path)
         return {}
@@ -50,10 +48,10 @@ def calculate_cost(
 
     Returns None if model_name is not provided or no pricing is available.
     """
-    if not model_name:
+    if not model_name or costs_path is None:
         return None
 
-    costs = _load_model_costs(costs_path or _COSTS_PATH)
+    costs = _load_model_costs(costs_path)
     if not costs:
         return None
 

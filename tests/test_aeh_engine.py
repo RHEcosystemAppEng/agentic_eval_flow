@@ -5,23 +5,9 @@ import json
 import pytest
 import yaml
 
-from abevalflow.engines import get_all_engines, get_engine
 from abevalflow.engines.aeh import AEHEngine
 from abevalflow.gates.base import GateType
 from abevalflow.schemas import GatePolicy, GatePolicyItem
-
-
-class TestAEHEngineRegistry:
-    """Tests for AEH engine registration."""
-
-    def test_aeh_registered(self):
-        engines = get_all_engines()
-        assert "aeh" in engines
-
-    def test_get_engine_aeh(self):
-        engine = get_engine("aeh")
-        assert isinstance(engine, AEHEngine)
-        assert engine.name == "aeh"
 
 
 class TestAEHEngine:

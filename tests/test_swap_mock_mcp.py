@@ -1,4 +1,4 @@
-"""Tests for scripts/swap_mock_mcp.py.
+"""Tests for the MCP staging service.
 
 Extracted from aeh-skill-eval.yaml's previously-untested inline swap-mock-mcp
 heredoc -- see that module's docstring for the full mechanism this covers:
@@ -171,7 +171,7 @@ def test_noop_when_no_mock_server_names(tmp_path: Path):
 
 def test_idempotent_second_call(tmp_path: Path):
     """Calling twice (e.g. once from Tekton's swap-mock-mcp step, once from
-    a local run_aeh.py dev run that already has a swapped checkout) is a
+    a local CLI dev run that already has a swapped checkout) is a
     safe no-op the second time -- doesn't double-wrap args or clobber the
     mcps.real.json backup."""
     submission = _write_submission(

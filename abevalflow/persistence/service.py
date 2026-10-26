@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 import io
-import json
-import subprocess
-import tarfile
 
 from abevalflow.config.runtime import RuntimeConfig
 from abevalflow.results.run import RunResult, StepResult, write_json
@@ -21,7 +18,10 @@ def publish(config: RuntimeConfig, result: RunResult) -> list[StepResult]:
 
                 if not config.database_url:
                     raise ValueError("Postgres requires ABEVAL_DATABASE_URL or DATABASE_URL")
-                store_snapshot(config.output / "reports", config.database_url.get_secret_value(), config.run_id)
+                from abevalflow.persistence.database import database_connection
+
+                with database_connection(config.database_url.get_secret_value(), config.database_tls_route_host) as url:
+                    store_snapshot(config.output / "reports", url, config.run_id)
                 details = {}
             elif destination == "s3":
                 details = publish_s3(config, result)
@@ -44,7 +44,7 @@ def publish(config: RuntimeConfig, result: RunResult) -> list[StepResult]:
                     raise RuntimeError("One or more Compass facts could not be published")
                 details = {}
             else:
-                details = publish_oci(config, result)
+                raise ValueError(f"Unsupported persistence destination: {destination}")
             outcomes.append(StepResult(name=destination, blocking=config.persistence_required, details=details))
         except Exception as exc:
             # SDK exception text can include connection credentials or request headers.
@@ -90,24 +90,3 @@ def publish_s3(config: RuntimeConfig, result: RunResult) -> dict:
         config.s3_bucket, f"{prefix}/run.json", io.BytesIO(data), len(data), content_type="application/json"
     )
     return {"uri": f"s3://{config.s3_bucket}/{prefix}/", "artifacts": count + 1}
-
-
-def publish_oci(config: RuntimeConfig, result: RunResult) -> dict:
-    """Attach an archive of reports as an OCI referrer using ORAS."""
-    if not config.oci_subject:
-        raise ValueError("OCI publication requires --oci-subject with an image digest")
-    archive = config.output / "reports.tar.gz"
-    with tarfile.open(archive, "w:gz") as stream:
-        stream.add(config.output / "reports", arcname="reports")
-        data = result.model_dump_json(indent=2).encode()
-        entry = tarfile.TarInfo("run.json")
-        entry.size = len(data)
-        stream.addfile(entry, io.BytesIO(data))
-    command = ["oras", "attach", "--artifact-type", "application/vnd.agentic-eval.reports.v1", "--format", "json"]
-    if config.registry_config:
-        command += ["--registry-config", str(config.registry_config)]
-    command += [config.oci_subject, f"{archive.name}:application/gzip"]
-    process = subprocess.run(
-        command, cwd=config.output, capture_output=True, text=True, timeout=config.command_timeout, check=True
-    )
-    return {"subject": config.oci_subject, "artifact": json.loads(process.stdout)}

@@ -25,10 +25,6 @@ build/
 .DS_Store
 Thumbs.db
 
-# Temp files
-.tmp-jira-comment.txt
-test-fact.json
-
 .pytest_cache/
 .ruff_cache/
 .coverage

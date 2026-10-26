@@ -69,7 +69,7 @@ def test_tier2_orchestration_aggregates_real_report_contract(catalog, mode):
 
     runner.run_single.side_effect = single
     runner.run_pairwise.side_effect = pairwise
-    with patch("abevalflow.execution.runner.HarborRunner", return_value=runner) as constructor:
+    with patch("abevalflow.execution.harbor.HarborRunner", return_value=runner) as constructor:
         result = run(config)
     assert result.exit_code == 0, result.model_dump_json()
     assert result.evidence_complete
@@ -91,7 +91,7 @@ def test_submission_review_is_default_on_for_tier2(catalog):
     }
     with (
         patch("abevalflow.review.service.ReviewService", return_value=review),
-        patch("abevalflow.execution.runner.HarborRunner", side_effect=RuntimeError("engine unavailable")),
+        patch("abevalflow.execution.harbor.HarborRunner", side_effect=RuntimeError("engine unavailable")),
     ):
         result = run(config)
     review.review_submission.assert_called_once()
@@ -113,7 +113,7 @@ def test_advisory_review_error_does_not_prevent_agent_execution(catalog):
     runner.run_single.side_effect = execute
     with (
         patch("abevalflow.review.service.ReviewService", side_effect=ValueError("review unavailable")),
-        patch("abevalflow.execution.runner.HarborRunner", return_value=runner),
+        patch("abevalflow.execution.harbor.HarborRunner", return_value=runner),
     ):
         result = run(config)
     assert result.exit_code == 0
@@ -132,7 +132,7 @@ def test_aehruntime_failure_is_not_a_quality_failure(catalog):
         return 5
 
     runner.run_single.side_effect = execute
-    with patch("abevalflow.execution.runner.HarborRunner", return_value=runner):
+    with patch("abevalflow.execution.harbor.HarborRunner", return_value=runner):
         result = run(config)
     step = next(s for s in result.steps if s.name == "evaluate")
     assert step.status == "error"

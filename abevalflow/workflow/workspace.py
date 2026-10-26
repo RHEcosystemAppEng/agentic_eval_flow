@@ -14,6 +14,12 @@ from abevalflow.config.runtime import ConfigurationError, RuntimeConfig
 EXCLUDED = {".git", ".venv", "__pycache__", ".pytest_cache", ".ruff_cache", ".abeval", "node_modules"}
 
 
+def staged_source_root(config: RuntimeConfig) -> Path:
+    """Preserve the skill directory name when the source is a standalone skill."""
+    root = config.output / "source"
+    return root / config.source.name if config.source == config.skill else root
+
+
 @contextmanager
 def run_lock(directory: Path, *, create: bool = False) -> Iterator[None]:
     """Reserve a run against concurrent writers without overwriting existing evidence."""
@@ -52,7 +58,7 @@ def stage_source(config: RuntimeConfig) -> str:
             elif item.is_file():
                 digest.update(f"file:{item.relative_to(root)}:{item.stat().st_mode & 0o111}:".encode())
                 digest.update(item.read_bytes())
-    destination = config.output / "source"
+    destination = staged_source_root(config)
 
     def ignore(directory: str, entries: list[str]) -> set[str]:
         return {e for e in entries if e in EXCLUDED or (Path(directory) / e).resolve() == config.output}

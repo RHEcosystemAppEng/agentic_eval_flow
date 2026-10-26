@@ -1,4 +1,4 @@
-"""Tests for scorecard persistence in store_results.py."""
+"""Tests for scorecard persistence in PostgreSQL snapshots."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from abevalflow.persistence.postgres import (
     map_certifications,
     map_gate_results,
     map_scorecard_to_row,
-    store,
+    store_snapshot,
 )
 from abevalflow.report import (
     AnalysisResult,
@@ -172,8 +172,7 @@ class TestStoreWithScorecard:
         scorecard = _sample_scorecard()
         _write_scorecard(report_dir, scorecard)
 
-        ok = store(report_dir, db_url, "tekton-run-001")
-        assert ok is True
+        store_snapshot(report_dir, db_url, "tekton-run-001")
 
         with session_factory() as session:
             assert session.execute(select(EvaluationRun)).scalar_one() is not None
@@ -188,8 +187,7 @@ class TestStoreWithScorecard:
         result = _sample_result()
         report_dir = _write_report(tmp_path, result)
 
-        ok = store(report_dir, db_url, "tekton-run-002")
-        assert ok is True
+        store_snapshot(report_dir, db_url, "tekton-run-002")
 
         with session_factory() as session:
             assert session.execute(select(EvaluationRun)).scalar_one() is not None
@@ -200,12 +198,10 @@ class TestStoreWithScorecard:
         report_dir = _write_report(tmp_path, result)
         (report_dir / "scorecard.json").write_text("{ invalid json !!!")
 
-        ok = store(report_dir, db_url, "tekton-run-003")
-        assert ok is True
-
+        with pytest.raises(ValueError):
+            store_snapshot(report_dir, db_url, "tekton-run-003")
         with session_factory() as session:
-            assert session.execute(select(EvaluationRun)).scalar_one() is not None
-            assert session.execute(select(ScorecardRow)).scalar_one_or_none() is None
+            assert session.execute(select(EvaluationRun)).scalar_one_or_none() is None
 
     def test_store_idempotent_with_scorecard(self, tmp_path: Path, db_url: str, session_factory) -> None:
         result = _sample_result()
@@ -213,8 +209,8 @@ class TestStoreWithScorecard:
         scorecard = _sample_scorecard()
         _write_scorecard(report_dir, scorecard)
 
-        store(report_dir, db_url, "tekton-run-004")
-        store(report_dir, db_url, "tekton-run-004")
+        store_snapshot(report_dir, db_url, "tekton-run-004")
+        store_snapshot(report_dir, db_url, "tekton-run-004")
 
         with session_factory() as session:
             scorecards = session.execute(select(ScorecardRow)).scalars().all()
@@ -279,8 +275,7 @@ class TestStoreWithScorecard:
         ctx.timings["pipeline"] = TimingRecord(name="pipeline", start_time=0, end_time=10, duration_ms=10000)
         ctx.checkpoint(report_dir)
 
-        ok = store(report_dir, db_url, "tekton-run-metrics")
-        assert ok is True
+        store_snapshot(report_dir, db_url, "tekton-run-metrics")
 
         with session_factory() as session:
             metrics = session.execute(select(ObservabilityMetricsRow)).scalar_one()
@@ -296,8 +291,7 @@ class TestStoreWithScorecard:
         result = _sample_result()
         report_dir = _write_report(tmp_path, result)
 
-        ok = store(report_dir, db_url, "tekton-run-no-metrics")
-        assert ok is True
+        store_snapshot(report_dir, db_url, "tekton-run-no-metrics")
 
         with session_factory() as session:
             assert session.execute(select(ObservabilityMetricsRow)).scalar_one_or_none() is None

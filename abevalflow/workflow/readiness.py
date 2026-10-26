@@ -16,13 +16,16 @@ def check_readiness(config: RuntimeConfig, *, cluster: bool = True) -> list[dict
         checks.append({"name": name, "ready": ready, "detail": detail})
 
     if 1 in config.tiers:
+        from abevalflow.validation.scanners import local_scanner_executable
+
         commands = (
             (config.security_command, config.quality_command)
             if config.scanner_runtime == "local"
             else (config.scanner_runtime,)
         )
         for command in commands:
-            record(command, shutil.which(command) is not None, "Scanner executable must be on PATH")
+            executable = local_scanner_executable(command) if config.scanner_runtime == "local" else command
+            record(command, shutil.which(executable) is not None, "Scanner executable must be installed")
     if config.skill_review or config.submission_review:
         record("review-client", importlib.util.find_spec("openai") is not None, "Install abevalflow[llm]")
         record(

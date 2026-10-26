@@ -357,7 +357,6 @@ class TestCertificationLevelConstants:
         assert CheckId.ADVANCED_SECURITY_VALIDATION in TRUSTED_CHECKS
         assert CheckId.FUNCTIONAL_VALIDATION in TRUSTED_CHECKS
         assert CheckId.INSTRUCTION_QUALITY in TRUSTED_CHECKS
-        # registry_governance not yet implemented
         assert len(TRUSTED_CHECKS) == 5
 
     def test_certified_has_expected_checks(self) -> None:
@@ -365,7 +364,6 @@ class TestCertificationLevelConstants:
         assert CheckId.ENTERPRISE_SECURITY_REVIEW in CERTIFIED_CHECKS
         assert CheckId.ENTERPRISE_BEHAVIORAL_TESTING in CERTIFIED_CHECKS
         assert CheckId.ADVANCED_AGENT_VALIDATION in CERTIFIED_CHECKS
-        # continuous_optimization not yet implemented
         assert len(CERTIFIED_CHECKS) == 4
 
 
@@ -1040,8 +1038,6 @@ class TestProfileLoading:
         assert "valid_skill_structure" in policy.foundational.checks
         assert "basic_execution_validation" in policy.foundational.checks
 
-        # safety_toxicity_bias_guardrails not yet implemented, commented out in profile
-
     def test_load_profile_invalid_raises(self) -> None:
         """Loading a non-existent profile raises ValueError."""
         from abevalflow.certification import clear_profiles_cache, load_profile
@@ -1180,7 +1176,7 @@ class TestOperationalPolicyCertificationIntegration:
         )
         assert result.trusted.passed is False
 
-    def test_none_result_uses_default_not_implemented(self) -> None:
+    def test_missing_operational_policy_result_fails_closed(self) -> None:
         engine_gate = GateResult(
             gate_name="evaluation",
             gate_type=GateType.ENGINE,
@@ -1198,4 +1194,4 @@ class TestOperationalPolicyCertificationIntegration:
         )
         op_check = next(c for c in result.trusted.checks if c.check_id == CheckId.OPERATIONAL_POLICY_COMPLIANCE)
         assert op_check.passed is False
-        assert "not implemented" in op_check.message
+        assert "No operational policy result provided" == op_check.message

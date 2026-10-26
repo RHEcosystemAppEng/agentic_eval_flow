@@ -1,13 +1,10 @@
 """Tier 1 validation and the dedicated evidence consumed by certification."""
 
-import json
-
 import pytest
 import yaml
 
 from abevalflow.certification import CheckId, compute_certification
-from abevalflow.cli.compat.validate_skill_structure import main
-from abevalflow.policy.aggregation import aggregate_scorecard
+from abevalflow.cli.main import main
 from abevalflow.skill_structure import load_skill_structure_result, validate_skill_structure
 
 
@@ -90,29 +87,18 @@ def test_warnings_remain_advisory(skill_dir):
 
 
 @pytest.mark.parametrize("valid_skill", [True, False])
-@pytest.mark.parametrize("submission_valid", [None, True, False])
-def test_cli_report_drives_scorecard_independently_of_submission(skill_dir, tmp_path, valid_skill, submission_valid):
+def test_cli_report_drives_scorecard_independently_of_submission(skill_dir, tmp_path, valid_skill):
     reports_dir = tmp_path / "reports"
     report_path = reports_dir / "skill-structure-validation.json"
     if not valid_skill:
         (skill_dir / "SKILL.md").write_text("# Missing frontmatter\n")
-    assert main([str(skill_dir), "--output", str(report_path)]) == (0 if valid_skill else 1)
-    if submission_valid is not None:
-        (reports_dir / "validation.json").write_text(json.dumps({"valid": submission_valid, "errors": []}))
-
-    scorecard = aggregate_scorecard(
-        submission_dir=tmp_path / "nonexistent-submission",
-        results_dir=tmp_path / "results",
-        reports_dir=reports_dir,
-        workspace_root=tmp_path,
-        eval_engine="aeh",
-        pipeline_run_id="test-run",
+    assert main(["validate", "skill", str(skill_dir), "--output", str(report_path)]) == (0 if valid_skill else 1)
+    certification = compute_certification(
+        gates=[], validation_passed=True, skill_structure_result=load_skill_structure_result(report_path)
     )
 
     check = next(
-        check
-        for check in scorecard.certification.foundational.checks
-        if check.check_id == CheckId.VALID_SKILL_STRUCTURE
+        check for check in certification.foundational.checks if check.check_id == CheckId.VALID_SKILL_STRUCTURE
     )
     assert check.passed is valid_skill
     assert check.details["skill_path"] == str(skill_dir / "SKILL.md")

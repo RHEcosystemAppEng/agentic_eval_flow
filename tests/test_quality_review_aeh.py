@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock
 
 import yaml
 
@@ -66,8 +66,7 @@ class TestReviewSubmissionAeh:
             "summary": "bad",
         }
         payload = __import__("json").dumps(fake)
-        with patch(
-            "abevalflow.review.submission.llm_client.chat_completion_with_usage",
+        complete = Mock(
             return_value=LLMResult(
                 content=payload,
                 prompt_tokens=1,
@@ -75,8 +74,8 @@ class TestReviewSubmissionAeh:
                 total_tokens=2,
                 model="test",
             ),
-        ):
-            assessment = review_submission(sub)
+        )
+        assessment = review_submission(sub, complete=complete)
         assert assessment["engine"] == "aeh"
         assert assessment["passed"] is True  # AEH advisory
         assert assessment["recommendation"] == "fail"

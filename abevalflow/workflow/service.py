@@ -21,7 +21,7 @@ def create_result(config: RuntimeConfig) -> RunResult:
     try:
         evaluator_version = version("abevalflow")
     except PackageNotFoundError:
-        evaluator_version = "0.2.0"
+        evaluator_version = "0.3.0"
     return RunResult(
         run_id=config.run_id,
         skill=config.name,
@@ -122,11 +122,13 @@ def load_run(directory: Path) -> tuple[RuntimeConfig, RunResult]:
     return refresh_credentials(config), result
 
 
-def phase(directory: Path, name: str) -> RunResult:
+def phase(directory: Path, name: str, *, if_selected: bool = False) -> RunResult:
     """Execute a declared phase once; existing evidence is not silently overwritten."""
     with run_lock(directory):
         config, result = load_run(directory)
         if name not in build_plan(config)["steps"]:
+            if if_selected:
+                return result
             raise ValueError(f"Phase {name} is not selected for this run")
         if any(s.name == name for s in result.steps):
             raise ValueError(f"Phase {name} already has evidence; start a new run to execute it again")

@@ -5,7 +5,7 @@ COPY --from=ghcr.io/astral-sh/uv:0.13.0 /uv /usr/local/bin/uv
 RUN dnf install -y git tar && dnf clean all
 COPY pyproject.toml README.md uv.lock /opt/agent-eval-harness/
 WORKDIR /opt/agent-eval-harness
-RUN uv export --frozen --no-dev --extra runner --extra llm --extra observability --no-emit-project --no-hashes --output-file /tmp/runtime-requirements.txt \
+RUN uv export --frozen --no-dev --extra runner --extra llm --extra storage --extra observability --no-emit-project --no-hashes --output-file /tmp/runtime-requirements.txt \
     && pip install --no-cache-dir -r /tmp/runtime-requirements.txt \
     && rm /tmp/runtime-requirements.txt
 ARG AEH_REPO=https://github.com/fullsend-ai/agent-eval-harness.git
@@ -17,7 +17,6 @@ RUN git init /opt/aeh/source \
     && pip install --no-cache-dir --no-deps --editable /opt/aeh/source
 ENV ABEVAL_AEH_ROOT=/opt/aeh/source
 COPY abevalflow /opt/agent-eval-harness/abevalflow
-COPY scripts /opt/agent-eval-harness/scripts
 RUN pip install --no-cache-dir --no-deps /opt/agent-eval-harness \
     && abeval --version \
     && python3 -c "from abevalflow.execution.runtime import resolve_runtime; resolve_runtime().validate()"

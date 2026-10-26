@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any
 
 from abevalflow.execution.artifacts import eval_dir_name
-from abevalflow.execution.resources import find_aeh_script
 from abevalflow.execution.runtime import resolve_runtime
 
 
@@ -224,7 +223,8 @@ class BaseRunner(ABC):
 
     def _find_aeh_script(self, name: str, score_py_path: Path | None = None) -> Path | None:
         """Locate an AEH eval-run script (score.py / report.py) beside score.py."""
-        return find_aeh_script(name, score_py_path) if score_py_path else self.aeh_runtime.script(name)
+        path = score_py_path.parent / name if score_py_path else self.aeh_runtime.script(name)
+        return path if path.is_file() else None
 
     def _regenerate_report_with_baseline(
         self,

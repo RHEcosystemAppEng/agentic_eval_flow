@@ -8,7 +8,6 @@ from pathlib import Path
 
 import yaml
 
-from abevalflow import llm_client
 from abevalflow.schemas import SubmissionMetadata
 
 logger = logging.getLogger(__name__)
@@ -186,7 +185,7 @@ def _normalize_assessment(assessment: dict, *, engine: str | None = None) -> dic
     return assessment
 
 
-def review_submission(submission_dir: Path, *, complete=None) -> dict:
+def review_submission(submission_dir: Path, *, complete) -> dict:
     """Run AI quality review and return the structured assessment."""
     meta_path = submission_dir / "metadata.yaml"
     with meta_path.open() as f:
@@ -223,8 +222,7 @@ def review_submission(submission_dir: Path, *, complete=None) -> dict:
     )
     engine = "aeh"
 
-    completion = complete or llm_client.chat_completion_with_usage
-    llm_result = completion(
+    llm_result = complete(
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 from abevalflow.config.runtime import RuntimeConfig
-from abevalflow.llm_client import LLMResult
+from abevalflow.llm_client import LLMResult, chat_completion_with_usage
 from abevalflow.review.submission import review_submission
 
 
@@ -23,14 +23,11 @@ class ReviewService:
         self.model = config.llm_model
 
     def complete(self, **kwargs) -> LLMResult:
-        response = self.client.chat.completions.create(model=self.model, **kwargs)
-        usage = response.usage
-        return LLMResult(
-            content=response.choices[0].message.content or "",
-            prompt_tokens=usage.prompt_tokens if usage else 0,
-            completion_tokens=usage.completion_tokens if usage else 0,
-            total_tokens=usage.total_tokens if usage else 0,
+        return chat_completion_with_usage(
+            client=self.client,
             model=self.model,
+            temperature=kwargs.pop("temperature", None),
+            **kwargs,
         )
 
     def review_submission(self, submission):

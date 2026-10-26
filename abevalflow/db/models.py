@@ -294,7 +294,7 @@ class CertificationRow(Base):
 class ObservabilityMetricsRow(Base):
     """Token/timing metrics per pipeline run.
 
-    Schema-only in Phase 0. Populated by MetricsContext in Phase A.
+    Stores timing, token usage, and available cost estimates from MetricsContext.
     No FK to scorecards — metrics may outlive scorecard lifecycle.
     """
 

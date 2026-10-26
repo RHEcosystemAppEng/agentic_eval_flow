@@ -23,9 +23,10 @@ def workflow_options(parser: argparse.ArgumentParser) -> None:
     storage = parser.add_argument_group("Persistence and publication")
     credentials = parser.add_argument_group("Credentials")
     parser.add_argument("skill", nargs="?", help="Directory containing SKILL.md; defaults to ABEVAL_SKILL or cwd")
-    parser.add_argument("--source", type=Path, help="Source root containing the skill and submission")
+    parser.add_argument("--skill-id", help="Catalog identifier <pack>/<skill>; alternative to the skill path")
     parser.add_argument("--submission", type=Path, help="AEH submission directory; otherwise discovered in the catalog")
     parser.add_argument("--tiers", help="1, 2, or 1,2 (default: 1)")
+    parser.add_argument("--source", type=Path, help="Source root containing the skill and submission")
     parser.add_argument("--output", type=Path, help="New run directory (default: .abeval/runs/<run-id>)")
     parser.add_argument("--run-id", help="Stable filesystem-safe run identifier")
     parser.add_argument("--revision", help="Evaluated source revision")
@@ -46,7 +47,7 @@ def workflow_options(parser: argparse.ArgumentParser) -> None:
         default=None,
         help="Allow Tier 2 after blocking Tier 1 findings; preserve the failing verdict",
     )
-    storage.add_argument("--persist", help="Comma-separated destinations: postgres,s3,compass,oci; disabled by default")
+    storage.add_argument("--persist", help="Comma-separated destinations: postgres,s3,compass; disabled by default")
     storage.add_argument(
         "--persistence-required",
         action=argparse.BooleanOptionalAction,
@@ -67,12 +68,12 @@ def workflow_options(parser: argparse.ArgumentParser) -> None:
     scanners.add_argument(
         "--scanner-runtime",
         choices=("local", "podman", "docker"),
-        help="Run scanners on PATH or in pinned containers (default: local)",
+        help="Run installed scanners locally or in containers (default: local)",
     )
     scanners.add_argument("--security-image", help="Cisco scanner image for container execution")
     scanners.add_argument("--quality-image", help="Quality scanner image for container execution")
-    scanners.add_argument("--security-command", help="Cisco scanner executable (default: skill-scanner)")
-    scanners.add_argument("--quality-command", help="Quality scanner executable (default: harness-eval)")
+    scanners.add_argument("--security-command", help="Override the included skill-scanner executable")
+    scanners.add_argument("--quality-command", help="Override the included harness-eval executable")
     parser.add_argument("--command-timeout", type=int, help="External command timeout in seconds (default: 7200)")
     models.add_argument("--llm-base-url", help="Submission/skill review API endpoint")
     models.add_argument("--llm-model", help="Submission/skill review model")
@@ -81,11 +82,10 @@ def workflow_options(parser: argparse.ArgumentParser) -> None:
     for secret in ("llm-api-key", "agent-api-key", "judge-api-key", "s3-access-key", "s3-secret-key", "compass-token"):
         credentials.add_argument(f"--{secret}", help=f"Credential; prefer ABEVAL_{secret.upper().replace('-', '_')}")
     storage.add_argument("--database-url", help="SQLAlchemy database URL; prefer ABEVAL_DATABASE_URL for credentials")
+    storage.add_argument("--database-tls-route-host", help="TLS passthrough route for a loopback PostgreSQL URL")
     storage.add_argument("--s3-endpoint", help="S3-compatible endpoint URL")
     storage.add_argument("--s3-bucket", help="S3 bucket (default: ab-eval-reports)")
     storage.add_argument("--s3-verify-tls", action=argparse.BooleanOptionalAction, default=None)
-    storage.add_argument("--oci-subject", help="OCI image reference including @sha256 digest for report attachment")
-    storage.add_argument("--registry-config", type=Path, help="ORAS registry authentication file")
 
 
 def parser() -> argparse.ArgumentParser:
@@ -131,13 +131,13 @@ def parser() -> argparse.ArgumentParser:
                     "report",
                 ),
             )
+        if name == "phase":
+            child.add_argument("--if-selected", action="store_true", help="Skip phases absent from the saved plan")
         if name == "publish":
             child.add_argument("--persist", help="Override selected publication destinations")
             child.add_argument("--database-url", help="Database URL; prefer ABEVAL_DATABASE_URL for credentials")
             child.add_argument("--s3-endpoint")
             child.add_argument("--s3-bucket")
-            child.add_argument("--oci-subject")
-            child.add_argument("--registry-config", type=Path)
             child.add_argument("--persistence-required", action=argparse.BooleanOptionalAction, default=None)
     runtime = subcommands.add_parser("runtime", help="Install or check the external AEH runtime")
     runtime_commands = runtime.add_subparsers(dest="runtime_command", required=True)
@@ -154,7 +154,7 @@ def package_version() -> str:
     try:
         return version("abevalflow")
     except PackageNotFoundError:
-        return "0.2.0"
+        return "0.3.0"
 
 
 def emit(value) -> None:
@@ -169,7 +169,12 @@ def main(argv: list[str] | None = None) -> int:
         format="%(levelname)s %(name)s: %(message)s",
         stream=sys.stderr,
     )
+    from abevalflow.observability.otel import setup_tracer_provider, shutdown_tracer_provider
+
+    tracing = args.command in {"run", "phase", "report", "publish"}
     try:
+        if tracing:
+            setup_tracer_provider()
         if args.command == "runtime":
             from abevalflow.execution.runtime import AEH_REVISION, AEH_VERSION, install_runtime, resolve_runtime
 
@@ -227,7 +232,7 @@ def main(argv: list[str] | None = None) -> int:
 
             if args.command == "phase":
                 with redirect_stdout(sys.stderr):
-                    result = phase(args.run_dir, args.name)
+                    result = phase(args.run_dir, args.name, if_selected=args.if_selected)
             else:
                 with run_lock(args.run_dir):
                     config, result = load_run(args.run_dir)
@@ -238,8 +243,8 @@ def main(argv: list[str] | None = None) -> int:
 
                         if args.persist is not None:
                             destinations = tuple(v.strip() for v in args.persist.split(",") if v.strip())
-                            if set(destinations) - {"postgres", "s3", "compass", "oci"}:
-                                raise ConfigurationError("Persistence destinations: postgres,s3,compass,oci")
+                            if set(destinations) - {"postgres", "s3", "compass"}:
+                                raise ConfigurationError("Persistence destinations: postgres,s3,compass")
                             config.persist = destinations
                         overrides = {
                             key: getattr(args, key)
@@ -247,8 +252,6 @@ def main(argv: list[str] | None = None) -> int:
                                 "database_url",
                                 "s3_endpoint",
                                 "s3_bucket",
-                                "oci_subject",
-                                "registry_config",
                                 "persistence_required",
                             )
                             if getattr(args, key) is not None
@@ -272,6 +275,7 @@ def main(argv: list[str] | None = None) -> int:
                             }
                         )
                         result.publication = publish(config, result)
+                        result.config["persist"] = list(config.persist)
                         save_run(config, result)
             emit(result.model_dump(mode="json"))
             return result.exit_code
@@ -295,15 +299,10 @@ def main(argv: list[str] | None = None) -> int:
                 save_run(config, create_result(config))
             emit({"run_dir": str(config.output)})
             return 0
-        from abevalflow.observability.otel import setup_tracer_provider, shutdown_tracer_provider
         from abevalflow.workflow.service import run
 
-        setup_tracer_provider()
-        try:
-            with redirect_stdout(sys.stderr):
-                result = run(config)
-        finally:
-            shutdown_tracer_provider()
+        with redirect_stdout(sys.stderr):
+            result = run(config)
         emit(
             {
                 "run_id": result.run_id,
@@ -338,3 +337,6 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:
         print(f"Runtime failure ({type(exc).__name__})", file=sys.stderr)
         return 3
+    finally:
+        if tracing:
+            shutdown_tracer_provider()

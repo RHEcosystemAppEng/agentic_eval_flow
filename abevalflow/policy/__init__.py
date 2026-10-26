@@ -1,1 +1,0 @@
-"""Policy for skill evaluation."""

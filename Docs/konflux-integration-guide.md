@@ -1,83 +1,111 @@
-# Konflux shared task contract
+# Konflux integration
 
-The workflow definition is
-`konflux-shared-tasks/task/aeh-skill-eval/aeh-skill-eval.yaml`. This repository
-provides its images and Python entry points. The caller supplies a trusted source
-artifact and one `submission-dir` per matrix leg, such as `rh-sre/cve-impact`.
+Use the installed `abeval` CLI from a task or runner image. The
+[CLI reference](cli.md) lists flags, environment variables, defaults, and exit
+codes. Submission files define cases, models, judges, and policy.
 
-Each leg works under `source/legs/<slug>/`. It copies the skill pack, resolves
-its local symlinks, and stages an optional
-`submissions/<pack>/<skill>/metadata.yaml` submission. Cross-step state lives in
-that leg's `.baked-vars/` directory. Reports use metadata's `name` when validation
-ran, otherwise the `submission-dir` value. Every scanner, scorecard, and storage
-step uses this same report key.
+## Ownership
 
-## Gates
+| Konflux task | Evaluation CLI |
+|---|---|
+| Retrieve trusted source artifacts and select changed skills. | Stage an isolated source copy. |
+| Fan out one evaluation per skill. | Run selected tiers in sequence. |
+| Mount kubeconfig, inject credentials, and provide image references. | Validate inputs, run scans/reviews, and orchestrate remote AEH trials. |
+| Provide a shared workspace across task steps. | Record phase evidence and generate reports in a run directory. |
+| Convert run evidence to Tekton results and attach OCI evidence. | Return structured JSON and documented exit codes. |
+| Select publication destinations. | Publish to PostgreSQL, S3, or Compass when requested. |
 
-Tier A always runs source preparation, skill structure validation, Cisco
-scanning, and harness-eval SKILL.md scanning. Skill structure validation checks
-`<pack>/skills/<skill>/SKILL.md` and its directory. Errors fail Tier A; warnings
-remain advisory. It writes `skill-structure-validation.json`, which supplies
-the `valid_skill_structure` certification check and the standalone
-`<fact_ref_prefix>valid-skill-structure` Compass fact. Cisco scanning disables
-LLM analysis and fails on high severity findings. This scan policy applies
-uniformly to every skill.
+## One-command execution
 
-Tier B runs validation, advisory quality review, and AEH only when
-`should-evaluate=true`, the skill belongs to `changed-skills`, and an AEH
-submission exists. The submission's `aeh_mode`, `aeh_control_config`, and
-`aeh_treatment_config` take precedence over task defaults. Quality review
-records findings and token usage without blocking evaluation.
+Run from the trusted catalog root. Supply runtime configuration through task
+parameters and Secret-backed environment variables, then invoke:
 
-`enable-persistence=true` independently enables scorecard/Compass Facts, OCI
-report attachment, and Postgres/MinIO storage. Scan-only legs can persist their
-Tier A findings. Security or advisory-review findings do not suppress
-persistence. Source, validation, or evaluation runtime failures cause dependent
-steps to skip.
+```sh
+abeval run ./pack/skills/my-skill --source . \
+  --tiers 1,2 --scanner-runtime local \
+  --run-id "$PIPELINE_RUN_ID" --output /workspace/evaluation \
+  --persist postgres,s3
+```
 
-The task emits `TEST_OUTPUT_TIER_A` and `TEST_OUTPUT_TIER_B` separately. Tier A
-is the hard scan gate; Tier B emits `SKIPPED` when evaluation does not apply.
-The shared `aggregate-fanout-result` task aggregates these across matrix legs.
-Steps use `onError: continue` so a failed skill does not interrupt siblings;
-the final result records runtime failures.
+The CLI installation includes both scanners; `--scanner-runtime local` is the
+default locally and in the evaluation image. OCI attachment and result projection
+use existing upstream CI images.
+The run ID must satisfy the CLI's identifier rules, and the output directory
+must not already exist.
 
-## Images and entry points
+Provide an installed AEH runtime and `ABEVAL_TRIAL_IMAGE` for Tier 2. Mount the
+workload kubeconfig and select its namespace with `ABEVAL_KUBECONFIG` and
+`ABEVAL_NAMESPACE`. `ABEVAL_CREDENTIALS_SECRET` identifies an existing workload
+Secret with native SDK keys such as `ANTHROPIC_API_KEY` and `OPENAI_API_KEY`.
+A Secret containing only `api-key` does not supply those names automatically.
+Local review and pairwise judge credentials are separate from pod credentials;
+configure them using the [model settings](cli.md#models-and-reviews).
 
-| Step | Image parameter | Repository entry point |
-|---|---|---|
-| materialize-source, compute-flags | `task-image` | Inline source/flag handling |
-| swap-mock-mcp | `task-image` | `scripts/swap_mock_mcp.py` |
-| validate | `task-image` | `scripts/validate.py` |
-| skill-structure-validation | `task-image` | `scripts/validate_skill_structure.py` |
-| security-scan | `security-scan-image` | `skill-scanner` |
-| skillmd-scan | `skillmd-scan-image` | `harness-eval` |
-| quality-review | `task-image` | `scripts/test_quality_review.py`, `scripts/write_metrics_checkpoint.py` |
-| run-eval | `runner-image` | `scripts/run_aeh.py`, `scripts/aggregate_aeh.py` |
-| trial pod | `aeh-image` | Upstream AEH reward verifier and agent CLI |
-| analyze-and-scorecard | `task-image` | `scripts/analyze.py`, `scripts/aggregate_scorecard.py` |
-| package-oci-reports, emit-results | `task-image` | Inline serialization |
-| store | `task-image` | `scripts/store_results.py`, `scripts/publish.py` |
+## Separate container phases
 
-AEH uses Harbor's Kubernetes backend. The OpenShift environment adds writable
-mounts, and task enrichment stages skills, annotations, tool handlers, and
-per-case MCP fixtures before Harbor uploads each task to its trial pod.
+For integrations that invoke individual phases in separate containers, use a
+shared run directory:
 
-An optional kubeconfig secret selects a remote workload cluster. Otherwise AEH
-uses in-cluster credentials. The workload namespace needs pod creation,
-inspection, deletion, and exec permissions; LLM credentials must be available
-in the workload cluster under `llm-credentials`. The former
-`workload-credentials-secret` task input was unused and has been removed.
+```sh
+abeval init ./pack/skills/my-skill --source . --tiers 1,2 \
+  --run-id "$PIPELINE_RUN_ID" --output /workspace/evaluation
+abeval phase prepare --run-dir /workspace/evaluation
+abeval phase structure --run-dir /workspace/evaluation
+abeval phase security --run-dir /workspace/evaluation
+abeval phase quality --run-dir /workspace/evaluation
+abeval phase submission --run-dir /workspace/evaluation
+abeval phase submission-review --run-dir /workspace/evaluation
+abeval phase evaluate --run-dir /workspace/evaluation
+abeval phase report --run-dir /workspace/evaluation
+abeval publish --run-dir /workspace/evaluation --persist postgres,s3
+```
 
-## Installed application interface
+Run only phases selected by `abeval plan`; for example, omit `submission-review`
+when metadata disables it. All containers must mount the source and run directory
+at their recorded absolute paths and supply the credentials needed by their
+phase. Each phase container needs the application installed. Each phase records
+evidence once; publication can be retried.
 
-The task and runner images install the `abeval` CLI and importable application
-services. Existing `scripts/*.py` paths are argument-compatible launchers; they
-contain no evaluation logic. The shared task bundle continues to use those
-launchers and retains its existing parameters and result names.
+Use `onError: continue` where needed to preserve reporting and publication after
+a failed check. The CLI retains dependency skips and failures in `run.json`;
+its exit code describes the whole run, including earlier failed phases.
 
-For local execution, use `abeval run`, `plan`, and `doctor` as described in the
-[README](../README.md). Independent container execution uses `abeval init` and
-`abeval phase` with a shared run manifest. The CLI owns configuration resolution,
-source staging, tier progression, normalized results, reporting, and explicit
-publication. Trusted artifact retrieval, matrix fanout, Secret injection, and
-Tekton result-file locations remain CI responsibilities.
+## Results and images
+
+Read `run.json` for step and publication status, `reports/scorecard.json` for
+policy/certification, and `reports/report.json` for completed AEH evaluation.
+Do not infer success from a report file's existence. See
+[persistence](persistence.md) for destinations and [images](images.md) for builds.
+Trial images must be pullable by the workload cluster and use the same AEH
+revision as the runner.
+
+## Shared task integration
+
+Expose `tiers` and `persist` as Pipeline parameters and forward them to the
+shared task. Only the evaluation step calls the CLI:
+
+```sh
+abeval run --skill-id pack/my-skill --source /source \
+  --tiers "$EVALUATION_TIERS" --persist "$EVALUATION_PERSIST" \
+  --output /workspace/runs/taskrun-id
+```
+
+Defaults are Tier 1 and no persistence. The pipeline selects skills and tiers;
+the CLI owns source staging, checks, reviews, trial execution, reports, and
+PostgreSQL/S3/Compass publication.
+
+Konflux retrieves trusted source and packages report evidence. OCI attachment
+uses the existing digest-pinned `quay.io/konflux-ci/task-runner` image with
+`select-oci-auth`, `retry`, and `oras`. Component `image-url` and `image-digest`
+parameters select the attachment subject. Registry authentication is provided by
+Konflux; the CLI has no registry settings or OCI publishing support.
+
+Result conversion and Matrix aggregation are inline Python in the shared task
+definitions. They consume the documented `run.json` schema, fail closed on
+missing or invalid evidence, and expose separate static, trial, publication,
+and OCI artifact results. No application utility image is required.
+
+Only evaluation and trial images are maintained by this project. Use the same
+AEH revision for both. Existing script-based bundles require their older images;
+migrate bundle and runtime references together. The shared task repository has
+Pipeline parameter examples and migration instructions.

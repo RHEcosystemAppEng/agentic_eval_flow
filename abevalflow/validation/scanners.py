@@ -3,10 +3,21 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
+import sysconfig
 from pathlib import Path
 
 from abevalflow.results.run import StepResult
+
+
+def local_scanner_executable(command: str) -> str:
+    """Find bundled scanner entrypoints even when a tool install exposes only abeval."""
+    if command in {"skill-scanner", "harness-eval"}:
+        installed = shutil.which(command, path=sysconfig.get_path("scripts"))
+        if installed:
+            return installed
+    return command
 
 
 def execute_scanner(
@@ -56,7 +67,10 @@ def scanner_command(config, name: str, command: list[str]) -> list[str]:
     import os
 
     if config.scanner_runtime == "local":
-        return command
+        return [local_scanner_executable(command[0]), *command[1:]]
+    image = config.security_image if name == "security" else config.quality_image
+    if not image:
+        raise ValueError(f"Container scanning requires a {name} image")
     source = config.output / "source"
     reports = config.output / "reports"
     reports.mkdir(parents=True, exist_ok=True)
@@ -77,5 +91,4 @@ def scanner_command(config, name: str, command: list[str]) -> list[str]:
     ]
     if config.scanner_runtime == "podman":
         runtime += ["--userns=keep-id"]
-    image = config.security_image if name == "security" else config.quality_image
     return runtime + [image] + translated

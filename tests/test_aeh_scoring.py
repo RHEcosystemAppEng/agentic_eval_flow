@@ -54,7 +54,7 @@ class TestNumericJudge:
 class TestCaseRewardFromJudges:
     """``case_reward_from_judges`` is the single shared source of truth for
 
-    "did this case's own judges pass it" -- used by both aggregate_aeh.py
+    "did this case's own judges pass it" -- used by both the AEH result aggregator
     (report.json trials/summary) and the AEH engine's pairwise gate
     (grounded-disagreement detection), so the two can never again silently
     disagree about the same case's reward.

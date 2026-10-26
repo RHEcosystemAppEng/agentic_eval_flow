@@ -1,9 +1,0 @@
-# harness-eval: deterministic scanning step only.
-FROM registry.access.redhat.com/ubi9/python-312:latest
-USER 0
-RUN pip install --no-cache-dir "harness-eval==7.9.0" \
-    && command -v harness-eval
-ENV HOME=/workspace
-RUN mkdir -p /workspace && chgrp 0 /workspace && chmod g=u /workspace
-WORKDIR /workspace
-USER 1001

@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
-import logging
 from pathlib import Path
 
 from sqlalchemy import select
@@ -22,13 +20,6 @@ from abevalflow.db.models import (
 from abevalflow.observability.context import MetricsContext
 from abevalflow.report import AnalysisResult
 from abevalflow.scorecard import Scorecard
-
-logger = logging.getLogger(__name__)
-
-
-def _compute_content_hash(data: bytes) -> str:
-    """Deterministic fallback key when no pipeline_run_id is provided."""
-    return f"content-{hashlib.sha256(data).hexdigest()[:16]}"
 
 
 def map_result_to_run(result: AnalysisResult, run_id: str) -> EvaluationRun:
@@ -181,19 +172,14 @@ def map_certifications(scorecard: Scorecard, scorecard_row: ScorecardRow) -> lis
     return rows
 
 
-def store_snapshot(report_dir: Path, database_url: str | None, run_id: str, *, strict: bool = True) -> None:
+def store_snapshot(report_dir: Path, database_url: str | None, run_id: str) -> None:
     """Atomically store or complete report, scorecard, scans, and metrics for one run."""
     from sqlalchemy import delete
 
     scorecard = None
     scorecard_path = report_dir / "scorecard.json"
     if scorecard_path.is_file():
-        try:
-            scorecard = Scorecard.model_validate_json(scorecard_path.read_text())
-        except ValueError:
-            if strict:
-                raise
-            logger.warning("Invalid optional scorecard; storing available evaluation evidence")
+        scorecard = Scorecard.model_validate_json(scorecard_path.read_text())
     report_path = report_dir / "report.json"
     report = AnalysisResult.model_validate_json(report_path.read_text()) if report_path.is_file() else None
     if scorecard is None and report is None:
@@ -249,22 +235,3 @@ def store_snapshot(report_dir: Path, database_url: str | None, run_id: str, *, s
                 session.add(ObservabilityMetricsRow(pipeline_run_id=run_id, **metrics.to_observability_dict()))
     finally:
         engine.dispose()
-
-
-def store(report_dir: Path, database_url: str | None = None, run_id: str | None = None) -> bool:
-    """Store available evidence using the compatibility command's optional-scorecard policy."""
-    try:
-        identity = report_dir / "report.json"
-        if not identity.is_file():
-            identity = report_dir / "scorecard.json"
-        effective_run_id = run_id or _compute_content_hash(identity.read_bytes())
-        store_snapshot(report_dir, database_url, effective_run_id, strict=False)
-        return True
-    except Exception:
-        logger.error("Could not store evaluation evidence")
-        return False
-
-
-def store_scorecard_only(report_dir: Path, database_url: str | None = None, run_id: str | None = None) -> bool:
-    """Persist scan-only evidence using the same transactional storage operation."""
-    return store(report_dir, database_url, run_id)
