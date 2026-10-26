@@ -30,6 +30,9 @@ RUN python3 -c "import agent_eval.harbor.reward" \
     && python3 /opt/mock-mcp/src/server.py --help >/dev/null \
     && claude --version \
     && chgrp -R 0 /opt/mock-mcp && chmod -R g=u /opt/mock-mcp
+COPY abevalflow/runtime_hooks/sitecustomize.py /tmp/abeval-sitecustomize.py
+RUN python3 -c "import shutil, site; shutil.copy('/tmp/abeval-sitecustomize.py', site.getsitepackages()[0] + '/sitecustomize.py')" \
+    && rm /tmp/abeval-sitecustomize.py
 ENV HOME=/workspace
 RUN mkdir -p /workspace /logs/agent /logs/verifier /logs/artifacts /tests /solution /harbor /installed-agent \
     && chgrp -R 0 /workspace /logs /tests /solution /harbor /installed-agent /opt/aeh \

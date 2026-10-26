@@ -13,12 +13,16 @@ class ReviewService:
     """Use an explicitly configured client for advisory review and token accounting."""
 
     def __init__(self, config: RuntimeConfig):
-        from openai import OpenAI
+        from openai import DefaultHttpxClient, OpenAI
 
         if not (config.llm_base_url and config.llm_model and config.llm_api_key):
             raise ValueError("Review requires LLM base URL, model, and API key")
         self.client = OpenAI(
-            base_url=config.llm_base_url, api_key=config.llm_api_key.get_secret_value(), timeout=120, max_retries=2
+            base_url=config.llm_base_url,
+            api_key=config.llm_api_key.get_secret_value(),
+            timeout=120,
+            max_retries=2,
+            http_client=DefaultHttpxClient(verify=not config.insecure_ssl),
         )
         self.model = config.llm_model
 

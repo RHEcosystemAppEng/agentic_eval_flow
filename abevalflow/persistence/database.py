@@ -12,7 +12,7 @@ from contextlib import contextmanager
 
 
 @contextmanager
-def database_connection(url: str, route_host: str | None = None) -> Iterator[str]:
+def database_connection(url: str, route_host: str | None = None, *, verify_tls: bool = True) -> Iterator[str]:
     """Relay PostgreSQL wire traffic through verified HTTPS-port TLS when configured."""
     if not route_host:
         yield url
@@ -22,7 +22,11 @@ def database_connection(url: str, route_host: str | None = None) -> Iterator[str
     database = make_url(url)
     if database.host not in {"localhost", "127.0.0.1", "::1"}:
         raise ValueError("TLS route connections require a loopback database URL")
-    context = ssl.create_default_context(cafile=os.environ.get("SSL_CERT_FILE"))
+    context = (
+        ssl.create_default_context(cafile=os.environ.get("SSL_CERT_FILE"))
+        if verify_tls
+        else ssl._create_unverified_context()
+    )
 
     class Relay(socketserver.BaseRequestHandler):
         def handle(self):

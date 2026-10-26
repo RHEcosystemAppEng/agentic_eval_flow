@@ -1,6 +1,6 @@
 [project]
 name = "abevalflow"
-version = "0.4.0"
+version = "0.4.1"
 description = "Installable skill validation and AEH evaluation workflows"
 readme = "README.md"
 license = "Apache-2.0"
@@ -21,7 +21,7 @@ abeval = "abevalflow.cli.main:main"
 llm = ["openai>=1.0"]
 storage = ["sqlalchemy>=2.0", "psycopg[binary]>=3.1", "minio>=7.0"]
 runner = [
-    "harbor==0.24.0",
+    "harbor==0.25.0",
     "kubernetes>=32.0.0,<37",
     "anthropic[vertex]",
     "jinja2>=3.1",

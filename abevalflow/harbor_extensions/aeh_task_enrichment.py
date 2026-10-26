@@ -49,6 +49,7 @@ def enrich_harbor_tasks(
     config_path: Path,
     skill_model: str | None = None,
     judge_model: str | None = None,
+    runtime_env: dict[str, str] | None = None,
 ) -> int:
     """Enrich every Harbor task package under *tasks_dir*.
 
@@ -106,6 +107,7 @@ def enrich_harbor_tasks(
             reward_inject=reward_inject,
             mcp_schema_root=mcp_schema_root,
             mock_server_names=mock_server_names,
+            runtime_env=runtime_env,
         )
         updated += 1
     return updated
@@ -156,6 +158,7 @@ def _enrich_one_task(
     reward_inject: dict | None = None,
     mcp_schema_root: Path | None = None,
     mock_server_names: list[str] | None = None,
+    runtime_env: dict[str, str] | None = None,
 ) -> None:
     env_dir = task_dir / "environment"
     env_dir.mkdir(parents=True, exist_ok=True)
@@ -165,6 +168,8 @@ def _enrich_one_task(
     # Keep judge ground truth in the verifier's inputs, outside the agent workspace.
     annotations_src = _find_annotations(submission_root, dataset_rel, case_id)
     task_config = tomllib.loads((task_dir / "task.toml").read_text())
+    if runtime_env:
+        task_config.setdefault("environment", {}).setdefault("env", {}).update(runtime_env)
     workdir = task_config.get("environment", {}).get("workdir", "/workspace")
     if annotations_src is not None:
         annotation_dir = tests_dir / "cases" / Path(workdir).name

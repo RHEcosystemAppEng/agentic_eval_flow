@@ -13,7 +13,7 @@ from pathlib import Path
 AEH_REPOSITORY = "https://github.com/fullsend-ai/agent-eval-harness.git"
 AEH_VERSION = "1.57.1"
 AEH_REVISION = "8a15a8b687b5561903827805eaae8b438bde9954"
-HARBOR_VERSION = "0.24.0"
+HARBOR_VERSION = "0.25.0"
 
 
 class RuntimeUnavailable(ValueError):

@@ -53,6 +53,7 @@ class RuntimeConfig(BaseModel):
     quality_command: str = "harness-eval"
     command_timeout: int = Field(default=7200, gt=0)
     timeout_retries: int = Field(default=1, ge=0, le=5)
+    insecure_ssl: bool = False
     llm_base_url: str | None = None
     llm_model: str | None = None
     llm_api_key: SecretStr | None = Field(default=None, exclude=True)
@@ -228,6 +229,7 @@ def resolve_config(options: Mapping[str, Any], environ: Mapping[str, str] | None
         "quality_image": (None,),
         "command_timeout": (7200,),
         "timeout_retries": (1,),
+        "insecure_ssl": (False, "AEH_INSECURE_SSL"),
         "llm_base_url": (None, "LLM_BASE_URL", "LLM_API_BASE"),
         "llm_model": (None, "LLM_MODEL"),
         "llm_api_key": (None, "LLM_API_KEY"),
@@ -246,7 +248,7 @@ def resolve_config(options: Mapping[str, Any], environ: Mapping[str, str] | None
     }
     for name, (default, *aliases) in defaults.items():
         values[name] = get(name, default, *aliases)
-    for name in ("skill_review", "continue_on_tier1_failure", "persistence_required", "s3_verify_tls"):
+    for name in ("skill_review", "continue_on_tier1_failure", "persistence_required", "s3_verify_tls", "insecure_ssl"):
         values[name] = boolean(values[name])
     for name in ("kubeconfig", "score_script", "aeh_root"):
         if values[name]:

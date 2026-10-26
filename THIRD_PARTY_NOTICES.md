@@ -4,6 +4,10 @@ Agentic Eval Flow invokes Agent Eval Harness and Harbor as external dependencies
 AEH is installed from its complete, unmodified upstream source distribution.
 No AEH implementation is bundled in the application package.
 
+The application owns an opt-in Python TLS compatibility hook, used only for
+isolated AEH processes and trial images when insecure TLS is explicitly selected.
+It configures HTTP transports without modifying the upstream source checkout.
+
 Tier 1 installs Cisco AI Skill Scanner and harness-eval as unmodified Python
 dependencies. Their versions are declared in `pyproject.toml` and resolved in
 `uv.lock`; their license files remain in the installed distributions.

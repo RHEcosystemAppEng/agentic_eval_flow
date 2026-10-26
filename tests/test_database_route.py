@@ -23,6 +23,14 @@ def test_route_rejects_a_non_loopback_database_url():
             pass
 
 
+def test_route_can_explicitly_restore_legacy_unverified_tls():
+    with patch("ssl._create_unverified_context") as context, patch("ssl.create_default_context") as verified:
+        with database_connection("postgresql://user:secret@localhost/db", "route.example", verify_tls=False):
+            pass
+    context.assert_called_once_with()
+    verified.assert_not_called()
+
+
 def test_route_relays_bytes_and_closes_its_listener(monkeypatch):
     from sqlalchemy.engine import make_url
 

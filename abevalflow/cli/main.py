@@ -82,6 +82,12 @@ def workflow_options(parser: argparse.ArgumentParser) -> None:
     models.add_argument("--llm-model", help="Submission/skill review model")
     models.add_argument("--agent-base-url", help="Agent API endpoint passed to AEH")
     models.add_argument("--judge-base-url", help="Suite-level judge API endpoint")
+    models.add_argument(
+        "--insecure-ssl",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Skip certificate verification for evaluation HTTP clients and the database TLS route (default: false)",
+    )
     for secret in ("llm-api-key", "agent-api-key", "judge-api-key", "s3-access-key", "s3-secret-key", "compass-token"):
         credentials.add_argument(f"--{secret}", help=f"Credential; prefer ABEVAL_{secret.upper().replace('-', '_')}")
     storage.add_argument("--database-url", help="SQLAlchemy database URL; prefer ABEVAL_DATABASE_URL for credentials")
@@ -177,7 +183,7 @@ def package_version() -> str:
     try:
         return version("abevalflow")
     except PackageNotFoundError:
-        return "0.4.0"
+        return "0.4.1"
 
 
 def emit(value) -> None:

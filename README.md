@@ -45,7 +45,7 @@ abeval runtime check
 
 The installer needs Git, network access, and a Python >=3.12 interpreter with
 venv/pip support. It pins AEH to commit
-`8a15a8b687b5561903827805eaae8b438bde9954` and Harbor to `0.24.0`. The default
+`8a15a8b687b5561903827805eaae8b438bde9954` and Harbor to `0.25.0`. The default
 installation lives under `$XDG_CACHE_HOME/abeval/aeh/<commit>` (or
 `~/.cache/abeval/aeh/<commit>`). Dependency resolution follows upstream's declared
 requirements with the supported Harbor pin. Existing directories are never
@@ -65,8 +65,9 @@ An existing complete upstream source installation can also be selected with
 virtual-environment identity. The runtime must include upstream's `skills/` and
 templates; a wheel-only AEH installation is insufficient for this release.
 The application calls upstream task generation, execution, scoring, and report
-commands without changing AEH code or overriding its functions. Runner/trial
-images install the complete source distribution during their build.
+commands without changing AEH source. Runner/trial images install the complete
+source distribution during their build. An opt-in TLS compatibility hook for
+isolated upstream Python processes is described below.
 
 ## Sequential catalog evaluation
 
@@ -202,8 +203,16 @@ The workload Secret must use native SDK variable names, including
 `ANTHROPIC_API_KEY` for Claude and the corresponding judge provider's key.
 A Secret containing only `api-key` must be migrated. Configure internal CA trust
 through standard SDK/OS settings, including `SSL_CERT_FILE` and
-`NODE_EXTRA_CA_CERTS` in the trial environment when needed. The application does
-not install HTTP-client overrides or disable TLS verification.
+`NODE_EXTRA_CA_CERTS` in the trial environment when needed.
+
+Verification is enabled by default. For the internal evaluation environment,
+`--insecure-ssl` / `ABEVAL_INSECURE_SSL=true` restores the previous TLS bypass
+for agent calls, Python judges/reviews, and the PostgreSQL TLS route. The legacy
+`AEH_INSECURE_SSL=1` alias is supported. Native task startup environment carries
+the Node and Python settings into the pod; an opt-in Python startup hook handles
+upstream AEH HTTP clients in isolated subprocesses and the trial image. It does
+not alter the Kubernetes client's verified urllib3 transport. S3 retains its
+separate `--no-s3-verify-tls` / `MINIO_INSECURE_SSL` setting.
 
 ## Reports and persistence
 

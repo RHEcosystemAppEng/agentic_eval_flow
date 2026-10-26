@@ -42,7 +42,13 @@ def runner_environment(config: RuntimeConfig, reports: Path) -> dict[str, str]:
         AGENT_EVAL_K8S_CREDENTIALS_SECRET=config.credentials_secret,
         AGENT_EVAL_RUNS_DIR=str(reports),
         AGENT_EVAL_K8S_KEEP_RUN="0",
+        AEH_INSECURE_SSL="1" if config.insecure_ssl else "0",
     )
+    if config.insecure_ssl:
+        # Only the external AEH Python processes load the opt-in compatibility hook.
+        # Keep the Kubernetes client's verified urllib3 transport unchanged.
+        hook = str(Path(__file__).parents[1] / "runtime_hooks")
+        environment["PYTHONPATH"] = os.pathsep.join(filter(None, (hook, environment.get("PYTHONPATH"))))
     if config.agent_base_url:
         environment["ANTHROPIC_BASE_URL"] = config.agent_base_url
     if config.agent_api_key:
@@ -54,3 +60,16 @@ def runner_environment(config: RuntimeConfig, reports: Path) -> dict[str, str]:
     if config.score_script:
         environment["AEH_SCORE_PY"] = str(config.score_script)
     return environment
+
+
+def trial_environment(environment: dict[str, str]) -> dict[str, str]:
+    """Non-secret transport settings delivered through native task startup env.
+
+    AgentConfig.env does not reach exec through AEH's pinned Kubernetes adapter;
+    task environment env reaches the pod and its verifier independently of it.
+    Credentials remain in the existing workload Secret, never in task artifacts.
+    """
+    values = {key: environment[key] for key in ("ANTHROPIC_BASE_URL", "OPENAI_BASE_URL") if environment.get(key)}
+    if environment.get("AEH_INSECURE_SSL") == "1":
+        values.update(NODE_TLS_REJECT_UNAUTHORIZED="0", AEH_INSECURE_SSL="1")
+    return values

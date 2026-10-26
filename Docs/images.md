@@ -7,8 +7,8 @@ Podman, the shared image repository, the tag prefix, and the target platform.
 The default platform is `linux/amd64`.
 
 ```sh
-make images IMAGE_REPOSITORY=quay.io/example/agent-eval-harness VERSION=v1.0.1
-make aeh-trial IMAGE_REPOSITORY=quay.io/example/agent-eval-harness VERSION=v1.0.1
+make images IMAGE_REPOSITORY=quay.io/example/agent-eval-harness VERSION=v1.0.2
+make aeh-trial IMAGE_REPOSITORY=quay.io/example/agent-eval-harness VERSION=v1.0.2
 ```
 
 | Build target | Tag suffix | Contents |
@@ -23,10 +23,10 @@ image with `--trial-image`. For local Podman/Docker scanning, set
 both flags can use the same reference. No scanner image is selected implicitly.
 Deployed Konflux image choices are owned by the shared task.
 
-Release `v1.0.1-runner` contains CLI `0.4.0` with sequential batches and timeout
-recovery. The deployed trial remains `v1.0-trial`, pinned to its existing digest;
-skill loading, MCP fixtures, judges, and trial execution are unchanged. The
-`v1.0.1-trial` build target is available, but is not required for this upgrade.
+Release `v1.0.2-runner` contains CLI `0.4.1`, Harbor `0.25.0`, sequential batches,
+and explicit TLS configuration. `v1.0.2-trial` restores the opt-in Python TLS
+hook for upstream judges. Both images are required when enabling the internal
+endpoint bypass. Skill loading, fixtures, and evaluation definitions are unchanged.
 
 ## Dependency ownership
 

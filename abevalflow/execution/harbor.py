@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from datetime import UTC, datetime
@@ -14,6 +15,7 @@ from abevalflow.execution.artifacts import (
 )
 from abevalflow.execution.base import BaseRunner, RunnerError
 from abevalflow.execution.cleanup import cleanup_trials
+from abevalflow.execution.cluster import trial_environment
 from abevalflow.results.run import write_json
 
 
@@ -197,5 +199,6 @@ class HarborRunner(BaseRunner):
             config_path=Path(config),
             skill_model=self.model,
             judge_model=self.judge_model,
+            runtime_env=trial_environment(self.environment if self.environment is not None else os.environ),
         )
         print(f"Enriched {n} Harbor task package(s) (skills + annotations + models/reward)")

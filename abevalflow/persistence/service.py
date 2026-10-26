@@ -20,7 +20,11 @@ def publish(config: RuntimeConfig, result: RunResult) -> list[StepResult]:
                     raise ValueError("Postgres requires ABEVAL_DATABASE_URL or DATABASE_URL")
                 from abevalflow.persistence.database import database_connection
 
-                with database_connection(config.database_url.get_secret_value(), config.database_tls_route_host) as url:
+                with database_connection(
+                    config.database_url.get_secret_value(),
+                    config.database_tls_route_host,
+                    verify_tls=not config.insecure_ssl,
+                ) as url:
                     store_snapshot(config.output / "reports", url, config.run_id)
                 details = {}
             elif destination == "s3":
