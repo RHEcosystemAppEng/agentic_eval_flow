@@ -44,6 +44,10 @@ jobs:
         working-directory: pipeline/integration
         run: make bundles VERSION=${{ env.VERSION }}
 
+      - name: Push MCP eval bundle
+        working-directory: pipeline/integration
+        run: make bundle-mcp-eval VERSION=${{ env.VERSION }}
+
       - name: Print digests
         working-directory: pipeline/integration
         run: make digests VERSION=${{ env.VERSION }}
