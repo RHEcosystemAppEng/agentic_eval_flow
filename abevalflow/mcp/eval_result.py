@@ -243,8 +243,10 @@ def load_phase2_summary(path: Path) -> McpPhaseResult:
         is_consumed = check_id in CONSUMED_CHECKS
         source = check.source or ("compass" if is_consumed else "probe")
         passed = True if status == "pass" else False if status == "fail" else None
-        score = None if status == "not_evaluated" else (
-            check.score if check.score is not None else (1.0 if check.passed else 0.0)
+        score = (
+            None
+            if status == "not_evaluated"
+            else (check.score if check.score is not None else (1.0 if check.passed else 0.0))
         )
         checks.append(
             McpCheckResult(
@@ -268,8 +270,10 @@ def load_phase3_summary(path: Path) -> McpPhaseResult:
     for check in summary.checks:
         status = check.status or ("pass" if check.passed else "fail")
         passed = True if status == "pass" else False if status == "fail" else None
-        score = None if status == "not_evaluated" else (
-            check.score if check.score is not None else (1.0 if check.passed else 0.0)
+        score = (
+            None
+            if status == "not_evaluated"
+            else (check.score if check.score is not None else (1.0 if check.passed else 0.0))
         )
         check_id = check.check
         checks.append(

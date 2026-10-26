@@ -213,8 +213,7 @@ TRACK_DEFINITION = {
             "name": "Phase 2 — Conformance Testing",
             "description": "MCP protocol and server conformance checks, including existing Compass-owned checks.",
             "checks": (
-                OWNED_TRACK_CHECKS[len(PHASE1_CHECKS) : len(PHASE1_CHECKS) + len(PHASE2_CHECKS)]
-                + CONSUMED_TRACK_CHECKS
+                OWNED_TRACK_CHECKS[len(PHASE1_CHECKS) : len(PHASE1_CHECKS) + len(PHASE2_CHECKS)] + CONSUMED_TRACK_CHECKS
             ),
         },
         {

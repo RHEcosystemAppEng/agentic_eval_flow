@@ -382,9 +382,7 @@ class TestSummaryPath:
             assert _phase_summary_path(reports, phase, (filename,)) == expected
 
     @pytest.mark.parametrize("include_behavioral", [True, False])
-    def test_supports_optional_behavioral_report(
-        self, tmp_path, monkeypatch, include_behavioral
-    ):
+    def test_supports_optional_behavioral_report(self, tmp_path, monkeypatch, include_behavioral):
         reports = tmp_path / "reports"
         reports.mkdir()
         _write_summary(reports / "static-eval-summary.json", STATIC_EVAL_SUMMARY)
@@ -472,7 +470,7 @@ class TestBuildMcpEvalResult:
         assert result.phase2.checks_total == 10
 
 
-class TestSummaryPath:
+class TestSummaryPathHelper:
     def test_finds_nested_phase_summary(self, tmp_path):
         phase_dir = tmp_path / "phase1"
         phase_dir.mkdir()
