@@ -39,7 +39,8 @@ install those exact versions, then install the application package. The task
 image includes model-review, storage, and OTLP telemetry support.
 The scanner images install only their pinned scanner packages. The orchestrator
 installs the application with its `runner`, `llm`, and telemetry extras, including
-Harbor, the Kubernetes client, and the pinned upstream AEH package. The trial
+Harbor and the Kubernetes client. It separately installs the complete pinned
+AEH source distribution unchanged. The trial
 image contains upstream AEH's reward/scoring code, Claude Code, and the mock MCP
 server. It receives case files and skills at runtime through Harbor.
 
@@ -51,18 +52,21 @@ builds exercise the installed parser and CLI, including a negative case that
 must still fail the HIGH gate when Bash is undeclared. Review the patch when
 upgrading Cisco; its version and source checks deliberately fail on drift.
 
-Both AEH images use AEH release `v1.53.3`, pinned to commit
-`7ec9078b621d8aa5d2c0ea3b4e61f9e60b4bed2f`. The runner dependency is pinned in `pyproject.toml`; the trial image uses the
-`AEH_SHA` build argument. Keep these pins and the packaged `_vendor/aeh` resources
-aligned.
-The mock server uses commit `f68734ac68e504f4856c7a1d25e01919b95b3bb7`;
-`MOCK_SHA` also requires a full commit SHA. Claude Code is pinned through
+Both AEH images install the complete AEH release `v1.57.1`, pinned to commit
+`8a15a8b687b5561903827805eaae8b438bde9954`. The local runtime installer uses
+the same pin from `abevalflow/execution/runtime.py`. Keep all three pins aligned.
+The application wheel contains no AEH implementation. Each image retains the
+upstream checkout, its templates, skills, and license and installs it editable
+without changing tracked source files.
+
+The mock server uses commit `f68734ac68e504f4856c7a1d25e01919b95b3bb7`.
+`MOCK_SHA` requires a full commit SHA. Claude Code is pinned through
 `CLAUDE_CODE_VERSION` in the trial Containerfile.
 
-The packaged upstream adapter forwards pack `mcps.json` files to Harbor and
-loads the distributed scoring/reporting resources. It does not patch installed
-AEH source files. Resource provenance and license details are recorded in
-[THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md).
+MCP servers are declared through native Harbor task configuration. No loader,
+subprocess, or HTTP-client monkeypatches are installed. Workload Secrets must
+use SDK variable names, and internal endpoints must have trusted certificates.
+See [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md).
 
 All runtime images use an unprivileged user and writable group-0 directories
 for OpenShift arbitrary UIDs. Task dependencies are installed during the build;

@@ -40,8 +40,9 @@ def test_enrich_copies_annotations_and_restores_dataset_path(tmp_path: Path):
     cases = submission / "cases" / "case-001"
     cases.mkdir(parents=True)
     (cases / "annotations.yaml").write_text(
-        yaml.safe_dump({"expected_file": "greeting.txt", "expected_content": "Hello"})
+        yaml.safe_dump({"expected_file": "greeting.txt", "expected_content": "Hello\n" * 100})
     )
+    (cases / "greeting.txt").write_text("ground truth")
     (submission / "eval.yaml").write_text(
         yaml.safe_dump(
             {
@@ -60,16 +61,18 @@ def test_enrich_copies_annotations_and_restores_dataset_path(tmp_path: Path):
     n = enrich_harbor_tasks(tasks, config_path=submission / "eval.yaml")
     assert n == 1
 
-    ann = task / "environment" / "annotations.yaml"
+    ann = task / "tests" / "cases" / "workspace" / "annotations.yaml"
     assert ann.is_file()
     assert yaml.safe_load(ann.read_text())["expected_file"] == "greeting.txt"
+    assert (ann.parent / "greeting.txt").read_text() == "ground truth"
 
     bundled = yaml.safe_load((task / "tests" / "eval.yaml").read_text())
     assert bundled["dataset"]["path"] == "cases"
 
     test_sh = (task / "tests" / "test.sh").read_text()
-    assert "Agentic Eval Flow: stage annotations" in test_sh
-    assert "/tests/cases/" in test_sh
+    assert "Agentic Eval Flow: stage annotations" not in test_sh
+    assert "python3 -m agent_eval.harbor.reward" in test_sh
+    assert not (task / "environment" / "annotations.yaml").exists()
 
 
 def test_enrich_copies_skills_and_sets_skills_dir(tmp_path: Path):

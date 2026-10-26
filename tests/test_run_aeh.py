@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
 import yaml
 
 from abevalflow.execution.runner import (
@@ -15,6 +16,29 @@ from abevalflow.execution.runner import (
     get_runner,
     materialize_aeh_case_outputs,
 )
+
+
+@pytest.fixture(autouse=True)
+def external_aeh_runtime(tmp_path, monkeypatch):
+    import sys
+
+    from abevalflow.execution.runtime import AEHRuntime
+
+    runtime = AEHRuntime(tmp_path / "external-aeh", Path(sys.executable))
+    for relative in (
+        "agent_eval/harbor/run.py",
+        "agent_eval/harbor/templates/task.toml.tmpl",
+        "agent_eval/harbor/templates/instruction.md.tmpl",
+        "agent_eval/harbor/templates/test.sh.tmpl",
+        "skills/eval-dataset/scripts/harbor.py",
+        "skills/eval-run/scripts/score.py",
+        "skills/eval-run/scripts/report.py",
+    ):
+        path = runtime.root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("")
+    monkeypatch.setenv("ABEVAL_AEH_ROOT", str(runtime.root))
+    return runtime
 
 
 class TestRunnerRegistry:
@@ -121,12 +145,12 @@ class TestHarborRunner:
         call_args = mock_run.call_args[0][0]
 
         assert "-m" in call_args
-        assert "abevalflow.execution.upstream" in call_args
+        assert "agent_eval.harbor.run" in call_args
+        assert mock_run.call_args.kwargs["cwd"] == config.parent
         assert "--config" in call_args
         assert "--output" in call_args
-        # kubernetes mode uses OpenShiftEnvironment import path (not --env)
-        assert "--environment-import-path" in call_args
-        assert "OpenShiftEnvironment" in " ".join(call_args)
+        assert "--environment-import-path" not in call_args
+        assert call_args[call_args.index("--env") + 1] == "kubernetes"
         assert "--model" in call_args
         assert "test-model" in call_args
 
@@ -208,7 +232,7 @@ class TestHarborRunner:
         assert "test-model" in call_args
 
     @patch("subprocess.run")
-    def test_harbor_runner_keeps_regenerate_without_tasks_dir_prep(self, mock_run, tmp_path):
+    def test_harbor_runner_reuses_tasks_without_rewriting_them(self, mock_run, tmp_path):
         """--regenerate is still passed on the tasks_dir-reuse path (no
         image, so _prepare_enriched_tasks never ran this call) -- stale
         pre-existing packages may not match a newly-passed model/judge."""
@@ -222,7 +246,7 @@ class TestHarborRunner:
         runner.run_single(config, output, tasks_dir=tasks_dir)
 
         call_args = mock_run.call_args[0][0]
-        assert "--regenerate" in call_args
+        assert "--regenerate" not in call_args
 
     def test_harbor_runner_requires_model(self):
         """Harbor runner should fail fast without model."""

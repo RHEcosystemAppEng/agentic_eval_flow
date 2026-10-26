@@ -1,7 +1,7 @@
 """Prepare Harbor task packages for skill evaluation on OpenShift.
 
-Enrichment stages skill trees, annotations, tool handlers, and per-case MCP
-fixtures into each task's private environment. Generated interception hooks and
+Preparation stages skill trees, verifier annotations, tool handlers, and per-case MCP
+fixtures through Harbor task inputs and native MCP server declarations. Generated interception hooks and
 agent settings are preserved. Model overrides and reward configuration are
 applied to the bundled verifier inputs.
 
@@ -12,24 +12,18 @@ can reference generated MCP-only packs to retain tool access without skills.
 
 from __future__ import annotations
 
+import json
 import logging
-import re
 import shutil
+import tomllib
 from pathlib import Path
 
+import tomli_w
 import yaml
 
-logger = logging.getLogger(__name__)
+from abevalflow.execution.mcp import fixture_server_names
 
-_ANNOTATIONS_STAGE = """
-# Agentic Eval Flow: stage annotations for Harbor verifier judges.
-# reward.py uses case_dir basename (e.g. "workspace") under dataset.path.
-if [ -f "@@WORKDIR@@/annotations.yaml" ]; then
-  _aeh_case="$(basename "@@WORKDIR@@")"
-  mkdir -p "/tests/cases/${_aeh_case}"
-  cp "@@WORKDIR@@/annotations.yaml" "/tests/cases/${_aeh_case}/annotations.yaml"
-fi
-""".lstrip()
+logger = logging.getLogger(__name__)
 
 # Artifacts produced by agent_eval.harbor.tasks._generate_tool_interception
 _INTERCEPTION_MARKERS = (
@@ -100,7 +94,7 @@ def enrich_harbor_tasks(
     # submitted under that plugin. See module docstring + _MCP_SERVERS_DIRNAME.
     mcp_schema_root = submission_root.parent / _MCP_SERVERS_DIRNAME
     cases_root = submission_root / (dataset_rel or "cases")
-    mock_server_names = _mock_mcp_server_names(cases_root)
+    mock_server_names = sorted(fixture_server_names(cases_root))
 
     updated = 0
     for task_dir in sorted(p for p in tasks_dir.iterdir() if p.is_dir()):
@@ -122,28 +116,6 @@ def enrich_harbor_tasks(
         )
         updated += 1
     return updated
-
-
-def _mock_mcp_server_names(cases_root: Path) -> list[str]:
-    """Union of ``mock-mcps/<server>/`` names across every case in this skill.
-
-    Needed because the pack's mcps.json is swapped once for the whole job
-    (see module docstring): every case this skill runs shares the same set
-    of mocked server *names*, even though each case supplies its own
-    fixture content for them. A case that mocks a subset still needs the
-    other names' mock servers to start cleanly -- see _EMPTY_FIXTURE_STUB.
-    """
-    if not cases_root.is_dir():
-        return []
-    names: set[str] = set()
-    for case_dir in cases_root.iterdir():
-        mock_mcps_dir = case_dir / _MOCK_MCPS_DIRNAME
-        if not mock_mcps_dir.is_dir():
-            continue
-        for server_dir in mock_mcps_dir.iterdir():
-            if server_dir.is_dir() and (server_dir / "fixture.json").is_file():
-                names.add(server_dir.name)
-    return sorted(names)
 
 
 def _reward_to_inject(raw: dict) -> dict | None:
@@ -200,12 +172,33 @@ def _enrich_one_task(
     # Snapshot interception artifacts before any destructive copies
     preserved = _snapshot_interception(env_dir)
 
-    # 1) annotations.yaml → environment/ (uploaded to workdir)
+    # Keep judge ground truth in the verifier's inputs, outside the agent workspace.
     annotations_src = _find_annotations(submission_root, dataset_rel, case_id)
+    task_config = tomllib.loads((task_dir / "task.toml").read_text())
+    workdir = task_config.get("environment", {}).get("workdir", "/workspace")
     if annotations_src is not None:
-        shutil.copy2(annotations_src, env_dir / "annotations.yaml")
+        annotation_dir = tests_dir / "cases" / Path(workdir).name
+        annotation_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(annotations_src, annotation_dir / "annotations.yaml")
+        annotations = yaml.safe_load(annotations_src.read_text()) or {}
+        for value in annotations.values() if isinstance(annotations, dict) else ():
+            if (
+                isinstance(value, str)
+                and len(value) <= 255
+                and value == value.strip()
+                and not any(character in value for character in ("\n", "\r", "\x00"))
+            ):
+                try:
+                    reference = (annotations_src.parent / value).resolve()
+                    is_reference = reference.is_relative_to(annotations_src.parent.resolve()) and reference.is_file()
+                except (ValueError, OSError):
+                    continue
+                if is_reference:
+                    destination = annotation_dir / value
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(reference, destination)
 
-    # 2) Patch bundled eval.yaml: dataset.path, models, reward hardening
+    # Resolve verifier input configuration.
     bundled = tests_dir / "eval.yaml"
     if bundled.is_file():
         cfg = yaml.safe_load(bundled.read_text()) or {}
@@ -231,11 +224,6 @@ def _enrich_one_task(
             cfg["reward"] = reward_inject
         bundled.write_text(yaml.safe_dump(cfg, sort_keys=False, allow_unicode=True))
 
-    # 3) Stage annotations in test.sh before reward runs
-    test_sh = tests_dir / "test.sh"
-    if test_sh.is_file():
-        _inject_annotations_stage(test_sh)
-
     # 4) Copy plugin skill trees + point Harbor at them
     #    Only replace environment/skills/ — never wipe hooks/ or .claude/
     copied_skills = False
@@ -254,7 +242,7 @@ def _enrich_one_task(
         break  # Harbor expects a single skills_dir root
 
     if copied_skills:
-        _ensure_skills_dir_in_task_toml(task_dir / "task.toml", "/workspace/skills")
+        task_config.setdefault("environment", {})["skills_dir"] = f"{workdir}/skills"
 
     # 5) Restore / ensure tool interception + MCP hook artifacts
     _restore_interception(env_dir, preserved)
@@ -279,6 +267,9 @@ def _enrich_one_task(
             mcp_schema_root=mcp_schema_root,
             server_names=mock_server_names,
         )
+    servers = _native_mcp_servers(submission_root, plugin_dirs, mock_server_names)
+    task_config.setdefault("environment", {})["mcp_servers"] = servers
+    (task_dir / "task.toml").write_text(tomli_w.dumps(task_config))
 
 
 def _stage_mock_mcp_files(
@@ -396,37 +387,23 @@ def _resolve_skill_source(root: Path) -> Path | None:
     return None
 
 
-def _inject_annotations_stage(test_sh: Path) -> None:
-    text = test_sh.read_text()
-    if "Agentic Eval Flow: stage annotations" in text:
-        return
-
-    workdir = "/workspace"
-    m = re.search(r'--case-dir\s+"([^"]+)"', text)
-    if m:
-        workdir = m.group(1)
-    stage = _ANNOTATIONS_STAGE.replace("@@WORKDIR@@", workdir)
-
-    marker = "mkdir -p /logs/verifier"
-    if marker in text:
-        text = text.replace(marker, marker + "\n\n" + stage, 1)
-    else:
-        text = stage + "\n" + text
-    test_sh.write_text(text)
-
-
-def _ensure_skills_dir_in_task_toml(task_toml: Path, skills_dir: str) -> None:
-    text = task_toml.read_text()
-    if re.search(r"^\s*skills_dir\s*=", text, flags=re.MULTILINE):
-        return
-    if re.search(r'^\s*workdir\s*=\s*"[^"]*"', text, flags=re.MULTILINE):
-        text = re.sub(
-            r'^(\s*workdir\s*=\s*"[^"]*")\s*$',
-            rf'\1\nskills_dir = "{skills_dir}"',
-            text,
-            count=1,
-            flags=re.MULTILINE,
-        )
-    else:
-        text = text.rstrip() + f'\n\n[environment]\nskills_dir = "{skills_dir}"\n'
-    task_toml.write_text(text)
+def _native_mcp_servers(submission_root: Path, plugin_dirs: list[str], mock_server_names: list[str]) -> list[dict]:
+    """Register only fixture-backed servers from the staged pack declarations."""
+    servers: dict[str, dict] = {}
+    for relative in plugin_dirs:
+        path = (submission_root / relative).resolve() / "mcps.json"
+        if not path.is_file():
+            continue
+        for name, entry in json.loads(path.read_text()).get("mcpServers", {}).items():
+            if name not in mock_server_names:
+                continue
+            if entry.get("type") != "stdio" or not isinstance(entry.get("command"), str):
+                raise ValueError(f"MCP mock {name} must be prepared as a stdio command")
+            native = {"name": name, "transport": "stdio", "command": entry["command"], "args": entry.get("args", [])}
+            if name in servers and servers[name] != native:
+                raise ValueError(f"Conflicting MCP declarations for {name}")
+            servers[name] = native
+    missing = set(mock_server_names) - servers.keys()
+    if missing:
+        raise ValueError(f"MCP mocks have no pack declaration: {', '.join(sorted(missing))}")
+    return list(servers.values())

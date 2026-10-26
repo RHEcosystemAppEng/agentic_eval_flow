@@ -49,10 +49,21 @@ Put shared schemas at
 `cases/<case-id>/mock-mcps/<server>/fixture.json`. Fixtures use
 `{"sequence": [...]}`. The pack's `mcps.json` supplies MCP configuration.
 
-The MCP preparation service rewrites matching servers to launch the trial image's
-`/opt/mock-mcp/src/server.py` over stdio. Enrichment uploads the matching schema
-and fixture into each trial's workspace. Pairwise control configs can use a
-generated `<pack>-mcp-only` sibling to expose the same tools without a skill.
+The MCP preparation service resolves matching servers to the trial image's
+`/opt/mock-mcp/src/server.py` executable and declares them through Harbor's native
+`environment.mcp_servers` task input. The selected agent registers and launches
+the executable as a stdio server. Preparation stages each schema and case fixture
+in that trial's private workspace. Pairwise control configs can use a
+generated `<pack>-mcp-only` sibling to expose the same tools without a skill. Missing fixtures for a server used by other cases
+receive an empty sequence, retaining the mock server's existing schema fallback.
+Evaluation trials register only fixture-backed stdio mock servers. Other servers
+from the pack are excluded from both control and treatment. A submission without
+MCP fixtures registers no MCP servers. Mock substitution removes the real
+endpoint's authentication fields because the fixture server does not use them.
+
+Annotations and referenced ground-truth files are staged under `tests/cases/`
+for the verifier and are not copied into the agent workspace. Verifier scripts
+remain the upstream-generated files.
 
 When `inputs.tools` is configured, each entry needs a nonempty `match` and the
 submission needs `tool_handlers.yaml`. `permissions.allow` and

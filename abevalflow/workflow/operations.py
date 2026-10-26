@@ -184,6 +184,8 @@ class Operations:
             image=config.trial_image,
             environment=runner_environment(config, self.reports),
             timeout=config.command_timeout,
+            aeh_root=config.aeh_root,
+            aeh_python=config.aeh_python,
         )
         tasks = config.output / "tasks"
         jobs = config.output / "jobs"

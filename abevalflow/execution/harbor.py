@@ -3,24 +3,19 @@
 from __future__ import annotations
 
 import shutil
-import subprocess
-import sys
 from pathlib import Path
 from typing import Any
-
-import yaml
 
 from abevalflow.execution.artifacts import (
     materialize_aeh_case_outputs,
 )
 from abevalflow.execution.base import BaseRunner, RunnerError
-from abevalflow.harbor_extensions import OPENSHIFT_ENVIRONMENT_IMPORT_PATH
 
 
 class HarborRunner(BaseRunner):
     """Harbor/Kubernetes execution backend.
 
-    Uses the packaged upstream adapter for containerized execution.
+    Invokes the complete upstream AEH distribution through its native commands.
     """
 
     name = "harbor"
@@ -39,48 +34,33 @@ class HarborRunner(BaseRunner):
         if not self.model:
             raise RunnerError("Harbor runner requires --model. Pass --model explicitly via CLI or pipeline parameter.")
 
-        patched_config = config
-        use_patched_config = False
-        if self.env_type == "kubernetes":
-            patched_config = self._patch_eval_config_for_openshift(config, tasks_dir)
-            use_patched_config = True
-
-        tasks_already_enriched = tasks_dir is not None and self.image
-        if tasks_already_enriched:
-            self._prepare_enriched_tasks(patched_config, Path(tasks_dir))
-
+        runtime = self.aeh_runtime
+        tasks_dir = tasks_dir or output / "tasks"
+        jobs_dir = jobs_dir or output / "jobs"
+        tasks_prepared = bool(self.image)
+        if tasks_prepared:
+            self._prepare_enriched_tasks(config, Path(tasks_dir))
         cmd = [
-            sys.executable,
             "-m",
-            "abevalflow.execution.upstream",
+            "agent_eval.harbor.run",
             "--config",
-            str(patched_config),
+            str(config.resolve()),
             "--output",
-            str(output),
+            str(output.resolve()),
+            "--tasks-dir",
+            str(Path(tasks_dir).resolve()),
+            "--jobs-dir",
+            str(Path(jobs_dir).resolve()),
+            "--env",
+            self.env_type,
+            "--model",
+            self.model,
         ]
-
-        if use_patched_config:
-            cmd.extend(["--environment-import-path", OPENSHIFT_ENVIRONMENT_IMPORT_PATH])
-        else:
-            cmd.extend(["--env", self.env_type])
-
-        if self.model:
-            cmd.extend(["--model", self.model])
-
-        if self.judge_model and not tasks_already_enriched:
-            cmd.extend(["--judge-model", self.judge_model])
         if self.image:
             cmd.extend(["--image", self.image])
-        if tasks_dir:
-            cmd.extend(["--tasks-dir", str(tasks_dir)])
-
-            if not tasks_already_enriched and (self.judge_model or self.model or self.image):
-                cmd.append("--regenerate")
-        if jobs_dir:
-            cmd.extend(["--jobs-dir", str(jobs_dir)])
-
-        print(f"Running: {' '.join(cmd)}")
-        result = subprocess.run(cmd, env=self.environment, timeout=self.timeout, stdout=sys.stderr)
+        if self.judge_model and not tasks_prepared:
+            cmd.extend(["--judge-model", self.judge_model])
+        code = runtime.run(cmd, environment=self.environment, timeout=self.timeout, cwd=config.parent.resolve())
 
         try:
             materialize_aeh_case_outputs(
@@ -100,17 +80,12 @@ class HarborRunner(BaseRunner):
         except Exception as exc:
             print(f"WARN: failed to rewrite harbor_job_dir: {exc}")
 
-        return result.returncode
+        return code
 
     def _prepare_enriched_tasks(self, config: Path, tasks_dir: Path) -> None:
-        """Generate Harbor tasks then apply Agentic Eval Flow skill/annotation fixes."""
+        """Generate upstream tasks and prepare their application-owned inputs."""
 
-        from agent_eval.config import EvalConfig
-        from agent_eval.harbor import tasks as tasks_mod
-
-        from abevalflow.harbor_extensions.aeh_task_enrichment import (
-            enrich_harbor_tasks,
-        )
+        from abevalflow.harbor_extensions.aeh_task_enrichment import enrich_harbor_tasks
 
         if tasks_dir.exists():
             for child in tasks_dir.iterdir():
@@ -130,18 +105,20 @@ class HarborRunner(BaseRunner):
         except Exception as exc:
             raise RunnerError("Could not prepare required MCP fixtures") from exc
 
-        from abevalflow.execution.upstream import configure_task_resources
-
-        configure_task_resources()
-        eval_config = EvalConfig.from_yaml(config)
-        print(f"Generating Harbor tasks into {tasks_dir}")
-        tasks_mod.generate_tasks(
-            eval_config,
-            Path(config),
-            tasks_dir,
+        runtime = self.aeh_runtime
+        command = [
+            str(runtime.task_generator),
+            "--config",
+            str(config.resolve()),
+            "--out",
+            str(tasks_dir.resolve()),
+            "--image",
             self.image,
-            judge_model=self.judge_model,
-        )
+        ]
+        if self.judge_model:
+            command.extend(["--judge-model", self.judge_model])
+        if runtime.run(command, environment=self.environment, timeout=self.timeout, cwd=config.parent.resolve()) != 0:
+            raise RunnerError("AEH task generation failed")
         n = enrich_harbor_tasks(
             tasks_dir,
             config_path=Path(config),
@@ -149,39 +126,3 @@ class HarborRunner(BaseRunner):
             judge_model=self.judge_model,
         )
         print(f"Enriched {n} Harbor task package(s) (skills + annotations + models/reward)")
-
-    def _patch_eval_config_for_openshift(self, config: Path, tasks_dir: Path | None) -> Path:
-        """Patch eval.yaml for OpenShift emptyDir support.
-
-        Sets environment.type to a valid enum value (``kubernetes``). The custom
-        OpenShiftEnvironment class is applied via ``--environment-import-path``.
-
-        Args:
-            config: Original eval.yaml path
-            tasks_dir: Tasks directory (not used - kept for backward compatibility)
-
-        Returns:
-            Path to patched eval.yaml
-        """
-
-        with open(config) as f:
-            eval_config = yaml.safe_load(f)
-
-        if "environment" not in eval_config:
-            eval_config["environment"] = {}
-
-        eval_config["environment"]["type"] = "kubernetes"
-
-        config_dir = config.parent.resolve()
-        runner_cfg = eval_config.get("runner", {})
-        if isinstance(runner_cfg.get("plugin_dirs"), list):
-            runner_cfg["plugin_dirs"] = [
-                str((config_dir / p).resolve()) if not Path(p).is_absolute() else p for p in runner_cfg["plugin_dirs"]
-            ]
-
-        patched_config = config.parent / f"{config.stem}-openshift.yaml"
-        with open(patched_config, "w") as f:
-            yaml.dump(eval_config, f)
-
-        print(f"Patched eval config for OpenShift: {patched_config}")
-        return patched_config

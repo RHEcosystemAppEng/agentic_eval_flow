@@ -83,12 +83,12 @@ def test_doctor_reports_model_and_storage_configuration(catalog):
     with patch("importlib.util.find_spec", return_value=None):
         checks = check_readiness(config, cluster=False)
     by_name = {c["name"]: c for c in checks}
-    assert not by_name["agent_eval"]["ready"]
+    assert not by_name["aeh-runtime"]["ready"]
     assert not by_name["review-endpoint"]["ready"]
     assert not by_name["postgres-config"]["ready"]
     assert not by_name["s3-config"]["ready"]
     assert not by_name["compass-config"]["ready"]
-    assert by_name["pairwise-scorer"]["ready"]
+    assert not by_name["pairwise-scorer"]["ready"]
 
 
 def test_cluster_doctor_checks_permissions_and_secret_without_creating_pods(catalog, tmp_path, monkeypatch):
@@ -122,33 +122,6 @@ def test_cluster_failure_does_not_expose_sdk_credentials(catalog, tmp_path, monk
         checks = check_readiness(config)
     assert "private-token" not in json.dumps(checks)
     assert any(c["name"] == "cluster" and not c["ready"] for c in checks)
-
-
-def test_upstream_adapter_forwards_mcp_without_mutating_subprocess_module(tmp_path, monkeypatch):
-    from abevalflow.execution.upstream import configure_engine
-
-    pack = tmp_path / "pack"
-    pack.mkdir()
-    (pack / "mcps.json").write_text('{"mcpServers": {}}')
-    reward = ModuleType("agent_eval.harbor.reward")
-    upstream = ModuleType("agent_eval.harbor.run")
-    upstream.resolve_plugin_dir = lambda config, path: pack
-    parent = ModuleType("agent_eval.harbor")
-    parent.reward = reward
-    monkeypatch.setitem(sys.modules, "agent_eval.harbor", parent)
-    monkeypatch.setitem(sys.modules, "agent_eval.harbor.run", upstream)
-    monkeypatch.setitem(sys.modules, "agent_eval.harbor.reward", reward)
-    engine = SimpleNamespace(_resolve_harbor_skill_roots=lambda config, agent: [pack])
-    popen = MagicMock()
-    with patch("abevalflow.execution.upstream.subprocess.Popen", popen):
-        with patch("abevalflow.execution.upstream.configure_task_resources"):
-            configure_engine(engine)
-        roots = engine._resolve_harbor_skill_roots(
-            SimpleNamespace(runner=SimpleNamespace(plugin_dirs=["pack"])), "claude-code"
-        )
-        engine.subprocess.Popen(["harbor", "run"], env={})
-    assert roots == [pack]
-    assert popen.call_args.args[0][-2:] == ["--mcp-config", str(pack / "mcps.json")]
 
 
 def test_scanner_container_paths_are_translated(catalog):

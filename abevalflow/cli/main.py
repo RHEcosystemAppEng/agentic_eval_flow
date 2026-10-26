@@ -13,6 +13,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from abevalflow.config.runtime import ConfigurationError, resolve_config
+from abevalflow.execution.runtime import RuntimeUnavailable
 
 
 def workflow_options(parser: argparse.ArgumentParser) -> None:
@@ -61,6 +62,8 @@ def workflow_options(parser: argparse.ArgumentParser) -> None:
     workload.add_argument("--model", help="Override the submission's execution model")
     workload.add_argument("--judge-model", help="Override the submission's judge model")
     workload.add_argument("--score-script", type=Path, help="Upstream AEH score.py for pairwise aggregation")
+    workload.add_argument("--aeh-root", type=Path, help="Complete upstream AEH installation (ABEVAL_AEH_ROOT)")
+    workload.add_argument("--aeh-python", type=Path, help="AEH Python interpreter (ABEVAL_AEH_PYTHON)")
     scanners.add_argument(
         "--scanner-runtime",
         choices=("local", "podman", "docker"),
@@ -136,6 +139,14 @@ def parser() -> argparse.ArgumentParser:
             child.add_argument("--oci-subject")
             child.add_argument("--registry-config", type=Path)
             child.add_argument("--persistence-required", action=argparse.BooleanOptionalAction, default=None)
+    runtime = subcommands.add_parser("runtime", help="Install or check the external AEH runtime")
+    runtime_commands = runtime.add_subparsers(dest="runtime_command", required=True)
+    install = runtime_commands.add_parser("install", help="Install pinned AEH in an isolated environment")
+    install.add_argument("--directory", type=Path, help="New installation directory (default: user cache)")
+    install.add_argument("--python", type=Path, help="Python >=3.12 interpreter for the new environment")
+    check = runtime_commands.add_parser("check", help="Check the complete AEH installation")
+    check.add_argument("--aeh-root", type=Path)
+    check.add_argument("--aeh-python", type=Path)
     return command
 
 
@@ -159,6 +170,30 @@ def main(argv: list[str] | None = None) -> int:
         stream=sys.stderr,
     )
     try:
+        if args.command == "runtime":
+            from abevalflow.execution.runtime import AEH_REVISION, AEH_VERSION, install_runtime, resolve_runtime
+
+            if args.runtime_command == "install":
+                runtime = install_runtime(args.directory, args.python)
+            else:
+                runtime = resolve_runtime(args.aeh_root, args.aeh_python)
+            checks = [
+                ["-m", "agent_eval.harbor.run", "--help"],
+                [str(runtime.task_generator), "--help"],
+                [str(runtime.script("score.py")), "--help"],
+                [str(runtime.script("report.py")), "--help"],
+            ]
+            ready = all(runtime.run(command, environment=None, timeout=60) == 0 for command in checks)
+            emit(
+                {
+                    "ready": ready,
+                    "root": runtime.root,
+                    "python": runtime.python,
+                    "supported_version": AEH_VERSION,
+                    "supported_revision": AEH_REVISION,
+                }
+            )
+            return 0 if ready else 3
         if args.command == "validate":
             from abevalflow.results.run import write_json
 
@@ -281,12 +316,21 @@ def main(argv: list[str] | None = None) -> int:
     except ConfigurationError as exc:
         print(f"Configuration error: {exc}", file=sys.stderr)
         return 2
+    except RuntimeUnavailable as exc:
+        print(str(exc), file=sys.stderr)
+        return 3
     except ValidationError as exc:
         fields = ", ".join(".".join(map(str, error["loc"])) for error in exc.errors())
         print(f"Invalid configuration fields: {fields}", file=sys.stderr)
         return 2
     except FileExistsError:
-        print("Run directory already exists; choose a new --output or --run-id", file=sys.stderr)
+        if args.command == "runtime":
+            print(
+                "Runtime installation directory already exists; use 'runtime check' or a new --directory",
+                file=sys.stderr,
+            )
+        else:
+            print("Run directory already exists; choose a new --output or --run-id", file=sys.stderr)
         return 2
     except (OSError, ValueError) as exc:
         print(f"Unable to execute command ({type(exc).__name__})", file=sys.stderr)

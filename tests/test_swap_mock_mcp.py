@@ -85,7 +85,7 @@ def test_swaps_real_pack_entry_matching_mock_fixture(tmp_path: Path):
     assert backup["mcpServers"]["lightspeed-mcp"]["command"] == "podman"
 
 
-def test_unmocked_server_names_left_untouched(tmp_path: Path):
+def test_unmocked_servers_are_excluded_from_evaluation_pack(tmp_path: Path):
     submission = _write_submission(
         tmp_path,
         real_pack_mcps={
@@ -100,10 +100,10 @@ def test_unmocked_server_names_left_untouched(tmp_path: Path):
     swap_mock_mcp_servers(submission, mock_binary="/opt/mock-mcp/src/server.py")
 
     swapped = json.loads((tmp_path / "rh-sre" / "mcps.json").read_text())
-    # lightspeed-mcp mocked, aap-mcp-job-management (no fixture anywhere) untouched.
+    assert set(swapped["mcpServers"]) == {"lightspeed-mcp"}
     assert swapped["mcpServers"]["lightspeed-mcp"]["command"] == "python3"
-    assert swapped["mcpServers"]["aap-mcp-job-management"]["command"] == "python3"
-    assert swapped["mcpServers"]["aap-mcp-job-management"]["args"] == ["aap-proxy.py"]
+    backup = json.loads((tmp_path / "rh-sre" / "mcps.real.json").read_text())
+    assert "aap-mcp-job-management" in backup["mcpServers"]
 
 
 def test_generates_mcp_only_sibling_from_real_pack(tmp_path: Path):
@@ -132,12 +132,8 @@ def test_generates_mcp_only_sibling_from_real_pack(tmp_path: Path):
     assert results[str(mcp_only_root)] == ["lightspeed-mcp"]
 
     generated = json.loads((mcp_only_root / "mcps.json").read_text())
-    # Copied the full real pack (both server names), then mocked only the
-    # one with a fixture -- same selection logic as the real pack.
-    assert set(generated["mcpServers"]) == {"lightspeed-mcp", "aap-mcp-job-management"}
+    assert set(generated["mcpServers"]) == {"lightspeed-mcp"}
     assert generated["mcpServers"]["lightspeed-mcp"]["command"] == "python3"
-    assert generated["mcpServers"]["aap-mcp-job-management"]["command"] == "python3"
-    assert generated["mcpServers"]["aap-mcp-job-management"]["args"] == ["aap-proxy.py"]
 
     # No SKILL.md ever gets written here -- that's the entire point.
     assert not any(mcp_only_root.rglob("SKILL.md"))

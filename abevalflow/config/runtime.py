@@ -44,6 +44,8 @@ class RuntimeConfig(BaseModel):
     model: str | None = None
     judge_model: str | None = None
     score_script: Path | None = None
+    aeh_root: Path | None = None
+    aeh_python: Path | None = None
     scanner_runtime: Literal["local", "podman", "docker"] = "local"
     security_image: str = (
         "quay.io/ecosystem-appeng/agent-eval-harness:v4.0.1-security-scan"
@@ -202,6 +204,8 @@ def resolve_config(options: Mapping[str, Any], environ: Mapping[str, str] | None
         "model": (None,),
         "judge_model": (None,),
         "score_script": (None, "AEH_SCORE_PY"),
+        "aeh_root": (None,),
+        "aeh_python": (None,),
         "security_command": ("skill-scanner",),
         "quality_command": ("harness-eval",),
         "scanner_runtime": ("local",),
@@ -229,9 +233,11 @@ def resolve_config(options: Mapping[str, Any], environ: Mapping[str, str] | None
         values[name] = get(name, default, *aliases)
     for name in ("skill_review", "continue_on_tier1_failure", "persistence_required", "s3_verify_tls"):
         values[name] = boolean(values[name])
-    for name in ("kubeconfig", "score_script", "registry_config"):
+    for name in ("kubeconfig", "score_script", "registry_config", "aeh_root"):
         if values[name]:
             values[name] = Path(values[name]).expanduser().resolve()
+    if values["aeh_python"]:
+        values["aeh_python"] = Path(values["aeh_python"]).expanduser().absolute()
     if values["kube_context"] and not values["kubeconfig"]:
         candidate = Path.home() / ".kube/config"
         if candidate.is_file():

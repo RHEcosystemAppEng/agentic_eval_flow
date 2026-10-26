@@ -1,4 +1,4 @@
-"""Execution mcp services."""
+"""Prepare fixture-only MCP declarations in isolated evaluation packs."""
 
 from __future__ import annotations
 
@@ -25,10 +25,8 @@ def _load_yaml_dict(path: Path) -> dict:
     return data if isinstance(data, dict) else {}
 
 
-def _mock_server_names(cases_root: Path) -> set[str]:
-    """Union of ``mock-mcps/<server>/`` names across every case -- mirrors
-    abevalflow.harbor_extensions.aeh_task_enrichment._mock_mcp_server_names,
-    which must agree with this on which server names get mocked."""
+def fixture_server_names(cases_root: Path) -> set[str]:
+    """Collect server names with fixtures in at least one dataset case."""
     names: set[str] = set()
     if not cases_root.is_dir():
         return names
@@ -52,10 +50,7 @@ def _dataset_rel(submission_path: Path) -> str:
 
 
 def _plugin_dirs_from_configs(submission_path: Path) -> list[str]:
-    """Union of runner.plugin_dirs[0] across every config this submission
-    commits, de-duplicated, order-preserving. A submission with only a
-    single eval.yaml (AEH_MODE=single) contributes just that one entry --
-    identical to the pre-extraction behavior."""
+    """Collect all referenced plugin directories in configuration order."""
     seen: list[str] = []
     for filename in _CONFIG_FILENAMES:
         cfg = _load_yaml_dict(submission_path / filename)
@@ -63,10 +58,10 @@ def _plugin_dirs_from_configs(submission_path: Path) -> list[str]:
         if not isinstance(runner, dict):
             continue
         plugin_dirs = runner.get("plugin_dirs") or []
-        if plugin_dirs:
-            first = str(plugin_dirs[0])
-            if first not in seen:
-                seen.append(first)
+        for relative in plugin_dirs:
+            relative = str(relative)
+            if relative not in seen:
+                seen.append(relative)
     return seen
 
 
@@ -99,6 +94,7 @@ def _swap_entries(mcps_path: Path, mock_server_names: set[str], mock_binary: str
         swapped.append(name)
 
     if swapped:
+        data["mcpServers"] = {name: entry for name, entry in servers.items() if name in mock_server_names}
         backup = mcps_path.parent / "mcps.real.json"
         if not backup.is_file():
             backup.write_text(mcps_path.read_text())
@@ -107,13 +103,13 @@ def _swap_entries(mcps_path: Path, mock_server_names: set[str], mock_binary: str
 
 
 def swap_mock_mcp_servers(submission_path: Path, mock_binary: str = DEFAULT_MOCK_BINARY) -> dict[str, list[str]]:
-    """Swap mocked server entries in every real + MCP-only pack this
-    submission's eval configs reference. Returns {pack_root: [swapped
-    names]} for logging. Idempotent -- safe to call multiple times (e.g.
-    once from the Tekton pipeline's swap-mock-mcp step and again, as a
-    no-op, from a local run_aeh.py dev run that already ran it)."""
+    """Replace fixture-backed entries and exclude other servers in staged packs.
+
+    Create MCP-only siblings for skill-less pairwise controls. Original pack
+    declarations are preserved in mcps.real.json. Repeated preparation is safe.
+    """
     submission_path = Path(submission_path)
-    mock_server_names = _mock_server_names(submission_path / _dataset_rel(submission_path))
+    mock_server_names = fixture_server_names(submission_path / _dataset_rel(submission_path))
     if not mock_server_names:
         return {}
 

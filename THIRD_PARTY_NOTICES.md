@@ -1,10 +1,10 @@
-# Third-party resources
+# Third-party runtime dependencies
 
-`abevalflow/_vendor/aeh/score.py`, `report.py`, and `templates/*.tmpl` are unmodified resources from
-[opendatahub-io/agent-eval-harness](https://github.com/opendatahub-io/agent-eval-harness),
-release v1.53.3, commit `7ec9078b621d8aa5d2c0ea3b4e61f9e60b4bed2f`.
-They are distributed under Apache-2.0. The upstream license is included at
-`abevalflow/_vendor/aeh/LICENSE`.
+Agentic Eval Flow invokes Agent Eval Harness and Harbor as external dependencies.
+AEH is installed from its complete, unmodified upstream source distribution.
+No AEH implementation is bundled in the application package.
 
-These resources provide suite-level scoring and HTML reporting used by the
-installed upstream package. Application adapters live in `abevalflow/execution/`.
+AEH and Harbor are licensed under Apache-2.0. The trial image also installs the
+fixture-backed generic MCP mock server from its pinned upstream repository; its
+license is retained in that installation. Each runtime dependency retains its own
+license and distribution files.

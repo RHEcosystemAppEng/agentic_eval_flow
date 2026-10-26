@@ -12,9 +12,6 @@ COPY scripts /opt/agent-eval-harness/scripts
 RUN pip install --no-cache-dir --no-deps /opt/agent-eval-harness \
     && abeval --version \
     && python3 -c "from abevalflow.certification import get_available_profiles; assert 'skill' in get_available_profiles()"
-COPY containers/agent-eval-harness/sitecustomize.py /tmp/sitecustomize.py
-RUN python3 -c "import shutil, site; shutil.copy('/tmp/sitecustomize.py', site.getsitepackages()[0] + '/sitecustomize.py')" \
-    && rm /tmp/sitecustomize.py
 ENV HOME=/workspace
 RUN mkdir -p /workspace /logs /tests /solution /harbor /installed-agent \
     && chgrp -R 0 /workspace /logs /tests /solution /harbor /installed-agent /opt/agent-eval-harness \

@@ -25,6 +25,11 @@ jobs:
       - name: Run tests, coverage, and lint
         run: make test
 
+      - name: Verify unchanged upstream AEH integration
+        run: |
+          uv run --locked abeval runtime install --directory /tmp/abeval-aeh
+          ABEVAL_TEST_AEH_ROOT=/tmp/abeval-aeh/source uv run --locked --extra dev pytest tests/test_native_aeh.py -q
+
       - name: Build and verify standalone wheel
         run: |
           uv build

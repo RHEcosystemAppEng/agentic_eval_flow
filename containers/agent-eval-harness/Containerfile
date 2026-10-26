@@ -8,14 +8,19 @@ WORKDIR /opt/agent-eval-harness
 RUN uv export --frozen --no-dev --extra runner --extra llm --extra observability --no-emit-project --no-hashes --output-file /tmp/runtime-requirements.txt \
     && pip install --no-cache-dir -r /tmp/runtime-requirements.txt \
     && rm /tmp/runtime-requirements.txt
+ARG AEH_REPO=https://github.com/fullsend-ai/agent-eval-harness.git
+ARG AEH_SHA=8a15a8b687b5561903827805eaae8b438bde9954
+RUN git init /opt/aeh/source \
+    && git -C /opt/aeh/source remote add origin "${AEH_REPO}" \
+    && git -C /opt/aeh/source fetch --depth 1 origin "${AEH_SHA}" \
+    && git -C /opt/aeh/source checkout --detach FETCH_HEAD \
+    && pip install --no-cache-dir --no-deps --editable /opt/aeh/source
+ENV ABEVAL_AEH_ROOT=/opt/aeh/source
 COPY abevalflow /opt/agent-eval-harness/abevalflow
 COPY scripts /opt/agent-eval-harness/scripts
 RUN pip install --no-cache-dir --no-deps /opt/agent-eval-harness \
     && abeval --version \
-    && python3 -c "import agent_eval.harbor.run; import abevalflow.harbor_extensions.openshift_environment; from abevalflow.execution.upstream import configure_task_resources; configure_task_resources()"
-COPY containers/agent-eval-harness/sitecustomize.py /tmp/sitecustomize.py
-RUN python3 -c "import shutil, site; shutil.copy('/tmp/sitecustomize.py', site.getsitepackages()[0] + '/sitecustomize.py')" \
-    && rm /tmp/sitecustomize.py
+    && python3 -c "from abevalflow.execution.runtime import resolve_runtime; resolve_runtime().validate()"
 ENV HOME=/workspace
 RUN mkdir -p /workspace /logs /tests /solution /harbor /installed-agent \
     && chgrp -R 0 /workspace /logs /tests /solution /harbor /installed-agent /opt/agent-eval-harness \

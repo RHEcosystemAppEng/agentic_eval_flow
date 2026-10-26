@@ -22,7 +22,7 @@ uv tool install '.[llm,runner,storage,observability]'
 | Extra | Capability |
 |---|---|
 | `llm` | Advisory skill and submission reviews |
-| `runner` | Pinned AEH and Harbor runtime, Kubernetes client, packaged scoring resources |
+| `runner` | Pinned Harbor, Kubernetes client, and evaluation model clients |
 | `storage` | PostgreSQL and S3-compatible storage clients |
 | `observability` | OpenTelemetry OTLP tracing |
 | `all` | All runtime capabilities |
@@ -32,6 +32,41 @@ The base installation can validate structure, validate submissions, and plan run
 without model credentials, a database, or Harbor. Full Tier 1 needs scanner
 executables on PATH or Podman/Docker with the scanner images. Scanners and the
 trial agent runtime are separate from Python extras.
+
+## External AEH runtime
+
+Tier 2 invokes the complete, unchanged Agent Eval Harness v1.57.1 distribution.
+Install it once in an isolated environment:
+
+```sh
+abeval runtime install
+abeval runtime check
+```
+
+The installer needs Git, network access, and a Python >=3.12 interpreter with
+venv/pip support. It pins AEH to commit
+`8a15a8b687b5561903827805eaae8b438bde9954` and Harbor to `0.24.0`. The default
+installation lives under `$XDG_CACHE_HOME/abeval/aeh/<commit>` (or
+`~/.cache/abeval/aeh/<commit>`). Dependency resolution follows upstream's declared
+requirements with the supported Harbor pin. Existing directories are never
+replaced; failed installations are removed so installation can be retried.
+
+For a different installation directory:
+
+```sh
+abeval runtime install --directory /path/to/aeh-runtime --python /path/to/python3.12
+export ABEVAL_AEH_ROOT=/path/to/aeh-runtime/source
+export ABEVAL_AEH_PYTHON=/path/to/aeh-runtime/.venv/bin/python
+abeval runtime check
+```
+
+An existing complete upstream source installation can also be selected with
+`--aeh-root` and `--aeh-python` on workflow commands. Python paths retain their
+virtual-environment identity. The runtime must include upstream's `skills/` and
+templates; a wheel-only AEH installation is insufficient for this release.
+The application calls upstream task generation, execution, scoring, and report
+commands without changing AEH code or overriding its functions. Runner/trial
+images install the complete source distribution during their build.
 
 ## Two tiers
 
@@ -99,6 +134,7 @@ invoke models or create trial pods.
 | Review API | `ABEVAL_LLM_BASE_URL`, `ABEVAL_LLM_MODEL`, `ABEVAL_LLM_API_KEY` |
 | Agent API | `ABEVAL_AGENT_BASE_URL`, `ABEVAL_AGENT_API_KEY` |
 | Suite-level judge API | `ABEVAL_JUDGE_BASE_URL`, `ABEVAL_JUDGE_API_KEY` |
+| AEH runtime | `ABEVAL_AEH_ROOT`, `ABEVAL_AEH_PYTHON` |
 | Cluster | `ABEVAL_KUBECONFIG` / `KUBECONFIG`, `ABEVAL_KUBE_CONTEXT`, `ABEVAL_NAMESPACE` |
 | Workload model Secret | `ABEVAL_CREDENTIALS_SECRET` (default `llm-credentials`) |
 | PostgreSQL | `ABEVAL_DATABASE_URL` |
@@ -145,8 +181,15 @@ Local API credentials do not automatically populate remote Secrets.
 
 The workload cluster must pull the trial image and reach the model/tool endpoints.
 The local orchestrator must reach the Kubernetes API and any review or suite-level
-judge endpoints. OpenShift writable-volume and verifier-directory preparation is
-provided by the packaged Harbor environment extension.
+judge endpoints. AEH's native Kubernetes environment manages trial pods; the trial
+image supplies writable group-0 workspace and verifier directories.
+
+The workload Secret must use native SDK variable names, including
+`ANTHROPIC_API_KEY` for Claude and the corresponding judge provider's key.
+A Secret containing only `api-key` must be migrated. Configure internal CA trust
+through standard SDK/OS settings, including `SSL_CERT_FILE` and
+`NODE_EXTRA_CA_CERTS` in the trial environment when needed. The application does
+not install HTTP-client overrides or disable TLS verification.
 
 ## Reports and persistence
 

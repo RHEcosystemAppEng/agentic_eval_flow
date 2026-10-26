@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import os
-import subprocess
-import sys
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
 
 from abevalflow.execution.artifacts import eval_dir_name
 from abevalflow.execution.resources import find_aeh_script
+from abevalflow.execution.runtime import resolve_runtime
 
 
 class RunnerError(Exception):
@@ -34,6 +33,8 @@ class BaseRunner(ABC):
         env_type: str = "kubernetes",
         environment: dict[str, str] | None = None,
         timeout: int = 7200,
+        aeh_root: Path | None = None,
+        aeh_python: Path | None = None,
     ):
         self.model = model
         self.judge_model = judge_model
@@ -41,6 +42,12 @@ class BaseRunner(ABC):
         self.env_type = env_type
         self.environment = environment
         self.timeout = timeout
+        self.aeh_root = aeh_root
+        self.aeh_python = aeh_python
+
+    @property
+    def aeh_runtime(self):
+        return resolve_runtime(self.aeh_root, self.aeh_python)
 
     def run_single(
         self,
@@ -190,36 +197,34 @@ class BaseRunner(ABC):
         Returns:
             Exit code from score.py pairwise
         """
-        score_py_path = find_aeh_script("score.py", score_py_path)
+        score_py_path = score_py_path or self.aeh_runtime.script("score.py")
         if score_py_path is None:
             raise RunnerError("score.py not found. Set AEH_SCORE_PY or provide --score-script")
 
         cmd = [
-            sys.executable,
-            str(score_py_path),
+            str(score_py_path.resolve()),
             "pairwise",
             "--run-id",
             treatment_run_id,
             "--baseline",
             control_run_id,
             "--config",
-            str(treatment_config),
+            str(treatment_config.resolve()),
         ]
 
         if judge:
             cmd.extend(["--judge", judge])
 
         env = (self.environment or os.environ).copy()
-        env["AGENT_EVAL_RUNS_DIR"] = str(output_base)
+        env["AGENT_EVAL_RUNS_DIR"] = str(output_base.resolve())
 
         print(f"Running: {' '.join(cmd)}")
         print(f"  AGENT_EVAL_RUNS_DIR={output_base}")
-        result = subprocess.run(cmd, env=env, timeout=self.timeout, stdout=sys.stderr)
-        return result.returncode
+        return self.aeh_runtime.run(cmd, environment=env, timeout=self.timeout, cwd=treatment_config.parent.resolve())
 
     def _find_aeh_script(self, name: str, score_py_path: Path | None = None) -> Path | None:
         """Locate an AEH eval-run script (score.py / report.py) beside score.py."""
-        return find_aeh_script(name, score_py_path)
+        return find_aeh_script(name, score_py_path) if score_py_path else self.aeh_runtime.script(name)
 
     def _regenerate_report_with_baseline(
         self,
@@ -239,23 +244,22 @@ class BaseRunner(ABC):
             return
 
         cmd = [
-            sys.executable,
-            str(report_py),
+            str(report_py.resolve()),
             "--run-id",
             treatment_run_id,
             "--baseline",
             control_run_id,
             "--config",
-            str(treatment_config),
+            str(treatment_config.resolve()),
         ]
         env = (self.environment or os.environ).copy()
-        env["AGENT_EVAL_RUNS_DIR"] = str(output_base)
+        env["AGENT_EVAL_RUNS_DIR"] = str(output_base.resolve())
 
         print("=== Regenerating treatment report.html with pairwise baseline")
         print(f"Running: {' '.join(cmd)}")
-        result = subprocess.run(cmd, env=env, timeout=self.timeout, stdout=sys.stderr)
-        if result.returncode != 0:
-            print(f"WARNING: report.py exited {result.returncode} — treatment report.html may lack pairwise section")
+        code = self.aeh_runtime.run(cmd, environment=env, timeout=self.timeout, cwd=treatment_config.parent.resolve())
+        if code != 0:
+            print(f"WARNING: report.py exited {code} — treatment report.html may lack pairwise section")
 
     def _read_skill_name(self, config_path: Path) -> str:
         """Read reports-leaf name from eval.yaml (skill, then name, then stem)."""

@@ -15,9 +15,8 @@ importable services; shell launchers do not contain application logic.
 | `policy`, `certification`, `scorecard` | Gate aggregation and certification decisions |
 | `reporting` | Markdown, certification JSON, and diagnostic presentation |
 | `persistence` | Explicit PostgreSQL, S3, Compass, and OCI publication |
-| `harbor_extensions` | OpenShift environment and AEH task enrichment |
+| `harbor_extensions` | Application-owned Harbor task inputs and MCP fixture preparation |
 | `observability` | Tracing, timing, token usage, costs, and checkpoints |
-| `_vendor/aeh` | Unmodified scoring/reporting resources from the pinned upstream release |
 
 ## Workflow contracts
 
@@ -43,11 +42,20 @@ interfaces, which call package services. CLI-only argument parsing remains under
 receives an explicit child environment. Review services receive explicit client
 configuration. Pure scoring and policy functions operate without network access.
 
-The upstream adapter supplies packaged scorer/reporter resources and forwards
-pack MCP configurations in its child process. It does not rewrite files inside
-the installed upstream dependency. AEH and trial images must use compatible
-versions; the supported AEH revision is pinned in `pyproject.toml` and the trial
-Containerfile.
+AEH runs in an external, complete source installation. The runtime installer
+pins the upstream revision and installs it unchanged in an isolated environment.
+The runner invokes upstream commands in subprocesses using that environment's
+Python interpreter. No AEH implementation is included in the application wheel.
+
+Task preparation supplies native Harbor `environment.mcp_servers` declarations
+for stdio mocks, per-case schemas and fixture files, skill projections, and
+verifier-only annotations. The agent starts each mock server as its own stdio
+subprocess. Each trial and control/treatment arm receives separate files and
+process state. Only fixture-backed servers are registered; other pack servers
+are excluded. Generated verifier scripts are retained byte-for-byte.
+AEH's native Kubernetes environment owns pod lifecycle and transfers. Runner and
+trial images use the same AEH revision. Model Secrets use native SDK variable
+names, and certificate trust uses normal SDK/OS configuration.
 
 ## Validation
 
@@ -58,3 +66,17 @@ cluster runs require deployment credentials and are separate from the default
 unit/integration fixture suite. `make test` enforces coverage, lint, and format
 checks. Wheel installation must also work outside the source checkout with only
 the selected optional dependencies.
+
+Native upstream task generation and Harbor schema validation can be exercised
+without model access:
+
+```sh
+abeval runtime install --directory /tmp/aeh-runtime
+ABEVAL_TEST_AEH_ROOT=/tmp/aeh-runtime/source uv run --extra dev pytest tests/test_native_aeh.py -q
+```
+
+After building the trial image, set `ABEVAL_TEST_TRIAL_IMAGE` to its local tag
+to include actual stdio tool calls and deterministic AEH verification inside
+network-isolated containers. These tests exercise two cases in both control and
+treatment, including fresh mock-server processes and Harbor's Claude MCP
+registration command. They require Podman but no model credentials or cluster.

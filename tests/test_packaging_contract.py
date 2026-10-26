@@ -1,8 +1,6 @@
 """Application boundaries and pinned upstream resource consistency."""
 
 import ast
-import hashlib
-import json
 import tomllib
 from pathlib import Path
 
@@ -26,11 +24,12 @@ def test_application_services_do_not_import_scripts_or_cli():
                 assert not (node.module or "").startswith(("scripts", "abevalflow.cli")), path
 
 
-def test_aehruntime_pins_and_resource_checksums_agree():
+def test_external_aeh_installations_use_the_same_pin_without_bundled_code():
+    from abevalflow.execution.runtime import AEH_REVISION
+
     project = tomllib.loads((ROOT / "pyproject.toml").read_text())
-    manifest = json.loads((ROOT / "abevalflow/_vendor/aeh/manifest.json").read_text())
-    runner = project["project"]["optional-dependencies"]["runner"]
-    assert any(manifest["commit"] in dependency for dependency in runner)
-    assert manifest["commit"] in (ROOT / "containers/aeh-trial/Containerfile").read_text()
-    for name, digest in manifest["sha256"].items():
-        assert hashlib.sha256((ROOT / "abevalflow/_vendor/aeh" / name).read_bytes()).hexdigest() == digest
+    assert not any("agent-eval-harness" in d for d in project["project"]["optional-dependencies"]["runner"])
+    for image in ("aeh-trial", "agent-eval-harness"):
+        assert AEH_REVISION in (ROOT / "containers" / image / "Containerfile").read_text()
+    assert not (ROOT / "abevalflow/_vendor").exists()
+    assert not (ROOT / "abevalflow/execution/upstream.py").exists()

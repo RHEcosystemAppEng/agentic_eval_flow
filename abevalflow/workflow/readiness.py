@@ -31,17 +31,23 @@ def check_readiness(config: RuntimeConfig, *, cluster: bool = True) -> list[dict
             "Review requires LLM base URL, model, and API key",
         )
     if 2 in config.tiers:
-        for module in ("agent_eval", "harbor", "kubernetes"):
+        for module in ("harbor", "kubernetes"):
             record(module, importlib.util.find_spec(module) is not None, "Install abevalflow[runner]")
+        from abevalflow.execution.runtime import RuntimeUnavailable, resolve_runtime
+
+        try:
+            runtime = resolve_runtime(config.aeh_root, config.aeh_python)
+            record("aeh-runtime", True, str(runtime.root))
+        except RuntimeUnavailable as exc:
+            runtime = None
+            record("aeh-runtime", False, str(exc))
         record("trial-image", bool(config.trial_image), "Supply --trial-image or ABEVAL_TRIAL_IMAGE")
         record("kubeconfig", not config.kubeconfig or config.kubeconfig.is_file(), "Explicit kubeconfig must exist")
         if config.metadata.aeh_mode.value == "pairwise":
-            from abevalflow.execution.runner import find_aeh_script
-
             record(
                 "pairwise-scorer",
-                find_aeh_script("score.py", config.score_script) is not None,
-                "Supply --score-script from the supported AEH release",
+                bool(runtime and (config.score_script or runtime.script("score.py")).is_file()),
+                "Install the complete AEH runtime with 'abeval runtime install'",
             )
         if cluster and all(c["ready"] for c in checks if c["name"] in {"kubernetes", "kubeconfig"}):
             try:
