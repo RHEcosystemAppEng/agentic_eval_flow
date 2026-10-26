@@ -38,6 +38,11 @@ PHASE_CHECK_NAMES: dict[str, dict[str, str]] = {
         "tool-name-rules": "Tool-Name Rules",
         "oauth-catalog-match": "OAuth Matches Catalog",
     },
+    "phase3": {
+        "tool-correctness": "Tool Correctness",
+        "edge-case-handling": "Edge Case Handling",
+        "sensitive-data-redaction": "Sensitive Data Redaction",
+    },
 }
 
 PHASE_CONSUMED_CHECKS: dict[str, set[str]] = {
@@ -47,6 +52,7 @@ PHASE_CONSUMED_CHECKS: dict[str, set[str]] = {
 PHASE_SOURCE_DEFAULTS: dict[str, str] = {
     "phase1": "pipeline",
     "phase2": "probe",
+    "phase3": "pipeline",
 }
 
 PHASE_CHECK_SOURCE_DEFAULTS: dict[str, dict[str, str]] = {
@@ -118,7 +124,13 @@ class McpPhaseResult(BaseModel):
         evaluated = [c for c in self.checks if c.status in {"pass", "fail"}]
         if not evaluated:
             return 0.0
-        return sum(c.score or 0.0 for c in evaluated) / len(evaluated)
+
+        def score_or_default(check: McpCheckResult) -> float:
+            if check.score is not None:
+                return check.score
+            return 1.0 if check.status == "pass" else 0.0
+
+        return sum(score_or_default(c) for c in evaluated) / len(evaluated)
 
 
 class McpEvalResult(BaseModel):

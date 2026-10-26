@@ -42,7 +42,6 @@ from scripts.mcp.bootstrap_compass_track import (
     _register_track,
 )
 from scripts.mcp.runners import compass_publish as publish_runner
-from scripts.mcp.runners import phase1_gate
 from scripts.mcp.runners.compass_publish import (
     _load_summaries,
     _phase_from_filename,
@@ -292,59 +291,31 @@ def test_cli_loads_phases_from_directory_or_explicit_files(tmp_path, monkeypatch
     assert seen["phases"] == {"phase4"}
 
 
-class TestPhase1GateSummary:
-    def test_emits_standard_check_shape_and_status(self, tmp_path, monkeypatch):
-        class FakeGate:
-            passed = True
-            score = 1.0
-            findings = []
-            message = "Passed"
-
-            def get_policy_key(self):
-                return "example-check"
-
-            def model_dump_json(self, indent=None):
-                return "{}"
-
-        monkeypatch.setattr(phase1_gate, "run_phase1", lambda *_args: [FakeGate()])
-        monkeypatch.setattr("sys.argv", ["phase1_gate", "--reports-dir", str(tmp_path)])
-        assert phase1_gate.main() == 0
-
-        summary = json.loads((tmp_path / "phase1-summary.json").read_text())
-        assert summary["phase"] == "phase1"
-        assert "gates" not in summary
-        assert summary["checks"] == [
-            {
-                "check": "example-check",
-                "passed": True,
-                "status": "pass",
-                "score": 1.0,
-                "findings": 0,
-                "message": "Passed",
-            }
-        ]
-
-
 class TestCompassTrackBootstrap:
     def test_track_is_separate_and_reuses_existing_compass_checks(self):
         assert TRACK_ID == "abevalflow-mcp-evaluation"
-        assert len(TRACK_DEFINITION["levels"]) == 2
-        phase1, phase2 = TRACK_DEFINITION["levels"]
+        assert len(TRACK_DEFINITION["levels"]) == 3
+        phase1, phase2, phase3 = TRACK_DEFINITION["levels"]
         assert (phase1["ordinal"], phase1["name"]) == (1, "Phase 1 — Static Analysis")
         assert (phase2["ordinal"], phase2["name"]) == (2, "Phase 2 — Conformance Testing")
+        assert (phase3["ordinal"], phase3["name"]) == (3, "Phase 3 — Behavioral Evaluation")
         phase1_ids = {check["id"] for check in phase1["checks"]}
         phase2_ids = {check["id"] for check in phase2["checks"]}
+        phase3_ids = {check["id"] for check in phase3["checks"]}
         assert len(phase1_ids) == 3
         assert len(phase2_ids) == 10
+        assert len(phase3_ids) == 3
         assert phase1_ids.isdisjoint(phase2_ids)
+        assert phase1_ids.isdisjoint(phase3_ids)
+        assert phase2_ids.isdisjoint(phase3_ids)
         assert "mcp-tool-schema-check" in phase2_ids
         assert "mcp-oauth-scope-match" in phase2_ids
-        assert not any("summary" in check_id for check_id in phase1_ids | phase2_ids)
+        assert not any("summary" in check_id for check_id in phase1_ids | phase2_ids | phase3_ids)
         assert "mcp-eval-tool-name-rules" not in phase2_ids
         assert "mcp-eval-oauth-catalog-match" not in phase2_ids
         registered_ids = {check["id"] for check in ALL_CHECK_DEFS}
         assert registered_ids.isdisjoint({check["id"] for check in CONSUMED_TRACK_CHECKS})
-        assert len(ALL_CHECK_DEFS) == 11
+        assert len(ALL_CHECK_DEFS) == 14
 
     def test_track_dry_run_does_not_make_http_request(self):
         with patch("scripts.mcp.bootstrap_compass_track.urllib.request.urlopen") as mock_urlopen:
