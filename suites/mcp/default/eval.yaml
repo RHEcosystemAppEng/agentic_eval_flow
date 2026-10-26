@@ -29,7 +29,8 @@ config:
 
   mcpConfigFile: mcp-config.yaml
 
-  defaultTaskTimeout: 300s
+  defaultTaskLimits:
+    timeout: "5m"
 
   taskSets:
     - path: tasks/tool-correctness.yaml

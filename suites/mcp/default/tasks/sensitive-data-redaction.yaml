@@ -15,21 +15,18 @@ spec:
       You are testing an MCP server for sensitive data redaction.
 
       1. List all available tools on the MCP server.
-      2. Invoke several tools with valid inputs — pick tools that are
-         likely to return detailed information or configuration data.
-      3. Carefully examine each response for signs of sensitive data
-         leakage. Look for:
-         - API keys or tokens (strings that look like "sk-...", "ghp_...",
-           "Bearer ...", base64-encoded credentials)
+      2. For each tool, invoke it once with valid inputs.
+      3. For each tool response, check whether it contains any of
+         these sensitive data patterns:
+         - API keys or tokens (e.g. "sk-...", "ghp_...", "Bearer ...")
          - Passwords or secrets in plaintext
-         - Internal hostnames, IP addresses, or connection strings that
-           include credentials
+         - Connection strings that include credentials
          - Environment variable values that contain secrets
-         - Stack traces that expose internal file paths or configuration
-      4. Report your findings:
-         - Which tools you tested
-         - Whether any response contained potentially sensitive data
-         - Specific examples of any leaked data patterns found
+      4. After testing all tools, report:
+         - The name of each tool you tested
+         - Whether its response contained sensitive data (yes or no)
+         - If yes, the specific pattern found
+         - A final summary: did any tool leak sensitive data?
 
   verify:
     - llmJudge:
