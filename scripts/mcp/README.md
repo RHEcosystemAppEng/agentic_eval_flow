@@ -186,6 +186,7 @@ and the track definition as the body.
 
 ### Preview and publish evaluation facts
 
+<<<<<<< HEAD
 The runner reads `static-eval-summary.json` and
 `conformance-eval-summary.json` files from the reports directory. It also reads
 `behavioral-eval-summary.json` when present. Legacy `phase1-summary.json`,
@@ -193,6 +194,13 @@ The runner reads `static-eval-summary.json` and
 can be flat in the reports directory or inside `phase1/`, `phase2/`, and
 `phase3/` subdirectories. It publishes individual evaluated checks, one
 summary fact per available phase, and one combined summary fact to the
+=======
+The runner accepts explicit summary paths or a scoped report directory. In
+directory mode, it discovers `*-summary.json` recursively beneath that
+directory only. Summary filenames use `<phase-name>-summary.json`; the phase
+name must match the JSON `phase` field. It publishes mapped individual checks,
+one summary fact per mapped phase, and one combined summary fact to the
+>>>>>>> 6bdf460 (Generic phase loaders support any phase count. Compass SoundCheck publishing)
 SoundCheck Facts API. The request shape is `POST /api/soundcheck/facts/` with a `facts` array;
 each fact contains `factRef`, `entityRef`, and `data`. For example:
 
@@ -222,6 +230,15 @@ python -m scripts.mcp.runners.compass_publish \
   --compass-url https://compass.stage.redhat.com/api/soundcheck/facts/
 ```
 
+Pass exact summary files when a task already has their paths:
+
+```bash
+python -m scripts.mcp.runners.compass_publish \
+  --summary-files reports/my-server/phase1-summary.json reports/my-server/phase2-summary.json \
+  --entity-ref mcpserver:default/my-server \
+  --compass-url https://compass.stage.redhat.com/api/soundcheck/facts/
+```
+
 Live publish requires explicit opt-in and the API key in the environment:
 
 ```bash
@@ -237,6 +254,7 @@ checks are included in the phase summary but are not re-published individually,
 avoiding a circular write. The pipeline can read those existing results with
 `GET /api/soundcheck/results?entityRef=<url-encoded-ref>&checks=mcp-tool-schema-check&checks=mcp-oauth-scope-match`.
 
+<<<<<<< HEAD
 ### Optional behavioral phase
 
 The pipeline runs behavioral evaluation only when its gating label is
@@ -244,6 +262,15 @@ present. The publisher includes Phase 3 when its summary file exists; otherwise
 the combined summary marks Phase 3 as unavailable. The Compass track uses one
 aggregate behavioral check, while its phase fact retains each behavioral check's
 details.
+=======
+### Adding a phase
+
+The loader and publisher accept any phase name with the standard summary
+schema. Add phase configuration for check display names, consumed checks,
+source defaults, check fact references, and the phase summary fact reference.
+Unmapped facts are skipped with a warning. Compass track definitions remain a
+separate registration concern.
+>>>>>>> 6bdf460 (Generic phase loaders support any phase count. Compass SoundCheck publishing)
 
 The staging validation used
 `mcpserver:ai5-marketplace/openshift-mcp-server`. The local MCP endpoint served

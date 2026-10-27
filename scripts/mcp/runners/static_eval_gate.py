@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""Run the MCP static evaluation gates over the normalized scan reports.
+"""Run the MCP Phase 1 gates over the normalized scan reports.
 
-Reads the three scan JSON files produced by the static evaluation scanners, evaluates
-each gate, and writes results:
+Reads the three scan JSON files produced by the Phase 1 scanners, evaluates each
+gate, and writes the results back into the reports directory:
 
-- ``<gate>-result.json`` per gate (the full GateResult) → results directory
-- ``static-eval-summary.json`` (overall pass/fail + per-gate summary) → reports directory
+- ``<gate>-result.json`` per gate (the full GateResult)
+- ``phase1-summary.json`` (overall pass/fail + per-gate summary)
 
 Reporting stub: the three-state Evaluation-results-database writer is added by the
-pipeline layer later; static evaluation checks are pass/fail only.
+pipeline layer later; Phase 1 checks are pass/fail only.
 
 Usage:
-    python -m scripts.mcp.runners.static_eval_gate --results-dir <dir> --reports-dir <dir> [--mode block|warn]
+    python -m scripts.mcp.runners.phase1_gate --reports-dir <dir> [--mode block|warn]
 """
 
 from __future__ import annotations
@@ -32,18 +32,12 @@ SUMMARY_FILENAME = "static-eval-summary.json"
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run MCP static evaluation gates")
-    parser.add_argument(
-        "--results-dir",
-        type=Path,
-        required=True,
-        help="Directory holding the static evaluation scan JSON files (input)",
-    )
+    parser = argparse.ArgumentParser(description="Run MCP Phase 1 gates")
     parser.add_argument(
         "--reports-dir",
         type=Path,
         required=True,
-        help="Directory for writing the summary JSON file (output)",
+        help="Directory holding the Phase 1 scan JSON files",
     )
     parser.add_argument(
         "--mode",
@@ -53,23 +47,22 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    if not args.results_dir.is_dir():
-        logger.error("Not a directory: %s", args.results_dir)
+    if not args.reports_dir.is_dir():
+        logger.error("Not a directory: %s", args.reports_dir)
         return 1
 
-    args.reports_dir.mkdir(parents=True, exist_ok=True)
-
     policy = GatePolicy(default_mode=GateMode(args.mode))
-    results = run_static_eval(args.results_dir, policy)
+    results = run_static_eval(args.reports_dir, policy)
 
     summary: list[dict] = []
     for result in results:
         gate_key = result.get_policy_key()
-        (args.results_dir / f"{gate_key}-result.json").write_text(result.model_dump_json(indent=2))
+        (args.reports_dir / f"{gate_key}-result.json").write_text(result.model_dump_json(indent=2))
         summary.append(
             {
-                "gate": gate_key,
+                "check": gate_key,
                 "passed": result.passed,
+                "status": "pass" if result.passed else "fail",
                 "score": result.score,
                 "findings": len(result.findings),
                 "message": result.message,
@@ -86,12 +79,12 @@ def main() -> int:
     overall_passed = all(r.passed for r in results)
     (args.reports_dir / SUMMARY_FILENAME).write_text(
         json.dumps(
-            {"phase": "static-eval", "passed": overall_passed, "gates": summary},
+            {"phase": "static-eval", "passed": overall_passed, "checks": summary},
             indent=2,
         )
     )
 
-    logger.info("Static evaluation overall: %s", "PASS" if overall_passed else "FAIL")
+    logger.info("Phase 1 overall: %s", "PASS" if overall_passed else "FAIL")
     # Exit non-zero in block mode when any gate failed, so the Tekton step fails.
     if not overall_passed and args.mode == GateMode.BLOCK.value:
         return 1

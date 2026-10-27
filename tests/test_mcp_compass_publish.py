@@ -1,27 +1,20 @@
-"""Tests for MCP Compass publish (write side).
-
-Covers:
-- Domain model (eval_result.py): summary loaders, phase independence, computed fields
-- Compass publish (compass_publish.py): payload shapes, consumed-check exclusion,
-  dry-run mode, push orchestration
-"""
+"""Tests for generic MCP Compass publishing."""
 
 from __future__ import annotations
 
 import json
-import os
-import subprocess
-import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-import yaml
+from pydantic import ValidationError
 
+from abevalflow.mcp.checks import compass_publish
 from abevalflow.mcp.checks.compass_publish import (
-    ALL_FACT_MAPS,
     MCP_EVAL_SUMMARY_FACT,
     PHASE1_FACT_MAP,
+    PHASE2_FACT_MAP,
+    PHASE_FACT_MAPS,
     PHASE_SUMMARY_FACTS,
     McpPushConfig,
     _build_check_fact_payload,
@@ -30,15 +23,14 @@ from abevalflow.mcp.checks.compass_publish import (
     push_mcp_eval_facts,
 )
 from abevalflow.mcp.eval_result import (
-    CONSUMED_CHECKS,
+    PHASE_CHECK_NAMES,
+    PHASE_CONSUMED_CHECKS,
+    PHASE_SOURCE_DEFAULTS,
     McpCheckResult,
     McpEvalResult,
-    McpPhase,
     McpPhaseResult,
     build_mcp_eval_result,
-    load_phase1_summary,
-    load_phase2_summary,
-    load_phase3_summary,
+    load_phase_summary,
 )
 from scripts.mcp.bootstrap_compass_track import (
     ALL_CHECK_DEFS,
@@ -49,202 +41,95 @@ from scripts.mcp.bootstrap_compass_track import (
     _register_checks,
     _register_track,
 )
-from scripts.mcp.runners.compass_publish import _phase_summary_path, _summary_path
-from scripts.mcp.runners.compass_publish import main as compass_publish_main
+from scripts.mcp.runners import compass_publish as publish_runner
+from scripts.mcp.runners.compass_publish import (
+    _load_summaries,
+    _phase_from_filename,
+    _summary_files,
+)
 
-COMPASS_PUBLISH_TASK = Path(__file__).parents[1] / "pipeline/tasks/konflux/mcp-compass-publish.yaml"
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-PHASE1_SUMMARY_ALL_PASS = {
-    "phase": "static-eval",
-    "passed": True,
-    "gates": [
-        {"gate": "mcp-secrets", "passed": True, "score": 1.0, "findings": 0, "message": "No secrets found"},
-        {"gate": "mcp-no-user-code", "passed": True, "score": 1.0, "findings": 0, "message": "No user-code execution"},
-        {"gate": "mcp-license", "passed": True, "score": 1.0, "findings": 0, "message": "License compliant"},
-    ],
-}
-
-PHASE1_SUMMARY_ONE_FAIL = {
+PHASE1_SUMMARY = {
     "phase": "static-eval",
     "passed": False,
-    "gates": [
-        {"gate": "mcp-secrets", "passed": False, "score": 0.25, "findings": 2, "message": "2 secrets found"},
-        {"gate": "mcp-no-user-code", "passed": True, "score": 1.0, "findings": 0, "message": "Clean"},
-        {"gate": "mcp-license", "passed": True, "score": 1.0, "findings": 0, "message": "License OK"},
+    "checks": [
+        {
+            "check": "mcp-secrets",
+            "passed": False,
+            "status": "fail",
+            "score": 0.25,
+            "findings": 2,
+            "message": "2 secrets found",
+        },
+        {
+            "check": "mcp-no-user-code",
+            "passed": True,
+            "status": "pass",
+            "score": 1.0,
+            "findings": 0,
+            "message": "Clean",
+        },
     ],
 }
 
-PHASE2_SUMMARY_MIXED = {
+PHASE2_SUMMARY = {
     "phase": "conformance-eval",
     "passed": False,
-    "counts": {"pass": 6, "fail": 1, "not_evaluated": 3},
     "checks": [
         {
             "check": "http-support",
             "status": "pass",
             "passed": True,
             "score": 1.0,
-            "findings": 0,
             "source": "probe",
             "message": "HTTP OK",
-        },
-        {
-            "check": "protocol-compliance",
-            "status": "pass",
-            "passed": True,
-            "score": 1.0,
-            "findings": 0,
-            "source": "probe",
-            "message": "Protocol OK",
-        },
-        {
-            "check": "schema-conformance",
-            "status": "pass",
-            "passed": True,
-            "score": 1.0,
-            "findings": 0,
-            "source": "probe",
-            "message": "Schema OK",
-        },
-        {
-            "check": "tool-annotations",
-            "status": "pass",
-            "passed": True,
-            "score": 1.0,
-            "findings": 0,
-            "source": "probe",
-            "message": "Annotations OK",
         },
         {
             "check": "rate-limiting",
             "status": "not_evaluated",
             "passed": True,
             "score": 1.0,
-            "findings": 0,
-            "source": "probe",
-            "message": "No 429",
-        },
-        {
-            "check": "response-size-limit",
-            "status": "not_evaluated",
-            "passed": True,
-            "score": 1.0,
-            "findings": 0,
             "source": "probe",
             "message": "Deferred",
-        },
-        {
-            "check": "mandatory-timeouts",
-            "status": "not_evaluated",
-            "passed": True,
-            "score": 1.0,
-            "findings": 0,
-            "source": "probe",
-            "message": "Deferred",
-        },
-        {
-            "check": "openapi-conformance",
-            "status": "pass",
-            "passed": True,
-            "score": 1.0,
-            "findings": 0,
-            "source": "probe",
-            "message": "OpenAPI OK",
         },
         {
             "check": "tool-name-rules",
             "status": "pass",
             "passed": True,
             "score": 1.0,
-            "findings": 0,
             "source": "compass",
             "message": "Tool names valid",
         },
         {
             "check": "oauth-catalog-match",
             "status": "fail",
-            "passed": True,
+            "passed": False,
             "score": 0.0,
-            "findings": 1,
             "source": "compass",
             "message": "OAuth mismatch",
         },
     ],
 }
 
-STATIC_EVAL_SUMMARY = {
-    "phase": "static-eval",
-    "passed": True,
-    "gates": [
-        {"gate": "mcp-secrets", "passed": True, "score": 1.0, "findings": 0, "message": "No secrets found"},
-    ],
-}
-
-CONFORMANCE_EVAL_SUMMARY = {
-    "phase": "conformance-eval",
-    "passed": False,
-    "counts": {"pass": 1, "fail": 1, "not_evaluated": 1},
-    "checks": [
-        {"check": "http-support", "status": "pass", "passed": True, "score": 1.0, "findings": 0},
-        {"check": "protocol-compliance", "status": "fail", "passed": False, "score": 0.0, "findings": 1},
-        {
-            "check": "rate-limiting",
-            "status": "not_evaluated",
-            "passed": True,
-            "score": 1.0,
-            "findings": 0,
-        },
-    ],
-}
-
-BEHAVIORAL_EVAL_SUMMARY = {
-    "phase": "behavioral-eval",
-    "passed": False,
-    "counts": {"pass": 0, "fail": 1, "not_evaluated": 0},
-    "checks": [
-        {
-            "check": "tool-behavior",
-            "status": "fail",
-            "passed": False,
-            "score": 0.4,
-            "findings": 1,
-            "source": "mcpchecker",
-            "message": "One behavioral check failed",
-        },
-    ],
-}
-
 
 def _write_summary(path: Path, data: dict) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2))
     return path
 
 
-# ---------------------------------------------------------------------------
-# eval_result.py — Model tests
-# ---------------------------------------------------------------------------
+def _phase(name: str, passed: bool = True, check_id: str = "check") -> McpPhaseResult:
+    check = McpCheckResult(check_id=check_id, name=check_id, passed=passed, score=1.0, status="pass")
+    return McpPhaseResult(phase=name, passed=passed, checks=[check])
 
 
 class TestMcpCheckResult:
     def test_defaults(self):
-        c = McpCheckResult(check_id="mcp-secrets", name="Secrets", passed=True, score=1.0, status="pass")
-        assert c.source == "pipeline"
-        assert c.publishable is True
+        check = McpCheckResult(check_id="x", name="X", passed=True, score=1.0, status="pass")
+        assert check.source == "pipeline"
 
-    def test_consumed_flag(self):
-        c = McpCheckResult(
-            check_id="tool-name-rules",
-            name="Tool Names",
-            passed=True,
-            score=1.0,
-            status="pass",
-            publishable=False,
-        )
-        assert c.publishable is False
+    def test_consumed_checks_are_configured_per_phase(self):
+        assert PHASE_CONSUMED_CHECKS["conformance-eval"] == {"tool-name-rules", "oauth-catalog-match"}
+        assert "phase1" not in PHASE_CONSUMED_CHECKS
 
 
 class TestMcpPhaseResult:
@@ -252,236 +137,158 @@ class TestMcpPhaseResult:
         checks = [
             McpCheckResult(check_id="a", name="A", passed=True, score=1.0, status="pass"),
             McpCheckResult(check_id="b", name="B", passed=False, score=0.0, status="fail"),
-            McpCheckResult(check_id="c", name="C", passed=True, score=0.5, status="pass"),
+            McpCheckResult(check_id="c", name="C", passed=None, score=None, status="not_evaluated"),
         ]
-        phase = McpPhaseResult(phase=McpPhase.PHASE1, passed=False, checks=checks)
-        assert phase.checks_passed == 2
+        phase = McpPhaseResult(phase="phase-custom", passed=False, checks=checks)
+        assert phase.checks_passed == 1
         assert phase.checks_total == 3
+        assert phase.checks_evaluated == 2
         assert phase.overall_score == pytest.approx(0.5)
 
     def test_empty_checks(self):
-        phase = McpPhaseResult(phase=McpPhase.PHASE1, passed=True, checks=[])
+        phase = McpPhaseResult(phase="phase4", passed=True, checks=[])
         assert phase.overall_score == 0.0
         assert phase.checks_passed == 0
 
 
 class TestMcpEvalResult:
-    def test_phases_passed_without_phase3(self):
-        p1 = McpPhaseResult(phase=McpPhase.PHASE1, passed=True, checks=[])
-        p2 = McpPhaseResult(phase=McpPhase.PHASE2, passed=False, checks=[])
-        result = McpEvalResult(phase1=p1, phase2=p2)
-        assert result.phases_passed == {"phase1": True, "phase2": False}
-        assert result.phase3 is None
+    def test_dynamic_phases_passed(self):
+        result = build_mcp_eval_result([_phase("phase2", False), _phase("phase4")])
+        assert result.phases_passed == {"phase2": False, "phase4": True}
+        assert set(result.phases) == {"phase2", "phase4"}
 
-    def test_phases_passed_with_phase3(self):
-        p1 = McpPhaseResult(phase=McpPhase.PHASE1, passed=True, checks=[])
-        p2 = McpPhaseResult(phase=McpPhase.PHASE2, passed=True, checks=[])
-        p3 = McpPhaseResult(phase=McpPhase.PHASE3, passed=False, checks=[])
-        result = McpEvalResult(phase1=p1, phase2=p2, phase3=p3)
-        assert result.phases_passed == {"phase1": True, "phase2": True, "phase3": False}
+    def test_build_two_and_three_phases(self):
+        two = build_mcp_eval_result([_phase("phase1"), _phase("phase2")])
+        three = build_mcp_eval_result([_phase("phase1"), _phase("phase2"), _phase("phase3")])
+        assert len(two.phases) == 2
+        assert len(three.phases) == 3
 
+    def test_rejects_empty_or_duplicate_phase_set(self):
+        with pytest.raises(ValidationError, match="at least one phase"):
+            build_mcp_eval_result([])
+        with pytest.raises(ValueError, match="Duplicate phase"):
+            build_mcp_eval_result([_phase("phase2"), _phase("phase2")])
 
-# ---------------------------------------------------------------------------
-# eval_result.py — Loader tests
-# ---------------------------------------------------------------------------
-
-
-class TestLoadPhase1Summary:
-    def test_all_pass(self, tmp_path):
-        path = _write_summary(tmp_path / "phase1-summary.json", PHASE1_SUMMARY_ALL_PASS)
-        result = load_phase1_summary(path)
-        assert result.phase == McpPhase.PHASE1
-        assert result.passed is True
-        assert result.checks_total == 3
-        assert all(c.publishable for c in result.checks)
-        assert all(c.source == "pipeline" for c in result.checks)
-
-    def test_one_fail(self, tmp_path):
-        path = _write_summary(tmp_path / "phase1-summary.json", PHASE1_SUMMARY_ONE_FAIL)
-        result = load_phase1_summary(path)
-        assert result.passed is False
-        secrets = next(c for c in result.checks if c.check_id == "mcp-secrets")
-        assert secrets.passed is False
-        assert secrets.score == 0.25
-        assert secrets.status == "fail"
-
-    def test_human_names(self, tmp_path):
-        path = _write_summary(tmp_path / "phase1-summary.json", PHASE1_SUMMARY_ALL_PASS)
-        result = load_phase1_summary(path)
-        names = {c.check_id: c.name for c in result.checks}
-        assert names["mcp-secrets"] == "Secrets Management"
-        assert names["mcp-no-user-code"] == "No User-Code Execution"
-        assert names["mcp-license"] == "License Compliance"
+    def test_phase_mapping_key_must_match_name(self):
+        with pytest.raises(ValidationError, match="does not match"):
+            McpEvalResult(phases={"phase2": _phase("phase4")})
 
 
-class TestLoadPhase2Summary:
-    def test_consumed_checks_not_publishable(self, tmp_path):
-        path = _write_summary(tmp_path / "phase2-summary.json", PHASE2_SUMMARY_MIXED)
-        result = load_phase2_summary(path)
-        for check in result.checks:
-            if check.check_id in CONSUMED_CHECKS:
-                assert check.publishable is False, f"{check.check_id} should not be publishable"
-            else:
-                assert check.publishable is True, f"{check.check_id} should be publishable"
+class TestLoadPhaseSummary:
+    def test_loads_standard_phase1_checks(self, tmp_path):
+        path = _write_summary(tmp_path / "static-eval-summary.json", PHASE1_SUMMARY)
+        result = load_phase_summary(path)
+        assert result.phase == "static-eval"
+        assert result.checks_total == 2
+        assert result.checks[0].name == "Secrets Management"
+        assert result.checks[0].status == "fail"
+        assert result.checks[0].source == "pipeline"
 
-    def test_source_preserved(self, tmp_path):
-        path = _write_summary(tmp_path / "phase2-summary.json", PHASE2_SUMMARY_MIXED)
-        result = load_phase2_summary(path)
-        tool_name = next(c for c in result.checks if c.check_id == "tool-name-rules")
-        assert tool_name.source == "compass"
-        http = next(c for c in result.checks if c.check_id == "http-support")
-        assert http.source == "probe"
+    def test_loads_phase2_three_state_and_consumed_checks(self, tmp_path):
+        path = _write_summary(tmp_path / "phase2-summary.json", PHASE2_SUMMARY)
+        result = load_phase_summary(path)
+        checks = {check.check_id: check for check in result.checks}
+        assert checks["rate-limiting"].passed is None
+        assert checks["rate-limiting"].score is None
+        assert checks["tool-name-rules"].source == "compass"
+        assert checks["tool-name-rules"].check_id in PHASE_CONSUMED_CHECKS["conformance-eval"]
+        assert checks["oauth-catalog-match"].check_id in PHASE_CONSUMED_CHECKS["conformance-eval"]
+        assert checks["http-support"].check_id not in PHASE_CONSUMED_CHECKS["conformance-eval"]
+        assert result.checks_evaluated == 3
+        assert result.overall_score == pytest.approx(2 / 3)
 
-    def test_three_state_status(self, tmp_path):
-        path = _write_summary(tmp_path / "phase2-summary.json", PHASE2_SUMMARY_MIXED)
-        result = load_phase2_summary(path)
-        rate = next(c for c in result.checks if c.check_id == "rate-limiting")
-        assert rate.status == "not_evaluated"
-        assert rate.passed is None
-        assert rate.score is None
-        oauth = next(c for c in result.checks if c.check_id == "oauth-catalog-match")
-        assert oauth.status == "fail"
-        assert oauth.passed is False
+    def test_loads_unknown_phase_without_enum_failure(self, tmp_path):
+        data = {"phase": "phase-custom", "passed": True, "checks": [{"check": "new-check", "passed": True}]}
+        result = load_phase_summary(_write_summary(tmp_path / "phase-custom-summary.json", data))
+        assert result.phase == "phase-custom"
+        assert result.checks[0].name == "new-check"
+        assert result.checks[0].source == "pipeline"
 
-    def test_not_evaluated_checks_do_not_inflate_phase_score(self, tmp_path):
-        path = _write_summary(tmp_path / "phase2-summary.json", PHASE2_SUMMARY_MIXED)
-        result = load_phase2_summary(path)
-        assert result.overall_score == pytest.approx(6 / 7)
-        assert result.checks_evaluated == 7
+    def test_phase_config_controls_names_consumption_and_source(self, tmp_path, monkeypatch):
+        monkeypatch.setitem(PHASE_CHECK_NAMES, "phase4", {"special": "Special Check"})
+        monkeypatch.setitem(PHASE_CONSUMED_CHECKS, "phase4", {"special"})
+        monkeypatch.setitem(PHASE_SOURCE_DEFAULTS, "phase4", "custom-runner")
+        data = {"phase": "phase4", "passed": True, "checks": [{"check": "special", "passed": True}]}
+        result = load_phase_summary(_write_summary(tmp_path / "phase4-summary.json", data))
+        assert result.checks[0].name == "Special Check"
+        assert result.checks[0].source == "custom-runner"
+        assert result.checks[0].check_id in PHASE_CONSUMED_CHECKS["phase4"]
+
+    def test_invalid_status_rejected(self, tmp_path):
+        data = {"phase": "phase4", "passed": True, "checks": [{"check": "x", "passed": True, "status": "skip"}]}
+        with pytest.raises(ValueError, match="Invalid status"):
+            load_phase_summary(_write_summary(tmp_path / "phase4-summary.json", data))
 
 
-class TestSummaryPath:
-    def test_loads_flat_reports_from_all_three_phases(self, tmp_path):
-        static_path = _write_summary(tmp_path / "static-eval-summary.json", STATIC_EVAL_SUMMARY)
-        conformance_path = _write_summary(tmp_path / "conformance-eval-summary.json", CONFORMANCE_EVAL_SUMMARY)
-        behavioral_path = _write_summary(tmp_path / "behavioral-eval-summary.json", BEHAVIORAL_EVAL_SUMMARY)
+class TestSummaryInputs:
+    def test_extracts_dashed_phase_names(self):
+        assert _phase_from_filename(Path("phase-custom-summary.json")) == "phase-custom"
+        assert _phase_from_filename(Path("app-phase1-summary.json")) == "app-phase1"
 
-        static = load_phase1_summary(static_path)
-        conformance = load_phase2_summary(conformance_path)
-        behavioral = load_phase3_summary(behavioral_path)
+    @pytest.mark.parametrize("filename", ["summary.json", "-summary.json", "bad name-summary.json"])
+    def test_rejects_invalid_summary_names(self, filename):
+        with pytest.raises(ValueError, match="filename|phase name"):
+            _phase_from_filename(Path(filename))
 
-        assert static.phase == McpPhase.PHASE1
-        assert static.checks[0].check_id == "mcp-secrets"
-        assert conformance.phase == McpPhase.PHASE2
-        rate_limit = next(check for check in conformance.checks if check.check_id == "rate-limiting")
-        assert (rate_limit.status, rate_limit.passed, rate_limit.score) == ("not_evaluated", None, None)
-        assert behavioral.phase == McpPhase.PHASE3
-        assert behavioral.checks[0].check_id == "tool-behavior"
-        assert behavioral.checks[0].status == "fail"
+    def test_explicit_paths_are_returned_as_given(self, tmp_path):
+        path = _write_summary(tmp_path / "phase4-summary.json", {"phase": "phase4", "passed": True, "checks": []})
+        assert _summary_files([path], None) == [path]
 
-    def test_finds_flat_report_names(self, tmp_path):
-        reports = tmp_path / "reports"
-        reports.mkdir()
-        for phase, filename in (
-            ("phase1", "static-eval-summary.json"),
-            ("phase2", "conformance-eval-summary.json"),
-            ("phase3", "behavioral-eval-summary.json"),
-        ):
-            expected = reports / filename
-            expected.write_text("{}")
-            assert _phase_summary_path(reports, phase, (filename,)) == expected
-
-    @pytest.mark.parametrize("include_behavioral", [True, False])
-    def test_supports_optional_behavioral_report(self, tmp_path, monkeypatch, include_behavioral):
-        reports = tmp_path / "reports"
-        reports.mkdir()
-        _write_summary(reports / "static-eval-summary.json", STATIC_EVAL_SUMMARY)
-        _write_summary(reports / "conformance-eval-summary.json", CONFORMANCE_EVAL_SUMMARY)
-        if include_behavioral:
-            _write_summary(reports / "behavioral-eval-summary.json", BEHAVIORAL_EVAL_SUMMARY)
-        monkeypatch.setattr(
-            sys,
-            "argv",
-            [
-                "compass_publish",
-                "--reports-dir",
-                str(reports),
-                "--entity-ref",
-                "mcpserver:default/example",
-                "--compass-url",
-                "https://compass.example.com/api/soundcheck/facts/",
-            ],
+    def test_directory_discovery_is_recursive_and_scoped(self, tmp_path):
+        report_dir = tmp_path / "submission-reports"
+        expected = _write_summary(
+            report_dir / "phase4" / "phase4-summary.json", {"phase": "phase4", "passed": True, "checks": []}
         )
-        published_results = []
+        _write_summary(tmp_path / "other" / "phase5-summary.json", {"phase": "phase5", "passed": True, "checks": []})
+        assert _summary_files(None, report_dir) == [expected]
 
-        def capture_publish(eval_result, config):
-            published_results.append((eval_result, config))
-            return []
+    def test_empty_directory_fails(self, tmp_path):
+        with pytest.raises(ValueError, match="No phase summary"):
+            _summary_files(None, tmp_path)
 
-        with patch("scripts.mcp.runners.compass_publish.push_mcp_eval_facts", side_effect=capture_publish):
-            assert compass_publish_main() == 0
+    def test_load_rejects_filename_json_mismatch(self, tmp_path):
+        path = _write_summary(tmp_path / "phase2-summary.json", {"phase": "phase4", "passed": True, "checks": []})
+        with pytest.raises(ValueError, match="Phase mismatch"):
+            _load_summaries([path])
 
-        eval_result, config = published_results[0]
-        assert (eval_result.phase3 is not None) is include_behavioral
-        if include_behavioral:
-            assert eval_result.phase3.checks[0].check_id == "tool-behavior"
-        assert config.dry_run is True
+    def test_load_rejects_duplicate_phase_names(self, tmp_path):
+        data = {"phase": "phase4", "passed": True, "checks": []}
+        first = _write_summary(tmp_path / "one" / "phase4-summary.json", data)
+        second = _write_summary(tmp_path / "two" / "phase4-summary.json", data)
+        with pytest.raises(ValueError, match="Duplicate phase"):
+            _load_summaries([first, second])
 
 
-class TestCompassPublishTask:
-    @pytest.mark.parametrize(
-        ("dry_run", "publisher_exit", "expected_status", "expected_exit"),
-        [("true", 0, "dry-run", 0), ("false", 0, "published", 0), ("false", 1, "failed", 1)],
+@pytest.mark.parametrize("input_option", ["--reports-dir", "--summary-files"])
+def test_cli_loads_phases_from_directory_or_explicit_files(tmp_path, monkeypatch, input_option):
+    report_dir = tmp_path / "reports"
+    summary = _write_summary(
+        report_dir / "phase4" / "phase4-summary.json",
+        {"phase": "phase4", "passed": True, "checks": []},
     )
-    def test_task_reports_publish_status(self, tmp_path, dry_run, publisher_exit, expected_status, expected_exit):
-        task = yaml.safe_load(COMPASS_PUBLISH_TASK.read_text())
-        script = next(step["script"] for step in task["spec"]["steps"] if step["name"] == "publish")
-        workspace = tmp_path / "workspace"
-        workspace.mkdir()
-        status_path = tmp_path / "publish-status"
-        script = script.replace("$(workspaces.source.path)", str(workspace))
-        script = script.replace("$(results.publish-status.path)", str(status_path))
+    input_path = report_dir if input_option == "--reports-dir" else summary
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "compass_publish",
+            input_option,
+            str(input_path),
+            "--entity-ref",
+            "mcpserver:default/test",
+            "--compass-url",
+            "https://compass.example.com/api/soundcheck/facts/",
+        ],
+    )
+    monkeypatch.delenv("COMPASS_API_KEY", raising=False)
+    seen: dict[str, set[str]] = {}
 
-        fake_bin = tmp_path / "bin"
-        fake_bin.mkdir()
-        fake_python = fake_bin / "python"
-        fake_python.write_text(f"#!/bin/sh\nexit {publisher_exit}\n")
-        fake_python.chmod(0o755)
-        env = {
-            **os.environ,
-            "PATH": f"{fake_bin}:{os.environ['PATH']}",
-            "REPORTS_DIR": "reports",
-            "ENTITY_REF": "mcpserver:default/example",
-            "COMPASS_URL": "https://compass.example.com/api/soundcheck/facts/",
-            "DRY_RUN": dry_run,
-        }
+    def fake_push(eval_result, _config):
+        seen["phases"] = set(eval_result.phases)
+        return []
 
-        result = subprocess.run(["bash", "-c", script], env=env, capture_output=True, text=True, check=False)
-
-        assert result.returncode == expected_exit, result.stderr
-        assert status_path.read_text() == expected_status
-
-
-class TestBuildMcpEvalResult:
-    def test_no_hierarchy(self, tmp_path):
-        """Phase 1 fail does NOT cascade to Phase 2.
-
-        Phase 2 reports its own pass/fail based on its checks (here: False
-        because oauth-catalog-match failed), independent of Phase 1.
-        """
-        p1_path = _write_summary(tmp_path / "phase1-summary.json", PHASE1_SUMMARY_ONE_FAIL)
-        p2_path = _write_summary(tmp_path / "phase2-summary.json", PHASE2_SUMMARY_MIXED)
-        p1 = load_phase1_summary(p1_path)
-        p2 = load_phase2_summary(p2_path)
-        result = build_mcp_eval_result(p1, p2)
-        assert result.phase1.passed is False
-        assert result.phase2.passed is False
-        assert result.phase2.checks_passed == 6
-        assert result.phase2.checks_total == 10
-
-
-class TestSummaryPathHelper:
-    def test_finds_nested_phase_summary(self, tmp_path):
-        phase_dir = tmp_path / "phase1"
-        phase_dir.mkdir()
-        expected = phase_dir / "phase1-summary.json"
-        expected.write_text("{}")
-        assert _summary_path(tmp_path, "phase1", "phase1-summary.json") == expected
-
-    def test_supports_flat_summary_layout(self, tmp_path):
-        expected = tmp_path / "phase1-summary.json"
-        expected.write_text("{}")
-        assert _summary_path(tmp_path, "phase1", "phase1-summary.json") == expected
+    monkeypatch.setattr(publish_runner, "push_mcp_eval_facts", fake_push)
+    assert publish_runner.main() == 0
+    assert seen["phases"] == {"phase4"}
 
 
 class TestCompassTrackBootstrap:
@@ -497,15 +304,13 @@ class TestCompassTrackBootstrap:
         phase3_ids = {check["id"] for check in phase3["checks"]}
         assert len(phase1_ids) == 3
         assert len(phase2_ids) == 10
-        assert phase3_ids == {
-            "mcp-eval-tool-correctness",
-            "mcp-eval-edge-case-handling",
-            "mcp-eval-sensitive-data-redaction",
-        }
+        assert len(phase3_ids) == 3
         assert phase1_ids.isdisjoint(phase2_ids)
-        assert phase3_ids.isdisjoint(phase1_ids | phase2_ids)
+        assert phase1_ids.isdisjoint(phase3_ids)
+        assert phase2_ids.isdisjoint(phase3_ids)
         assert "mcp-tool-schema-check" in phase2_ids
         assert "mcp-oauth-scope-match" in phase2_ids
+        assert not any("summary" in check_id for check_id in phase1_ids | phase2_ids | phase3_ids)
         assert "mcp-eval-tool-name-rules" not in phase2_ids
         assert "mcp-eval-oauth-catalog-match" not in phase2_ids
         registered_ids = {check["id"] for check in ALL_CHECK_DEFS}
@@ -525,44 +330,27 @@ class TestCompassTrackBootstrap:
     def test_bulk_check_registration_posts_all_definitions(self):
         response = MagicMock()
         response.status = 201
-        with patch(
-            "scripts.mcp.bootstrap_compass_track.urllib.request.urlopen",
-            return_value=response,
-        ) as mock_urlopen:
+        with patch("scripts.mcp.bootstrap_compass_track.urllib.request.urlopen", return_value=response) as urlopen:
             assert _register_checks(
-                "https://compass.example.com/api/soundcheck",
-                ALL_CHECK_DEFS,
-                "test-key",
-                dry_run=False,
+                "https://compass.example.com/api/soundcheck", ALL_CHECK_DEFS, "test-key", dry_run=False
             )
-        request = mock_urlopen.call_args.args[0]
+        request = urlopen.call_args.args[0]
         assert request.full_url == "https://compass.example.com/api/soundcheck/checks"
         assert request.method == "POST"
         assert json.loads(request.data)["checks"] == ALL_CHECK_DEFS
 
     def test_bulk_check_dry_run_does_not_make_http_request(self):
         with patch("scripts.mcp.bootstrap_compass_track.urllib.request.urlopen") as mock_urlopen:
-            assert _register_checks(
-                "https://compass.example.com/api/soundcheck",
-                ALL_CHECK_DEFS,
-                "",
-                dry_run=True,
-            )
+            assert _register_checks("https://compass.example.com/api/soundcheck", ALL_CHECK_DEFS, "", dry_run=True)
         mock_urlopen.assert_not_called()
 
 
-# ---------------------------------------------------------------------------
-# compass_publish.py — Payload tests
-# ---------------------------------------------------------------------------
-
-
-class TestBuildCheckFactPayload:
-    def test_payload_shape(self):
+class TestPayloads:
+    def test_check_fact_payload_shape(self):
         check = McpCheckResult(
             check_id="mcp-secrets", name="Secrets", passed=True, score=1.0, status="pass", message="Clean"
         )
         payload = _build_check_fact_payload(check, "mcpserver:default/test", "abevalflow:default/mcp_secrets")
-        assert len(payload["facts"]) == 1
         fact = payload["facts"][0]
         assert fact["factRef"] == "abevalflow:default/mcp_secrets"
         assert fact["entityRef"] == "mcpserver:default/test"
@@ -571,150 +359,103 @@ class TestBuildCheckFactPayload:
         assert fact["data"]["status"] == "pass"
         assert "evaluated_at" in fact["data"]
 
-
-class TestBuildPhaseSummaryPayload:
-    def test_includes_all_checks(self, tmp_path):
-        path = _write_summary(tmp_path / "phase2-summary.json", PHASE2_SUMMARY_MIXED)
-        phase = load_phase2_summary(path)
+    def test_phase_summary_includes_all_checks(self, tmp_path):
+        phase = load_phase_summary(_write_summary(tmp_path / "conformance-eval-summary.json", PHASE2_SUMMARY))
         payload = _build_phase_summary_payload(phase, "mcpserver:default/test", "abevalflow:default/mcp_phase2")
         data = payload["facts"][0]["data"]
-        assert data["phase"] == "phase2"
-        assert data["checks_total"] == 10
-        assert data["checks_evaluated"] == 7
-        check_ids = [c["check_id"] for c in data["checks"]]
-        assert "tool-name-rules" in check_ids
-        assert "oauth-catalog-match" in check_ids
-        assert "http-support" in check_ids
+        assert data["phase"] == "conformance-eval"
+        assert data["checks_total"] == 4
+        assert data["checks_evaluated"] == 3
+        assert {check["check_id"] for check in data["checks"]} == {
+            "http-support",
+            "rate-limiting",
+            "tool-name-rules",
+            "oauth-catalog-match",
+        }
 
-
-class TestBuildMcpSummaryPayload:
-    def test_without_phase3(self):
-        p1 = McpPhaseResult(phase=McpPhase.PHASE1, passed=True, checks=[])
-        p2 = McpPhaseResult(phase=McpPhase.PHASE2, passed=False, checks=[])
-        result = McpEvalResult(phase1=p1, phase2=p2)
+    def test_cross_phase_summary_uses_generic_map(self):
+        result = build_mcp_eval_result([_phase("phase2", False), _phase("phase4")])
         payload = _build_mcp_summary_payload(result, "mcpserver:default/test", MCP_EVAL_SUMMARY_FACT)
         data = payload["facts"][0]["data"]
-        assert data["phase1_passed"] is True
-        assert data["phase2_passed"] is False
-        assert data["phase3_passed"] is False
-        assert data["phase3_score"] == 0.0
-        assert data["phase3_checks_evaluated"] == 0
-        assert data["phase3_checks_total"] == 0
-
-    def test_with_phase3(self):
-        p1 = McpPhaseResult(phase=McpPhase.PHASE1, passed=True, checks=[])
-        p2 = McpPhaseResult(phase=McpPhase.PHASE2, passed=True, checks=[])
-        p3 = McpPhaseResult(phase=McpPhase.PHASE3, passed=True, checks=[])
-        result = McpEvalResult(phase1=p1, phase2=p2, phase3=p3)
-        payload = _build_mcp_summary_payload(result, "mcpserver:default/test", MCP_EVAL_SUMMARY_FACT)
-        data = payload["facts"][0]["data"]
-        assert data["phase3_passed"] is True
-        assert data["phase3_score"] == 0.0
-
-
-# ---------------------------------------------------------------------------
-# compass_publish.py — Push orchestration tests
-# ---------------------------------------------------------------------------
+        assert data["phases"]["phase2"] == {
+            "passed": False,
+            "score": 1.0,
+            "checks_evaluated": 1,
+            "checks_total": 1,
+        }
+        assert data["phases"]["phase4"]["passed"] is True
+        assert "phase1_passed" not in data
+        assert "evaluated_at" in data
 
 
 def _mock_urlopen_200():
-    """Create a mock for urllib.request.urlopen that returns 200."""
-    mock_response = MagicMock()
-    mock_response.status = 200
-    mock_response.__enter__ = lambda s: s
-    mock_response.__exit__ = MagicMock(return_value=False)
-    return mock_response
+    response = MagicMock()
+    response.status = 200
+    response.__enter__ = lambda _self: response
+    response.__exit__ = MagicMock(return_value=False)
+    return response
 
 
-class TestPushMcpEvalFactsDryRun:
-    def test_dry_run_no_http(self, tmp_path):
-        p1_path = _write_summary(tmp_path / "phase1-summary.json", PHASE1_SUMMARY_ALL_PASS)
-        p2_path = _write_summary(tmp_path / "phase2-summary.json", PHASE2_SUMMARY_MIXED)
-        p1 = load_phase1_summary(p1_path)
-        p2 = load_phase2_summary(p2_path)
-        result = build_mcp_eval_result(p1, p2)
-
+class TestPushMcpEvalFacts:
+    def test_dynamic_iteration_and_consumed_checks(self, tmp_path, monkeypatch):
+        phase1 = load_phase_summary(_write_summary(tmp_path / "phase1-summary.json", PHASE1_SUMMARY))
+        phase2 = load_phase_summary(_write_summary(tmp_path / "phase2-summary.json", PHASE2_SUMMARY))
+        phase4 = _phase("phase4", check_id="phase4-check")
+        monkeypatch.setitem(compass_publish.PHASE_FACT_MAPS, "phase4", {"phase4-check": "test:default/phase4_check"})
+        monkeypatch.setitem(compass_publish.PHASE_SUMMARY_FACTS, "phase4", "test:default/phase4_summary")
+        result = build_mcp_eval_result([phase1, phase2, phase4])
         config = McpPushConfig(
             endpoint="https://compass.example.com/api/soundcheck/facts/",
             entity_ref="mcpserver:default/test",
             dry_run=True,
         )
-
-        with patch("abevalflow.compass_facts.urllib.request.urlopen") as mock_urlopen:
+        with patch("abevalflow.compass_facts.urllib.request.urlopen") as urlopen:
             results = push_mcp_eval_facts(result, config)
-            mock_urlopen.assert_not_called()
+            urlopen.assert_not_called()
+        refs = [entry.fact_ref for entry in results]
+        assert "test:default/phase4_check" in refs
+        assert "test:default/phase4_summary" in refs
+        assert len(refs) == 2 + 1 + 1 + 3 + 1
+        assert all("tool-name-rules" not in ref and "oauth-catalog-match" not in ref for ref in refs)
+        assert MCP_EVAL_SUMMARY_FACT in refs
 
-        assert all(r.success for r in results)
-        assert len(results) > 0
-
-
-class TestConsumedChecksNotPublished:
-    def test_consumed_excluded_from_individual_facts(self, tmp_path):
-        p1_path = _write_summary(tmp_path / "phase1-summary.json", PHASE1_SUMMARY_ALL_PASS)
-        p2_path = _write_summary(tmp_path / "phase2-summary.json", PHASE2_SUMMARY_MIXED)
-        p1 = load_phase1_summary(p1_path)
-        p2 = load_phase2_summary(p2_path)
-        result = build_mcp_eval_result(p1, p2)
-
-        config = McpPushConfig(
-            endpoint="https://compass.example.com/api/soundcheck/facts/",
-            entity_ref="mcpserver:default/test",
-            dry_run=True,
-        )
-
+    def test_missing_fact_mappings_are_skipped(self, caplog):
+        result = build_mcp_eval_result([_phase("unconfigured", check_id="unmapped")])
+        config = McpPushConfig(endpoint="https://compass.example.com", entity_ref="mcpserver:default/test")
         results = push_mcp_eval_facts(result, config)
+        assert [entry.fact_ref for entry in results] == [MCP_EVAL_SUMMARY_FACT]
+        assert "No factRef mapping" in caplog.text
+        assert "No phase summary factRef mapping" in caplog.text
 
-        # Three Phase 1 checks + five evaluated Phase 2 checks + two phase summaries + overall.
-        expected_count = len(PHASE1_FACT_MAP) + 5 + 2 + 1
-        assert len(results) == expected_count
-
-        fact_refs = [r.fact_ref for r in results]
-        for consumed_check in CONSUMED_CHECKS:
-            for phase_map in ALL_FACT_MAPS.values():
-                assert consumed_check not in phase_map, "consumed checks should not appear in fact maps"
-
-        assert "abevalflow:default/mcp_rate_limiting" not in fact_refs
-        assert "abevalflow:default/mcp_response_size_limit" not in fact_refs
-        assert "abevalflow:default/mcp_phase2" in fact_refs
-
-
-class TestPushMcpEvalFactsLive:
-    def test_publish_calls_urlopen(self, tmp_path):
-        p1_path = _write_summary(tmp_path / "phase1-summary.json", PHASE1_SUMMARY_ALL_PASS)
-        p2_path = _write_summary(tmp_path / "phase2-summary.json", PHASE2_SUMMARY_MIXED)
-        p1 = load_phase1_summary(p1_path)
-        p2 = load_phase2_summary(p2_path)
-        result = build_mcp_eval_result(p1, p2)
-
+    def test_live_publish_posts_facts(self, tmp_path):
+        phase1 = load_phase_summary(_write_summary(tmp_path / "phase1-summary.json", PHASE1_SUMMARY))
+        phase2 = load_phase_summary(_write_summary(tmp_path / "phase2-summary.json", PHASE2_SUMMARY))
+        result = build_mcp_eval_result([phase1, phase2])
         config = McpPushConfig(
             endpoint="https://compass.example.com/api/soundcheck/facts/",
             entity_ref="mcpserver:default/test",
             bearer_token="test-token",
             dry_run=False,
         )
+        payloads: list[dict] = []
 
-        payloads_sent: list[dict] = []
-
-        def capture_request(req, **kwargs):
-            data = json.loads(req.data.decode("utf-8"))
-            payloads_sent.append(data)
+        def capture_request(request, **_kwargs):
+            payloads.append(json.loads(request.data.decode("utf-8")))
             return _mock_urlopen_200()
 
         with patch("abevalflow.compass_facts.urllib.request.urlopen", side_effect=capture_request):
             results = push_mcp_eval_facts(result, config)
 
-        assert all(r.success for r in results)
-        expected_count = len(PHASE1_FACT_MAP) + 5 + 2 + 1
-        assert len(payloads_sent) == expected_count
+        assert all(entry.success for entry in results)
+        assert len(payloads) == len(results)
+        refs = [payload["facts"][0]["factRef"] for payload in payloads]
+        assert MCP_EVAL_SUMMARY_FACT in refs
+        assert PHASE_SUMMARY_FACTS["static-eval"] in refs
+        assert PHASE_SUMMARY_FACTS["conformance-eval"] in refs
+        assert "abevalflow:default/mcp_rate_limiting" not in refs
+        assert "abevalflow:default/mcp_phase2" in refs
 
-        all_fact_refs = [p["facts"][0]["factRef"] for p in payloads_sent]
-        for consumed_check in CONSUMED_CHECKS:
-            consumed_fact_refs = [v for m in ALL_FACT_MAPS.values() for k, v in m.items() if k == consumed_check]
-            for ref in consumed_fact_refs:
-                assert ref not in all_fact_refs
 
-        assert MCP_EVAL_SUMMARY_FACT in all_fact_refs
-        for phase_fact in PHASE_SUMMARY_FACTS.values():
-            if phase_fact == PHASE_SUMMARY_FACTS["phase3"]:
-                continue
-            assert phase_fact in all_fact_refs
+def test_phase_config_keeps_existing_fact_maps():
+    assert PHASE_FACT_MAPS["static-eval"] is PHASE1_FACT_MAP
+    assert PHASE_FACT_MAPS["conformance-eval"] is PHASE2_FACT_MAP

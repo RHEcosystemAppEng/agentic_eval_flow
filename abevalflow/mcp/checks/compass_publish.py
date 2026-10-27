@@ -9,7 +9,7 @@ existing Compass facts and are NOT re-published as individual facts.  They
 still appear in the phase summary payload so the track view shows the full
 picture.
 
-The consume side lives in :mod:`abevalflow.mcp.checks.phase2_compass_checks`.
+The consume side lives in :mod:`abevalflow.mcp.checks.conformance_eval_compass_checks`.
 
 Reuses the HTTP POST infrastructure from :mod:`abevalflow.compass_facts`.
 """
@@ -29,9 +29,9 @@ from abevalflow.compass_facts import (
     _resolve_env_vars,
 )
 from abevalflow.mcp.eval_result import (
+    PHASE_CONSUMED_CHECKS,
     McpCheckResult,
     McpEvalResult,
-    McpPhase,
     McpPhaseResult,
 )
 
@@ -64,16 +64,16 @@ PHASE3_FACT_MAP: dict[str, str] = {
     "sensitive-data-redaction": "abevalflow:default/mcp_sensitive_data_redaction",
 }
 
-ALL_FACT_MAPS: dict[McpPhase, dict[str, str]] = {
-    McpPhase.PHASE1: PHASE1_FACT_MAP,
-    McpPhase.PHASE2: PHASE2_FACT_MAP,
-    McpPhase.PHASE3: PHASE3_FACT_MAP,
+PHASE_FACT_MAPS: dict[str, dict[str, str]] = {
+    "static-eval": PHASE1_FACT_MAP,
+    "conformance-eval": PHASE2_FACT_MAP,
+    "behavioral-eval": PHASE3_FACT_MAP,
 }
 
 PHASE_SUMMARY_FACTS: dict[str, str] = {
-    "phase1": "abevalflow:default/mcp_phase1",
-    "phase2": "abevalflow:default/mcp_phase2",
-    "phase3": "abevalflow:default/mcp_phase3",
+    "static-eval": "abevalflow:default/mcp_phase1",
+    "conformance-eval": "abevalflow:default/mcp_phase2",
+    "behavioral-eval": "abevalflow:default/mcp_phase3",
 }
 
 MCP_EVAL_SUMMARY_FACT = "abevalflow:default/mcp_eval"
@@ -130,7 +130,7 @@ def _build_phase_summary_payload(
                 "factRef": fact_ref,
                 "entityRef": entity_ref,
                 "data": {
-                    "phase": phase_result.phase.value,
+                    "phase": phase_result.phase,
                     "passed": phase_result.passed,
                     "checks_passed": phase_result.checks_passed,
                     "checks_evaluated": phase_result.checks_evaluated,
@@ -151,28 +151,17 @@ def _build_mcp_summary_payload(
     evaluated_at: datetime | None = None,
 ) -> dict[str, Any]:
     data: dict[str, Any] = {
-        "phase1_passed": eval_result.phase1.passed,
-        "phase1_score": eval_result.phase1.overall_score,
-        "phase2_passed": eval_result.phase2.passed,
-        "phase2_score": eval_result.phase2.overall_score,
-        "phase1_checks_evaluated": eval_result.phase1.checks_evaluated,
-        "phase1_checks_total": eval_result.phase1.checks_total,
-        "phase2_checks_evaluated": eval_result.phase2.checks_evaluated,
-        "phase2_checks_total": eval_result.phase2.checks_total,
+        "phases": {
+            phase_name: {
+                "passed": phase.passed,
+                "score": phase.overall_score,
+                "checks_evaluated": phase.checks_evaluated,
+                "checks_total": phase.checks_total,
+            }
+            for phase_name, phase in eval_result.phases.items()
+        },
         "evaluated_at": (evaluated_at or datetime.now(UTC)).isoformat(),
     }
-    if eval_result.phase3 is not None:
-        data["phase3_passed"] = eval_result.phase3.passed
-        data["phase3_score"] = eval_result.phase3.overall_score
-        data["phase3_checks_evaluated"] = eval_result.phase3.checks_evaluated
-        data["phase3_checks_total"] = eval_result.phase3.checks_total
-    else:
-        data["phase3_passed"] = False
-        data["phase3_score"] = 0.0
-        data["phase3_checks_evaluated"] = 0
-        data["phase3_checks_total"] = 0
-        data["phase3_checks_evaluated"] = 0
-        data["phase3_checks_total"] = 0
     return {
         "facts": [
             {
@@ -215,17 +204,14 @@ def push_mcp_eval_facts(
     evaluated_at = datetime.now(UTC)
     results: list[CertificationFactPushResult] = []
 
-    phases: list[McpPhaseResult] = [eval_result.phase1, eval_result.phase2]
-    if eval_result.phase3 is not None:
-        phases.append(eval_result.phase3)
-
-    for phase_result in phases:
-        fact_map = ALL_FACT_MAPS.get(phase_result.phase, {})
+    for phase_name, phase_result in eval_result.phases.items():
+        fact_map = PHASE_FACT_MAPS.get(phase_name, {})
+        consumed_checks = PHASE_CONSUMED_CHECKS.get(phase_name, set())
         for check in phase_result.checks:
             if check.status == "not_evaluated":
                 logger.info("Skipping not-evaluated check %s (no individual fact published)", check.check_id)
                 continue
-            if not check.publishable:
+            if check.check_id in consumed_checks:
                 logger.debug("Skipping consumed check %s (not re-published)", check.check_id)
                 continue
             fact_ref = fact_map.get(check.check_id)
@@ -237,9 +223,11 @@ def push_mcp_eval_facts(
                 _push_or_dry_run(payload, config.endpoint, fact_ref, check.check_id, resolved_token, config.dry_run)
             )
 
-    for phase_result in phases:
-        phase_key = phase_result.phase.value
-        fact_ref = PHASE_SUMMARY_FACTS[phase_key]
+    for phase_key, phase_result in eval_result.phases.items():
+        fact_ref = PHASE_SUMMARY_FACTS.get(phase_key)
+        if fact_ref is None:
+            logger.warning("No phase summary factRef mapping for phase %s; skipping", phase_key)
+            continue
         payload = _build_phase_summary_payload(phase_result, config.entity_ref, fact_ref, evaluated_at)
         results.append(_push_or_dry_run(payload, config.endpoint, fact_ref, phase_key, resolved_token, config.dry_run))
 

@@ -30,8 +30,7 @@ import urllib.request
 from typing import Any
 
 from abevalflow.mcp.checks.compass_publish import (
-    PHASE1_FACT_MAP,
-    PHASE2_FACT_MAP,
+    PHASE_FACT_MAPS,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -80,100 +79,92 @@ def _check_def(
     }
 
 
-PHASE1_CHECKS = [
-    _check_def(
-        "mcp-eval-secrets",
-        "Secrets Management (Pipeline-Verified)",
-        "Static scan of the MCP artifact for hardcoded credentials via gitleaks.",
-        PHASE1_FACT_MAP["mcp-secrets"],
-    ),
-    _check_def(
-        "mcp-eval-no-user-code",
-        "No User-Code Execution (Pipeline-Verified)",
-        "Static analysis for dynamic/arbitrary code execution patterns via semgrep.",
-        PHASE1_FACT_MAP["mcp-no-user-code"],
-    ),
-    _check_def(
-        "mcp-eval-license",
-        "License Compliance (Pipeline-Verified)",
-        "Top-level declared license validated against the approved license list.",
-        PHASE1_FACT_MAP["mcp-license"],
-    ),
-]
+PHASE_CHECK_METADATA: dict[str, dict[str, tuple[str, str]]] = {
+    "static-eval": {
+        "mcp-secrets": (
+            "Secrets Management (Pipeline-Verified)",
+            "Static scan of the MCP artifact for hardcoded credentials via gitleaks.",
+        ),
+        "mcp-no-user-code": (
+            "No User-Code Execution (Pipeline-Verified)",
+            "Static analysis for dynamic/arbitrary code execution patterns via semgrep.",
+        ),
+        "mcp-license": (
+            "License Compliance (Pipeline-Verified)",
+            "Top-level declared license validated against the approved license list.",
+        ),
+    },
+    "conformance-eval": {
+        "http-support": (
+            "HTTP Support",
+            "Server responds correctly over HTTP with parseable JSON-RPC.",
+        ),
+        "protocol-compliance": (
+            "Protocol Compliance",
+            "MCP initialize, capability negotiation, and JSON-RPC 2.0 correctness.",
+        ),
+        "schema-conformance": (
+            "Schema Conformance",
+            "Tool input/output schemas are well-formed JSON Schema objects.",
+        ),
+        "tool-annotations": (
+            "Tool Annotations",
+            "Present readOnlyHint/destructiveHint annotations are boolean-typed.",
+        ),
+        "rate-limiting": (
+            "Rate Limiting (Pipeline-Verified)",
+            "Server returns HTTP 429 under burst load (20-request burst).",
+        ),
+        "response-size-limit": (
+            "Response Size Limit",
+            "Server enforces response size cap. Deferred to Phase 3.",
+        ),
+        "mandatory-timeouts": (
+            "Mandatory Timeouts",
+            "Server enforces bounded response time. Deferred to Phase 3.",
+        ),
+        "openapi-conformance": (
+            "OpenAPI Conformance",
+            "Server publishes and conforms to an OpenAPI 3.x contract (or MCP-native equivalent).",
+        ),
+    },
+    "behavioral-eval": {
+        "tool-correctness": (
+            "Tool Correctness",
+            "Behavioral correctness of MCP server tools via mcpchecker.",
+        ),
+        "edge-case-handling": (
+            "Edge Case Handling",
+            "Edge case handling and error resilience via mcpchecker.",
+        ),
+        "sensitive-data-redaction": (
+            "Sensitive Data Redaction",
+            "Sensitive data handling and redaction via mcpchecker.",
+        ),
+    },
+}
 
-PHASE2_CHECKS = [
-    _check_def(
-        "mcp-eval-http-support",
-        "HTTP Support",
-        "Server responds correctly over HTTP with parseable JSON-RPC.",
-        PHASE2_FACT_MAP["http-support"],
-    ),
-    _check_def(
-        "mcp-eval-protocol-compliance",
-        "Protocol Compliance",
-        "MCP initialize, capability negotiation, and JSON-RPC 2.0 correctness.",
-        PHASE2_FACT_MAP["protocol-compliance"],
-    ),
-    _check_def(
-        "mcp-eval-schema-conformance",
-        "Schema Conformance",
-        "Tool input/output schemas are well-formed JSON Schema objects.",
-        PHASE2_FACT_MAP["schema-conformance"],
-    ),
-    _check_def(
-        "mcp-eval-tool-annotations",
-        "Tool Annotations",
-        "Present readOnlyHint/destructiveHint annotations are boolean-typed.",
-        PHASE2_FACT_MAP["tool-annotations"],
-    ),
-    _check_def(
-        "mcp-eval-rate-limiting",
-        "Rate Limiting (Pipeline-Verified)",
-        "Server returns HTTP 429 under burst load (20-request burst).",
-        PHASE2_FACT_MAP["rate-limiting"],
-    ),
-    _check_def(
-        "mcp-eval-response-size-limit",
-        "Response Size Limit",
-        "Server enforces response size cap. Deferred to Phase 3.",
-        PHASE2_FACT_MAP["response-size-limit"],
-    ),
-    _check_def(
-        "mcp-eval-mandatory-timeouts",
-        "Mandatory Timeouts",
-        "Server enforces bounded response time. Deferred to Phase 3.",
-        PHASE2_FACT_MAP["mandatory-timeouts"],
-    ),
-    _check_def(
-        "mcp-eval-openapi-conformance",
-        "OpenAPI Conformance",
-        "Server publishes and conforms to an OpenAPI 3.x contract (or MCP-native equivalent).",
-        PHASE2_FACT_MAP["openapi-conformance"],
-    ),
-]
 
-PHASE3_CHECKS = [
-    _check_def(
-        "mcp-eval-tool-correctness",
-        "Tool Correctness",
-        "Behavioral correctness of MCP server tools via mcpchecker.",
-        "abevalflow:default/mcp_tool_correctness",
-    ),
-    _check_def(
-        "mcp-eval-edge-case-handling",
-        "Edge Case Handling",
-        "Edge case handling and error resilience via mcpchecker.",
-        "abevalflow:default/mcp_edge_case_handling",
-    ),
-    _check_def(
-        "mcp-eval-sensitive-data-redaction",
-        "Sensitive Data Redaction",
-        "Sensitive data handling and redaction via mcpchecker.",
-        "abevalflow:default/mcp_sensitive_data_redaction",
-    ),
-]
+def _build_checks_for_phase(phase_name: str) -> list[dict[str, Any]]:
+    """Build check definitions for a phase from metadata and fact maps."""
+    fact_map = PHASE_FACT_MAPS.get(phase_name, {})
+    metadata = PHASE_CHECK_METADATA.get(phase_name, {})
+    checks = []
+    for check_id, (check_name, description) in metadata.items():
+        fact_ref = fact_map.get(check_id)
+        if fact_ref is None:
+            logger.warning("No fact mapping for %s in phase %s; skipping check", check_id, phase_name)
+            continue
+        check_key = f"mcp-eval-{check_id.replace('_', '-')}" if "_" in check_id else f"mcp-eval-{check_id}"
+        checks.append(_check_def(check_key, check_name, description, fact_ref))
+    return checks
 
-ALL_CHECK_DEFS = PHASE1_CHECKS + PHASE2_CHECKS + PHASE3_CHECKS
+
+PHASE_CHECKS: dict[str, list[dict[str, Any]]] = {
+    phase_name: _build_checks_for_phase(phase_name) for phase_name in sorted(PHASE_FACT_MAPS.keys())
+}
+
+ALL_CHECK_DEFS = [check for checks in PHASE_CHECKS.values() for check in checks]
 
 # These two check definitions already belong to the existing MCP Scorecard.
 # The new track references them but must not overwrite or duplicate them.
@@ -191,6 +182,56 @@ CONSUMED_TRACK_CHECKS = [
 ]
 
 OWNED_TRACK_CHECKS = [{key: check[key] for key in ("id", "name", "description")} for check in ALL_CHECK_DEFS]
+
+PHASE_LEVEL_METADATA: dict[str, tuple[str, str]] = {
+    "static-eval": (
+        "Phase 1 — Static Analysis",
+        "Pipeline-verified static checks for MCP artifacts.",
+    ),
+    "conformance-eval": (
+        "Phase 2 — Conformance Testing",
+        "MCP protocol and server conformance checks, including existing Compass-owned checks.",
+    ),
+    "behavioral-eval": (
+        "Phase 3 — Behavioral Evaluation",
+        "Behavioral MCP checks aggregated from mcpchecker results.",
+    ),
+}
+
+
+def _build_levels() -> list[dict[str, Any]]:
+    """Build track levels dynamically from phases."""
+    levels = []
+    ordinal = 1
+    check_offset = 0
+    phase_order = ["static-eval", "conformance-eval", "behavioral-eval"]
+
+    for phase_name in phase_order:
+        phase_checks = PHASE_CHECKS[phase_name]
+        phase_check_count = len(phase_checks)
+        level_checks = OWNED_TRACK_CHECKS[check_offset : check_offset + phase_check_count]
+
+        if phase_name == "conformance-eval":
+            level_checks = level_checks + CONSUMED_TRACK_CHECKS
+
+        level_name, level_description = PHASE_LEVEL_METADATA.get(
+            phase_name, (f"Phase {ordinal}", f"Phase {ordinal} evaluation checks.")
+        )
+
+        levels.append(
+            {
+                "ordinal": ordinal,
+                "name": level_name,
+                "description": level_description,
+                "checks": level_checks,
+            }
+        )
+        ordinal += 1
+        check_offset += phase_check_count
+
+    return levels
+
+
 TRACK_DEFINITION = {
     "id": TRACK_ID,
     "type": "standard",
@@ -201,28 +242,7 @@ TRACK_DEFINITION = {
     ),
     "ownerEntityRef": OWNER,
     "filter": FILTER,
-    "levels": [
-        {
-            "ordinal": 1,
-            "name": "Phase 1 — Static Analysis",
-            "description": "Pipeline-verified static checks for MCP artifacts.",
-            "checks": OWNED_TRACK_CHECKS[: len(PHASE1_CHECKS)],
-        },
-        {
-            "ordinal": 2,
-            "name": "Phase 2 — Conformance Testing",
-            "description": "MCP protocol and server conformance checks, including existing Compass-owned checks.",
-            "checks": (
-                OWNED_TRACK_CHECKS[len(PHASE1_CHECKS) : len(PHASE1_CHECKS) + len(PHASE2_CHECKS)] + CONSUMED_TRACK_CHECKS
-            ),
-        },
-        {
-            "ordinal": 3,
-            "name": "Phase 3 — Behavioral Evaluation",
-            "description": "Behavioral MCP checks aggregated from mcpchecker results.",
-            "checks": OWNED_TRACK_CHECKS[len(PHASE1_CHECKS) + len(PHASE2_CHECKS) :],
-        },
-    ],
+    "levels": _build_levels(),
 }
 
 
