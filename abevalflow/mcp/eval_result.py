@@ -21,12 +21,12 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 PHASE_CHECK_NAMES: dict[str, dict[str, str]] = {
-    "phase1": {
+    "static-eval": {
         "mcp-secrets": "Secrets Management",
         "mcp-no-user-code": "No User-Code Execution",
         "mcp-license": "License Compliance",
     },
-    "phase2": {
+    "conformance-eval": {
         "http-support": "HTTP Support",
         "protocol-compliance": "Protocol Compliance",
         "schema-conformance": "Schema Conformance",
@@ -38,7 +38,7 @@ PHASE_CHECK_NAMES: dict[str, dict[str, str]] = {
         "tool-name-rules": "Tool-Name Rules",
         "oauth-catalog-match": "OAuth Matches Catalog",
     },
-    "phase3": {
+    "behavioral-eval": {
         "tool-correctness": "Tool Correctness",
         "edge-case-handling": "Edge Case Handling",
         "sensitive-data-redaction": "Sensitive Data Redaction",
@@ -46,17 +46,17 @@ PHASE_CHECK_NAMES: dict[str, dict[str, str]] = {
 }
 
 PHASE_CONSUMED_CHECKS: dict[str, set[str]] = {
-    "phase2": {"tool-name-rules", "oauth-catalog-match"},
+    "conformance-eval": {"tool-name-rules", "oauth-catalog-match"},
 }
 
 PHASE_SOURCE_DEFAULTS: dict[str, str] = {
-    "phase1": "pipeline",
-    "phase2": "probe",
-    "phase3": "pipeline",
+    "static-eval": "pipeline",
+    "conformance-eval": "probe",
+    "behavioral-eval": "pipeline",
 }
 
 PHASE_CHECK_SOURCE_DEFAULTS: dict[str, dict[str, str]] = {
-    "phase2": {
+    "conformance-eval": {
         "tool-name-rules": "compass",
         "oauth-catalog-match": "compass",
     },

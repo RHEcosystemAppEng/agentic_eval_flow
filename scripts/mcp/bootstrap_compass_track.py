@@ -80,7 +80,7 @@ def _check_def(
 
 
 PHASE_CHECK_METADATA: dict[str, dict[str, tuple[str, str]]] = {
-    "phase1": {
+    "static-eval": {
         "mcp-secrets": (
             "Secrets Management (Pipeline-Verified)",
             "Static scan of the MCP artifact for hardcoded credentials via gitleaks.",
@@ -94,7 +94,7 @@ PHASE_CHECK_METADATA: dict[str, dict[str, tuple[str, str]]] = {
             "Top-level declared license validated against the approved license list.",
         ),
     },
-    "phase2": {
+    "conformance-eval": {
         "http-support": (
             "HTTP Support",
             "Server responds correctly over HTTP with parseable JSON-RPC.",
@@ -128,7 +128,7 @@ PHASE_CHECK_METADATA: dict[str, dict[str, tuple[str, str]]] = {
             "Server publishes and conforms to an OpenAPI 3.x contract (or MCP-native equivalent).",
         ),
     },
-    "phase3": {
+    "behavioral-eval": {
         "tool-correctness": (
             "Tool Correctness",
             "Behavioral correctness of MCP server tools via mcpchecker.",
@@ -184,15 +184,15 @@ CONSUMED_TRACK_CHECKS = [
 OWNED_TRACK_CHECKS = [{key: check[key] for key in ("id", "name", "description")} for check in ALL_CHECK_DEFS]
 
 PHASE_LEVEL_METADATA: dict[str, tuple[str, str]] = {
-    "phase1": (
+    "static-eval": (
         "Phase 1 — Static Analysis",
         "Pipeline-verified static checks for MCP artifacts.",
     ),
-    "phase2": (
+    "conformance-eval": (
         "Phase 2 — Conformance Testing",
         "MCP protocol and server conformance checks, including existing Compass-owned checks.",
     ),
-    "phase3": (
+    "behavioral-eval": (
         "Phase 3 — Behavioral Evaluation",
         "Behavioral MCP checks aggregated from mcpchecker results.",
     ),
@@ -204,13 +204,14 @@ def _build_levels() -> list[dict[str, Any]]:
     levels = []
     ordinal = 1
     check_offset = 0
+    phase_order = ["static-eval", "conformance-eval", "behavioral-eval"]
 
-    for phase_name in sorted(PHASE_CHECKS.keys()):
+    for phase_name in phase_order:
         phase_checks = PHASE_CHECKS[phase_name]
         phase_check_count = len(phase_checks)
         level_checks = OWNED_TRACK_CHECKS[check_offset : check_offset + phase_check_count]
 
-        if phase_name == "phase2":
+        if phase_name == "conformance-eval":
             level_checks = level_checks + CONSUMED_TRACK_CHECKS
 
         level_name, level_description = PHASE_LEVEL_METADATA.get(

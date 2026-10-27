@@ -49,7 +49,7 @@ from scripts.mcp.runners.compass_publish import (
 )
 
 PHASE1_SUMMARY = {
-    "phase": "phase1",
+    "phase": "static-eval",
     "passed": False,
     "checks": [
         {
@@ -72,7 +72,7 @@ PHASE1_SUMMARY = {
 }
 
 PHASE2_SUMMARY = {
-    "phase": "phase2",
+    "phase": "conformance-eval",
     "passed": False,
     "checks": [
         {
@@ -128,7 +128,7 @@ class TestMcpCheckResult:
         assert check.source == "pipeline"
 
     def test_consumed_checks_are_configured_per_phase(self):
-        assert PHASE_CONSUMED_CHECKS["phase2"] == {"tool-name-rules", "oauth-catalog-match"}
+        assert PHASE_CONSUMED_CHECKS["conformance-eval"] == {"tool-name-rules", "oauth-catalog-match"}
         assert "phase1" not in PHASE_CONSUMED_CHECKS
 
 
@@ -176,9 +176,9 @@ class TestMcpEvalResult:
 
 class TestLoadPhaseSummary:
     def test_loads_standard_phase1_checks(self, tmp_path):
-        path = _write_summary(tmp_path / "phase1-summary.json", PHASE1_SUMMARY)
+        path = _write_summary(tmp_path / "static-eval-summary.json", PHASE1_SUMMARY)
         result = load_phase_summary(path)
-        assert result.phase == "phase1"
+        assert result.phase == "static-eval"
         assert result.checks_total == 2
         assert result.checks[0].name == "Secrets Management"
         assert result.checks[0].status == "fail"
@@ -191,9 +191,9 @@ class TestLoadPhaseSummary:
         assert checks["rate-limiting"].passed is None
         assert checks["rate-limiting"].score is None
         assert checks["tool-name-rules"].source == "compass"
-        assert checks["tool-name-rules"].check_id in PHASE_CONSUMED_CHECKS["phase2"]
-        assert checks["oauth-catalog-match"].check_id in PHASE_CONSUMED_CHECKS["phase2"]
-        assert checks["http-support"].check_id not in PHASE_CONSUMED_CHECKS["phase2"]
+        assert checks["tool-name-rules"].check_id in PHASE_CONSUMED_CHECKS["conformance-eval"]
+        assert checks["oauth-catalog-match"].check_id in PHASE_CONSUMED_CHECKS["conformance-eval"]
+        assert checks["http-support"].check_id not in PHASE_CONSUMED_CHECKS["conformance-eval"]
         assert result.checks_evaluated == 3
         assert result.overall_score == pytest.approx(2 / 3)
 
@@ -360,10 +360,10 @@ class TestPayloads:
         assert "evaluated_at" in fact["data"]
 
     def test_phase_summary_includes_all_checks(self, tmp_path):
-        phase = load_phase_summary(_write_summary(tmp_path / "phase2-summary.json", PHASE2_SUMMARY))
+        phase = load_phase_summary(_write_summary(tmp_path / "conformance-eval-summary.json", PHASE2_SUMMARY))
         payload = _build_phase_summary_payload(phase, "mcpserver:default/test", "abevalflow:default/mcp_phase2")
         data = payload["facts"][0]["data"]
-        assert data["phase"] == "phase2"
+        assert data["phase"] == "conformance-eval"
         assert data["checks_total"] == 4
         assert data["checks_evaluated"] == 3
         assert {check["check_id"] for check in data["checks"]} == {
@@ -450,12 +450,12 @@ class TestPushMcpEvalFacts:
         assert len(payloads) == len(results)
         refs = [payload["facts"][0]["factRef"] for payload in payloads]
         assert MCP_EVAL_SUMMARY_FACT in refs
-        assert PHASE_SUMMARY_FACTS["phase1"] in refs
-        assert PHASE_SUMMARY_FACTS["phase2"] in refs
+        assert PHASE_SUMMARY_FACTS["static-eval"] in refs
+        assert PHASE_SUMMARY_FACTS["conformance-eval"] in refs
         assert "abevalflow:default/mcp_rate_limiting" not in refs
         assert "abevalflow:default/mcp_phase2" in refs
 
 
 def test_phase_config_keeps_existing_fact_maps():
-    assert PHASE_FACT_MAPS["phase1"] is PHASE1_FACT_MAP
-    assert PHASE_FACT_MAPS["phase2"] is PHASE2_FACT_MAP
+    assert PHASE_FACT_MAPS["static-eval"] is PHASE1_FACT_MAP
+    assert PHASE_FACT_MAPS["conformance-eval"] is PHASE2_FACT_MAP

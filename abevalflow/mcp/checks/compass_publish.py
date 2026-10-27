@@ -65,15 +65,15 @@ PHASE3_FACT_MAP: dict[str, str] = {
 }
 
 PHASE_FACT_MAPS: dict[str, dict[str, str]] = {
-    "phase1": PHASE1_FACT_MAP,
-    "phase2": PHASE2_FACT_MAP,
-    "phase3": PHASE3_FACT_MAP,
+    "static-eval": PHASE1_FACT_MAP,
+    "conformance-eval": PHASE2_FACT_MAP,
+    "behavioral-eval": PHASE3_FACT_MAP,
 }
 
 PHASE_SUMMARY_FACTS: dict[str, str] = {
-    "phase1": "abevalflow:default/mcp_phase1",
-    "phase2": "abevalflow:default/mcp_phase2",
-    "phase3": "abevalflow:default/mcp_phase3",
+    "static-eval": "abevalflow:default/mcp_phase1",
+    "conformance-eval": "abevalflow:default/mcp_phase2",
+    "behavioral-eval": "abevalflow:default/mcp_phase3",
 }
 
 MCP_EVAL_SUMMARY_FACT = "abevalflow:default/mcp_eval"

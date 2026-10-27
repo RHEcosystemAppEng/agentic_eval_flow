@@ -22,13 +22,13 @@ import logging
 import sys
 from pathlib import Path
 
-from abevalflow.mcp.gates import run_phase1
+from abevalflow.mcp.gates import run_static_eval
 from abevalflow.schemas import GateMode, GatePolicy
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
-SUMMARY_FILENAME = "phase1-summary.json"
+SUMMARY_FILENAME = "static-eval-summary.json"
 
 
 def main() -> int:
@@ -52,7 +52,7 @@ def main() -> int:
         return 1
 
     policy = GatePolicy(default_mode=GateMode(args.mode))
-    results = run_phase1(args.reports_dir, policy)
+    results = run_static_eval(args.reports_dir, policy)
 
     summary: list[dict] = []
     for result in results:
@@ -79,7 +79,7 @@ def main() -> int:
     overall_passed = all(r.passed for r in results)
     (args.reports_dir / SUMMARY_FILENAME).write_text(
         json.dumps(
-            {"phase": "phase1", "passed": overall_passed, "checks": summary},
+            {"phase": "static-eval", "passed": overall_passed, "checks": summary},
             indent=2,
         )
     )
