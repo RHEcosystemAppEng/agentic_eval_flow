@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""Run the MCP Phase 1 gates over the normalized scan reports.
+"""Run the MCP static evaluation gates over the normalized scan reports.
 
 Reads the three scan JSON files produced by the Phase 1 scanners, evaluates each
 gate, and writes the results back into the reports directory:
 
 - ``<gate>-result.json`` per gate (the full GateResult)
-- ``phase1-summary.json`` (overall pass/fail + per-gate summary)
+- ``static-eval-summary.json`` (overall pass/fail + per-gate summary)
 
 Reporting stub: the three-state Evaluation-results-database writer is added by the
 pipeline layer later; Phase 1 checks are pass/fail only.
 
 Usage:
-    python -m scripts.mcp.runners.phase1_gate --reports-dir <dir> [--mode block|warn]
+    python -m scripts.mcp.runners.static_eval_gate --reports-dir <dir> [--mode block|warn]
 """
 
 from __future__ import annotations
