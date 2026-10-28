@@ -382,6 +382,10 @@ class SubmissionMetadata(BaseModel):
             )
         return v
 
+    plugin_name: str | None = Field(
+        default=None, pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_.-]*$",
+        description="Owning catalog plugin; inferred from <plugin>/skills/<skill> when omitted",
+    )
     description: str | None = Field(default=None, description="Brief description of the submission")
     persona: str | None = Field(
         default=None,

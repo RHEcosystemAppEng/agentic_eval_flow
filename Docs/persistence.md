@@ -9,8 +9,8 @@ failed checks. See the [CLI reference](cli.md#persistence-opt-in) for configurat
 
 | Destination | Configuration | Stored data |
 |---|---|---|
-| PostgreSQL | `ABEVAL_DATABASE_URL` | Evaluations, trials, scans, scorecards, certification, and review metrics. |
-| S3 / MinIO | `ABEVAL_S3_ENDPOINT`, `ABEVAL_S3_BUCKET`, `ABEVAL_S3_ACCESS_KEY`, `ABEVAL_S3_SECRET_KEY` | Report files under `<skill>/<run-id>/reports/` and the manifest at `<skill>/<run-id>/run.json`. |
+| PostgreSQL | `ABEVAL_DATABASE_URL` | Plugin/skill identities, tier/check results, both evaluation arms, case/judge scores, pairwise outcomes, findings, artifact references, and tool metrics. |
+| S3 / MinIO | `ABEVAL_S3_ENDPOINT`, `ABEVAL_S3_BUCKET`, `ABEVAL_S3_ACCESS_KEY`, `ABEVAL_S3_SECRET_KEY` | Report files under `<plugin>/<skill>/<run-id>/reports/` and the manifest at `<plugin>/<skill>/<run-id>/run.json`. |
 | Compass | `gate_policy.push_facts` in metadata; `ABEVAL_COMPASS_TOKEN` | Selected gate and certification facts. |
 
 The base CLI installation writes local reports. Install the `storage` extra for
@@ -45,8 +45,135 @@ Supply credentials again through the current environment. This command reuses
 saved evidence; it does not repeat scans, reviews, or trials. PostgreSQL snapshots
 are transactional and idempotent by run ID. S3 uses stable object keys.
 A successful retry can still return a failure exit code from earlier run evidence.
-Database initialization creates missing tables; it does not perform destructive
-schema migrations.
+Schema v2 requires a fresh database. Initialization rejects the old tables and
+never drops or migrates them. Set `ABEVAL_DATABASE_URL` to the fresh destination
+before publishing with CLI 0.5.0. Existing database consumers must use the new
+schema/views described below.
+
+## PostgreSQL evidence schema v2
+
+PostgreSQL stores queryable results emitted by the pipeline and evaluation tools.
+When S3 publication is selected, original reports remain there; `evidence_artifacts` records each uploaded object's
+URI, endpoint, SHA-256, media type, and byte size. Report bodies are not duplicated
+as whole-report JSON columns in PostgreSQL. Selected tool details, policy,
+score ranges, dimensions, per-phase metrics, and comparison reasoning remain in
+JSONB alongside indexed result identities and numeric scores.
+
+Every evaluation records its source commit SHA. PostgreSQL publication requires
+`--revision` / `ABEVAL_REVISION` to contain a full 40- or 64-character hexadecimal
+commit SHA. Plugin identity is inferred from `<plugin>/skills/<skill>`, or supplied
+through `metadata.yaml`'s `plugin_name`, `--plugin-name`, or `ABEVAL_PLUGIN_NAME` for
+standalone skills. Conflicting plugin identities are rejected.
+
+Supply the evaluated content image with `--built-image-ref` or
+`ABEVAL_BUILT_IMAGE_REF`, using `repository@sha256:<digest>`. The Konflux task
+passes its built component `image-url` and `image-digest` into this field for every
+skill in the batch. The field is nullable when no content image was built, such
+as an independent PR evaluation. `trial_image_ref` records the separate trial
+runtime image. Image references are not inferred from mutable tags.
+
+```mermaid
+erDiagram
+    plugins ||--o{ skills : contains
+    skills ||--o{ skill_evaluations : history
+    skill_evaluations ||--o{ tier_results : includes
+    tier_results ||--o{ check_results : operations
+    check_results ||--o{ findings : reports
+    check_results ||--o{ check_scores : dimensions
+    skill_evaluations ||--o{ evaluation_variants : arms
+    evaluation_variants ||--o{ judge_summaries : aggregate_scores
+    evaluation_variants ||--o{ case_results : cases
+    case_results ||--o{ judge_results : components
+    skill_evaluations ||--o| pairwise_results : comparison
+    pairwise_results ||--o{ pairwise_case_results : outcomes
+    case_results o|--o{ pairwise_case_results : treatment_case
+    case_results o|--o{ pairwise_case_results : control_case
+    skill_evaluations ||--o{ evidence_artifacts : evidence_links
+    skill_evaluations ||--o{ certification_results : tool_checks
+    skill_evaluations ||--o| evaluation_metrics : usage
+```
+
+`skill_evaluations` is the stable parent, including partial or failed executions
+that have no AEH report. Retrying publication replaces the child projection in a
+single transaction while retaining the evaluation ID and original execution time.
+An existing run ID cannot be assigned to another skill, commit, or built image.
+
+Tier 1 contains structure, security, quality and optional skill-review operations.
+Tier 2 contains submission validation, optional submission review, and AEH.
+Skipped and missing requested operations have unavailable results; missing scores
+are null. No zero score is invented for an unavailable judge or failed operation.
+
+Pairwise evaluations contain `control` and `treatment` variants. Each keeps its
+own aggregate reward, per-case reward, and raw/normalized judge values. Judge
+ranges are retained separately for each arm. Boolean checks can gate the case
+reward to zero; numeric judges are normalized and averaged by the existing AEH
+scoring implementation. The scoring method and declared ranges are recorded with
+the variant. Pairwise case outcomes and their aggregate win rate are separate
+signals: treatment wins / (treatment wins + control wins + ties + errors).
+Comparison rows link back to both arm case rows when those case results exist.
+
+Findings belong to the check that emitted them. Severity counts include critical,
+high, medium, low and info, with zero counts for checks that emitted no findings.
+A case identifier is retained when provided by the tool; skill-wide scanner
+findings are not assigned to arbitrary AEH cases.
+
+### Querying plugins and drilling into results
+
+The views derive results from each known skill's latest evaluation, ordered by
+execution start time and run ID as a deterministic tie-breaker. Publication time
+never determines which result is latest. Failures and partial runs remain visible;
+a Tier 1-only latest run does not inherit Tier 2 scores from an older commit.
+Only skills that have been published to this database are included in its catalog.
+
+| View | Result |
+|---|---|
+| `plugin_results` | Counts of known/evaluated skills, emitted recommendations, errors and findings by severity, using each skill's latest evaluation. |
+| `latest_skill_results` | One row per evaluated skill: provenance, tier status/verdicts, treatment/control reward, pairwise score/outcome counts, and severity counts. |
+| `latest_skill_judge_scores` | Latest aggregate judge scores per skill and arm, including tool-emitted details. |
+| `check_finding_counts` | Counts of every severity per check, for all evaluations. |
+| `latest_skill_evaluations` | Latest parent evaluation for each skill, including failed and partial runs. |
+
+```sql
+-- Plugin overview and each skill's latest scores.
+SELECT * FROM plugin_results WHERE plugin_name = 'rh-sre';
+SELECT * FROM latest_skill_results WHERE plugin_name = 'rh-sre';
+SELECT * FROM latest_skill_judge_scores WHERE plugin_name = 'rh-sre';
+
+-- Inspect security and quality findings by check within one evaluation.
+SELECT c.name, c.status, c.score, f.*
+FROM tier_results t
+JOIN check_results c ON c.tier_result_id = t.id
+JOIN check_finding_counts f ON f.check_id = c.id
+WHERE t.evaluation_id = :evaluation_id;
+
+-- Drill into each case and its score components for both arms.
+SELECT v.name AS arm, c.case_key, c.reward, j.name AS judge,
+       j.raw_value, j.normalized_score, j.score_range, j.error, j.details
+FROM evaluation_variants v
+JOIN case_results c ON c.variant_id = v.id
+JOIN judge_results j ON j.case_result_id = c.id
+WHERE v.evaluation_id = :evaluation_id;
+
+SELECT * FROM evidence_artifacts WHERE evaluation_id = :evaluation_id;
+```
+
+Views do not invent a single plugin score across different score types. The
+pipeline's recommendation and every underlying score remain distinct outputs.
+
+### Publication ordering and retries
+
+Selected destinations are attempted independently in the order Compass, S3,
+PostgreSQL. Compass updates the report before upload; the DB receives the exact
+object list returned by S3. A partial S3 failure still records the confirmed
+uploaded objects in PostgreSQL. Publication outcomes are recorded in `run.json`;
+there is no publication destination or status table in PostgreSQL.
+
+A PostgreSQL-only retry reuses S3 references saved in the local `run.json`.
+Destination selection and secrets are supplied through the current invocation;
+unselected earlier publication outcomes remain in the manifest. S3's uploaded
+manifest reflects publication state at S3 upload time, before the subsequent
+PostgreSQL transaction. S3 object URIs are durable references; accessing private
+objects still requires the bucket's existing authentication mechanism.
 
 ## Compass facts
 

@@ -119,7 +119,7 @@ class MetricsContext(BaseModel):
             return None
 
     def to_observability_dict(self) -> dict:
-        """Convert to kwargs for ObservabilityMetricsRow."""
+        """Convert accumulated totals to persistence fields."""
         from abevalflow.observability.cost import calculate_cost
 
         prompt = self.total_prompt_tokens

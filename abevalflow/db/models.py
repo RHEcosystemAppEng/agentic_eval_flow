@@ -1,23 +1,15 @@
-"""SQLAlchemy models for evaluation results persistence.
-
-Tables:
-- ``evaluation_runs``: one row per pipeline run (flattened summary for fast queries)
-- ``trials``: one row per trial (drill-down into individual outcomes)
-- ``security_scans``: one row per security scan (independent of evaluation runs)
-- ``scorecards``: one row per pipeline run (unified gate verdict)
-- ``gate_results``: one row per gate per run (normalized gate details)
-- ``certifications``: one row per certification level per run (max 3)
-- ``observability_metrics``: token/timing metrics per run
-"""
+"""Queryable pipeline evidence, from plugin summaries down to individual judge values."""
 
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime
+from typing import Any
 
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     Float,
     ForeignKey,
@@ -38,272 +30,256 @@ class Base(DeclarativeBase):
     pass
 
 
-def _utcnow() -> datetime:
-    return datetime.now(UTC)
+Json = JSON().with_variant(postgresql.JSONB(), "postgresql")
 
 
-# Portable JSON that upgrades to JSONB on PostgreSQL
-_JsonVariant = JSON().with_variant(postgresql.JSONB(), "postgresql")
-
-
-class EvaluationRun(Base):
-    """One row per pipeline run with flattened summary statistics."""
-
-    __tablename__ = "evaluation_runs"
-
+class Identifier:
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    submission_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    pipeline_run_id: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
 
-    # Provenance
-    commit_sha: Mapped[str | None] = mapped_column(String(64))
-    treatment_image_ref: Mapped[str | None] = mapped_column(Text)
-    control_image_ref: Mapped[str | None] = mapped_column(Text)
-    harbor_fork_revision: Mapped[str | None] = mapped_column(String(64))
-    eval_engine: Mapped[str] = mapped_column(String(50), nullable=False, default="aeh")
 
-    # Summary
-    recommendation: Mapped[str] = mapped_column(String(20), nullable=False)
-    uplift: Mapped[float] = mapped_column(Float, nullable=False)
-    mean_reward_gap: Mapped[float | None] = mapped_column(Float)
-    ttest_p_value: Mapped[float | None] = mapped_column(Float)
-    fisher_p_value: Mapped[float | None] = mapped_column(Float)
+class SchemaVersion(Base):
+    __tablename__ = "evidence_schema"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
 
-    # Treatment variant stats
-    treatment_n_trials: Mapped[int] = mapped_column(Integer, nullable=False)
-    treatment_n_passed: Mapped[int] = mapped_column(Integer, nullable=False)
-    treatment_n_failed: Mapped[int] = mapped_column(Integer, nullable=False)
-    treatment_n_errors: Mapped[int] = mapped_column(Integer, nullable=False)
-    treatment_pass_rate: Mapped[float] = mapped_column(Float, nullable=False)
-    treatment_mean_reward: Mapped[float | None] = mapped_column(Float)
-    treatment_median_reward: Mapped[float | None] = mapped_column(Float)
-    treatment_std_reward: Mapped[float | None] = mapped_column(Float)
 
-    # Control variant stats
-    control_n_trials: Mapped[int] = mapped_column(Integer, nullable=False)
-    control_n_passed: Mapped[int] = mapped_column(Integer, nullable=False)
-    control_n_failed: Mapped[int] = mapped_column(Integer, nullable=False)
-    control_n_errors: Mapped[int] = mapped_column(Integer, nullable=False)
-    control_pass_rate: Mapped[float] = mapped_column(Float, nullable=False)
-    control_mean_reward: Mapped[float | None] = mapped_column(Float)
-    control_median_reward: Mapped[float | None] = mapped_column(Float)
-    control_std_reward: Mapped[float | None] = mapped_column(Float)
+class Plugin(Identifier, Base):
+    __tablename__ = "plugins"
+    name: Mapped[str] = mapped_column(String(255), unique=True)
+    skills: Mapped[list[Skill]] = relationship(back_populates="plugin", cascade="all, delete-orphan")
 
-    # Complete normalized report
-    report_json: Mapped[dict] = mapped_column(_JsonVariant, nullable=False)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow)
+class Skill(Identifier, Base):
+    __tablename__ = "skills"
+    plugin_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("plugins.id", ondelete="CASCADE"))
+    name: Mapped[str] = mapped_column(String(255))
+    plugin: Mapped[Plugin] = relationship(back_populates="skills")
+    evaluations: Mapped[list[SkillEvaluation]] = relationship(back_populates="skill", cascade="all, delete-orphan")
+    __table_args__ = (UniqueConstraint("plugin_id", "name"),)
 
-    trials: Mapped[list[Trial]] = relationship(back_populates="run", cascade="all, delete-orphan")
 
-    __table_args__ = (
-        Index("ix_evaluation_runs_submission_name", "submission_name"),
-        Index(
-            "ix_evaluation_runs_submission_created",
-            "submission_name",
-            "created_at",
-        ),
+class SkillEvaluation(Identifier, Base):
+    __tablename__ = "skill_evaluations"
+    skill_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("skills.id", ondelete="CASCADE"))
+    run_id: Mapped[str] = mapped_column(String(255), unique=True)
+    submission_name: Mapped[str] = mapped_column(String(255))
+    commit_sha: Mapped[str] = mapped_column(String(64))
+    built_image_ref: Mapped[str | None] = mapped_column(Text)
+    trial_image_ref: Mapped[str | None] = mapped_column(Text)
+    source_digest: Mapped[str | None] = mapped_column(String(128))
+    evaluator_version: Mapped[str] = mapped_column(String(100))
+    eval_engine: Mapped[str] = mapped_column(String(50), default="aeh")
+    mode: Mapped[str | None] = mapped_column(String(20))
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(String(20))
+    evidence_complete: Mapped[bool] = mapped_column(Boolean)
+    recommendation: Mapped[str | None] = mapped_column(String(20))
+    recommendation_reason: Mapped[str | None] = mapped_column(Text)
+    policy_json: Mapped[dict | None] = mapped_column(Json)
+    comparison_statistics: Mapped[dict | None] = mapped_column(Json)
+    requested_steps: Mapped[list] = mapped_column(Json, default=list)
+    execution_details: Mapped[dict] = mapped_column(Json, default=dict)
+    warnings: Mapped[list] = mapped_column(Json, default=list)
+    skill: Mapped[Skill] = relationship(back_populates="evaluations")
+    tiers: Mapped[list[TierResult]] = relationship(back_populates="evaluation", cascade="all, delete-orphan")
+    variants: Mapped[list[EvaluationVariant]] = relationship(back_populates="evaluation", cascade="all, delete-orphan")
+    pairwise: Mapped[PairwiseResult | None] = relationship(back_populates="evaluation", cascade="all, delete-orphan")
+    artifacts: Mapped[list[EvidenceArtifact]] = relationship(back_populates="evaluation", cascade="all, delete-orphan")
+    certifications: Mapped[list[CertificationResult]] = relationship(
+        back_populates="evaluation", cascade="all, delete-orphan"
     )
-
-    def __repr__(self) -> str:
-        return f"<EvaluationRun {self.submission_name!r} recommendation={self.recommendation!r}>"
-
-
-class Trial(Base):
-    """One row per trial for drill-down queries."""
-
-    __tablename__ = "trials"
-
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    run_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid, ForeignKey("evaluation_runs.id", ondelete="CASCADE"), nullable=False
-    )
-    variant: Mapped[str] = mapped_column(String(20), nullable=False)
-    trial_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    reward: Mapped[float | None] = mapped_column(Float)
-    passed: Mapped[bool] = mapped_column(Boolean, nullable=False)
-
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow)
-
-    run: Mapped[EvaluationRun] = relationship(back_populates="trials")
-
-    __table_args__ = (
-        Index("ix_trials_run_id", "run_id"),
-        Index("ix_trials_run_variant", "run_id", "variant"),
-    )
-
-    def __repr__(self) -> str:
-        return f"<Trial {self.trial_name!r} variant={self.variant!r} reward={self.reward!r}>"
+    metrics: Mapped[EvaluationMetrics | None] = relationship(back_populates="evaluation", cascade="all, delete-orphan")
+    __table_args__ = (Index("ix_skill_evaluations_latest", "skill_id", "started_at", "run_id"),)
 
 
-class SecurityScan(Base):
-    """One row per security scan, independent of evaluation runs.
-
-    Allows querying security findings across all submissions without
-    coupling to the A/B evaluation workflow.
-    """
-
-    __tablename__ = "security_scans"
-
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    pipeline_run_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
-    submission_name: Mapped[str] = mapped_column(String(255), nullable=False)
-
-    scanner: Mapped[str] = mapped_column(String(50), nullable=False)
-    scan_mode: Mapped[str] = mapped_column(String(10), nullable=False)
-    passed: Mapped[bool] = mapped_column(Boolean, nullable=False)
-
-    findings_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    # Only blocking severities (critical, high) are indexed for fast queries.
-    # Medium/low/info counts can be derived from findings_json if needed.
-    critical_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    high_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-
-    findings_json: Mapped[list] = mapped_column(_JsonVariant, nullable=False)
-
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow)
-
-    __table_args__ = (
-        Index("ix_security_scans_submission_name", "submission_name"),
-        Index(
-            "ix_security_scans_submission_created",
-            "submission_name",
-            "created_at",
-        ),
-    )
-
-    def __repr__(self) -> str:
-        return (
-            f"<SecurityScan {self.submission_name!r} scanner={self.scanner!r} "
-            f"passed={self.passed!r} findings={self.findings_count}>"
-        )
+class TierResult(Identifier, Base):
+    __tablename__ = "tier_results"
+    evaluation_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("skill_evaluations.id", ondelete="CASCADE"))
+    tier: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(20))
+    verdict: Mapped[str] = mapped_column(String(20))
+    evaluation: Mapped[SkillEvaluation] = relationship(back_populates="tiers")
+    checks: Mapped[list[CheckResult]] = relationship(back_populates="tier_result", cascade="all, delete-orphan")
+    __table_args__ = (UniqueConstraint("evaluation_id", "tier"), CheckConstraint("tier IN (1, 2)"))
 
 
-class ScorecardRow(Base):
-    """One row per pipeline run with unified gate verdict.
+class CheckResult(Identifier, Base):
+    """An actual workflow operation: scanner, validation, review, or AEH evaluation."""
 
-    scorecard_json duplicates data normalized into gate_results and certifications.
-    Kept intentionally for fast single-row API responses without JOINs and for
-    preserving the exact original structure for debugging.
-    """
-
-    __tablename__ = "scorecards"
-
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    pipeline_run_id: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
-    submission_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    eval_engine: Mapped[str] = mapped_column(String(50), nullable=False)
-
-    recommendation: Mapped[str] = mapped_column(String(20), nullable=False)
-    recommendation_reason: Mapped[str] = mapped_column(Text, nullable=False)
-    combination_mode: Mapped[str] = mapped_column(String(20), nullable=False)
-
-    gates_passed: Mapped[int] = mapped_column(Integer, nullable=False)
-    gates_failed: Mapped[int] = mapped_column(Integer, nullable=False)
-    blocking_gates_passed: Mapped[int] = mapped_column(Integer, nullable=False)
-    blocking_gates_failed: Mapped[int] = mapped_column(Integer, nullable=False)
-
-    highest_certification: Mapped[str] = mapped_column(String(20), nullable=False)
-    scorecard_json: Mapped[dict] = mapped_column(_JsonVariant, nullable=False)
-
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow)
-
-    gate_results: Mapped[list[GateResultRow]] = relationship(back_populates="scorecard", cascade="all, delete-orphan")
-    certifications: Mapped[list[CertificationRow]] = relationship(
-        back_populates="scorecard", cascade="all, delete-orphan"
-    )
-
-    __table_args__ = (
-        Index("ix_scorecards_submission_name", "submission_name"),
-        Index("ix_scorecards_submission_created", "submission_name", "created_at"),
-        Index("ix_scorecards_highest_certification", "highest_certification"),
-    )
-
-    def __repr__(self) -> str:
-        return f"<ScorecardRow {self.submission_name!r} recommendation={self.recommendation!r}>"
-
-
-class GateResultRow(Base):
-    """One row per gate per run for normalized gate queries."""
-
-    __tablename__ = "gate_results"
-
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    scorecard_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid, ForeignKey("scorecards.id", ondelete="CASCADE"), nullable=False
-    )
-
-    gate_name: Mapped[str] = mapped_column(String(100), nullable=False)
-    gate_type: Mapped[str] = mapped_column(String(20), nullable=False)
-    policy_key: Mapped[str | None] = mapped_column(String(100))
-    passed: Mapped[bool] = mapped_column(Boolean, nullable=False)
-    score: Mapped[float] = mapped_column(Float, nullable=False)
-    mode: Mapped[str] = mapped_column(String(20), nullable=False)
-    threshold: Mapped[float | None] = mapped_column(Float)
-    findings_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    message: Mapped[str | None] = mapped_column(Text)
-    details_json: Mapped[dict | None] = mapped_column(_JsonVariant)
-    duration_ms: Mapped[int | None] = mapped_column(Integer)
-    prompt_tokens: Mapped[int | None] = mapped_column(Integer)
-    completion_tokens: Mapped[int | None] = mapped_column(Integer)
+    __tablename__ = "check_results"
+    tier_result_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tier_results.id", ondelete="CASCADE"))
+    name: Mapped[str] = mapped_column(String(100))
+    category: Mapped[str] = mapped_column(String(50))
+    tool: Mapped[str | None] = mapped_column(String(100))
+    status: Mapped[str] = mapped_column(String(20))
+    verdict: Mapped[str] = mapped_column(String(20))
+    blocking: Mapped[bool] = mapped_column(Boolean)
+    score: Mapped[float | None] = mapped_column(Float)
+    score_method: Mapped[str | None] = mapped_column(String(100))
+    enforcement_mode: Mapped[str | None] = mapped_column(String(20))
+    passed: Mapped[bool | None] = mapped_column(Boolean)
     evaluated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    threshold: Mapped[float | None] = mapped_column(Float)
+    message: Mapped[str | None] = mapped_column(Text)
+    details: Mapped[dict] = mapped_column(Json, default=dict)
+    tier_result: Mapped[TierResult] = relationship(back_populates="checks")
+    findings: Mapped[list[Finding]] = relationship(back_populates="check", cascade="all, delete-orphan")
+    components: Mapped[list[CheckScore]] = relationship(back_populates="check", cascade="all, delete-orphan")
+    __table_args__ = (UniqueConstraint("tier_result_id", "name"),)
 
-    scorecard: Mapped[ScorecardRow] = relationship(back_populates="gate_results")
 
+class CheckScore(Identifier, Base):
+    """Tool-emitted dimensions of a quality/review check."""
+
+    __tablename__ = "check_scores"
+    check_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("check_results.id", ondelete="CASCADE"))
+    name: Mapped[str] = mapped_column(String(255))
+    score: Mapped[float | None] = mapped_column(Float)
+    details: Mapped[Any | None] = mapped_column(Json)
+    check: Mapped[CheckResult] = relationship(back_populates="components")
+    __table_args__ = (UniqueConstraint("check_id", "name"),)
+
+
+class Finding(Identifier, Base):
+    __tablename__ = "findings"
+    check_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("check_results.id", ondelete="CASCADE"), index=True)
+    severity: Mapped[str] = mapped_column(String(20))
+    rule_id: Mapped[str | None] = mapped_column(String(255))
+    message: Mapped[str] = mapped_column(Text)
+    location: Mapped[str | None] = mapped_column(Text)
+    case_key: Mapped[str | None] = mapped_column(String(255))
+    details: Mapped[dict | None] = mapped_column(Json)
+    check: Mapped[CheckResult] = relationship(back_populates="findings")
+    __table_args__ = (CheckConstraint("severity IN ('critical', 'high', 'medium', 'low', 'info')"),)
+
+
+class EvaluationVariant(Identifier, Base):
+    __tablename__ = "evaluation_variants"
+    evaluation_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("skill_evaluations.id", ondelete="CASCADE"))
+    name: Mapped[str] = mapped_column(String(20))
+    mean_reward: Mapped[float | None] = mapped_column(Float)
+    median_reward: Mapped[float | None] = mapped_column(Float)
+    std_reward: Mapped[float | None] = mapped_column(Float)
+    n_trials: Mapped[int] = mapped_column(Integer)
+    n_passed: Mapped[int] = mapped_column(Integer)
+    n_failed: Mapped[int] = mapped_column(Integer)
+    n_errors: Mapped[int] = mapped_column(Integer)
+    pass_rate: Mapped[float] = mapped_column(Float)
+    execution: Mapped[dict | None] = mapped_column(Json)
+    run_metrics: Mapped[dict | None] = mapped_column(Json)
+    scoring: Mapped[dict] = mapped_column(Json, default=dict)
+    evaluation: Mapped[SkillEvaluation] = relationship(back_populates="variants")
+    cases: Mapped[list[CaseResult]] = relationship(back_populates="variant", cascade="all, delete-orphan")
+    judges: Mapped[list[JudgeSummary]] = relationship(back_populates="variant", cascade="all, delete-orphan")
     __table_args__ = (
-        Index("ix_gate_results_scorecard_id", "scorecard_id"),
-        Index("ix_gate_results_scorecard_policy", "scorecard_id", "policy_key"),
-        Index("ix_gate_results_gate_passed", "gate_name", "passed"),
-        Index("ix_gate_results_policy_key", "policy_key"),
+        UniqueConstraint("evaluation_id", "name"),
+        CheckConstraint("name IN ('control', 'treatment')"),
     )
 
-    def __repr__(self) -> str:
-        return f"<GateResultRow {self.gate_name!r} passed={self.passed!r} score={self.score!r}>"
+
+class JudgeSummary(Identifier, Base):
+    __tablename__ = "judge_summaries"
+    variant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("evaluation_variants.id", ondelete="CASCADE"))
+    name: Mapped[str] = mapped_column(String(255))
+    mean: Mapped[float | None] = mapped_column(Float)
+    pass_rate: Mapped[float | None] = mapped_column(Float)
+    errored_cases: Mapped[int | None] = mapped_column(Integer)
+    details: Mapped[Any | None] = mapped_column(Json)
+    variant: Mapped[EvaluationVariant] = relationship(back_populates="judges")
+    __table_args__ = (UniqueConstraint("variant_id", "name"),)
 
 
-class CertificationRow(Base):
-    """One row per certification level per run (max 3 per scorecard)."""
+class CaseResult(Identifier, Base):
+    __tablename__ = "case_results"
+    variant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("evaluation_variants.id", ondelete="CASCADE"))
+    case_key: Mapped[str] = mapped_column(String(255))
+    reward: Mapped[float | None] = mapped_column(Float)
+    status: Mapped[str] = mapped_column(String(20))
+    passed: Mapped[bool | None] = mapped_column(Boolean)
+    variant: Mapped[EvaluationVariant] = relationship(back_populates="cases")
+    judges: Mapped[list[JudgeResult]] = relationship(back_populates="case", cascade="all, delete-orphan")
+    __table_args__ = (UniqueConstraint("variant_id", "case_key"),)
 
-    __tablename__ = "certifications"
 
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    scorecard_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid, ForeignKey("scorecards.id", ondelete="CASCADE"), nullable=False
+class JudgeResult(Identifier, Base):
+    __tablename__ = "judge_results"
+    case_result_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("case_results.id", ondelete="CASCADE"))
+    name: Mapped[str] = mapped_column(String(255))
+    judge_type: Mapped[str | None] = mapped_column(String(50))
+    raw_value: Mapped[Any | None] = mapped_column(Json)
+    normalized_score: Mapped[float | None] = mapped_column(Float)
+    score_range: Mapped[list | None] = mapped_column(Json)
+    error: Mapped[str | None] = mapped_column(Text)
+    details: Mapped[dict | None] = mapped_column(Json)
+    case: Mapped[CaseResult] = relationship(back_populates="judges")
+    __table_args__ = (UniqueConstraint("case_result_id", "name"),)
+
+
+class PairwiseResult(Identifier, Base):
+    __tablename__ = "pairwise_results"
+    evaluation_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("skill_evaluations.id", ondelete="CASCADE"), unique=True
     )
+    run_a: Mapped[str] = mapped_column(Text)
+    run_b: Mapped[str] = mapped_column(Text)
+    cases_compared: Mapped[int] = mapped_column(Integer)
+    treatment_wins: Mapped[int] = mapped_column(Integer)
+    control_wins: Mapped[int] = mapped_column(Integer)
+    ties: Mapped[int] = mapped_column(Integer)
+    errors: Mapped[int] = mapped_column(Integer)
+    win_rate: Mapped[float] = mapped_column(Float)
+    stability: Mapped[dict | None] = mapped_column(Json)
+    evaluation: Mapped[SkillEvaluation] = relationship(back_populates="pairwise")
+    cases: Mapped[list[PairwiseCaseResult]] = relationship(back_populates="pairwise", cascade="all, delete-orphan")
 
-    level: Mapped[str] = mapped_column(String(20), nullable=False)
-    passed: Mapped[bool] = mapped_column(Boolean, nullable=False)
-    checks_total: Mapped[int] = mapped_column(Integer, nullable=False)
-    checks_passed: Mapped[int] = mapped_column(Integer, nullable=False)
-    checks_failed: Mapped[int] = mapped_column(Integer, nullable=False)
-    failed_checks: Mapped[list | None] = mapped_column(_JsonVariant)
-    details_json: Mapped[dict | None] = mapped_column(_JsonVariant)
 
-    scorecard: Mapped[ScorecardRow] = relationship(back_populates="certifications")
+class PairwiseCaseResult(Identifier, Base):
+    __tablename__ = "pairwise_case_results"
+    pairwise_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("pairwise_results.id", ondelete="CASCADE"))
+    case_key: Mapped[str] = mapped_column(String(255))
+    treatment_case_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("case_results.id", ondelete="SET NULL"))
+    control_case_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("case_results.id", ondelete="SET NULL"))
+    outcome: Mapped[str] = mapped_column(String(20))
+    error: Mapped[str | None] = mapped_column(Text)
+    details: Mapped[dict] = mapped_column(Json)
+    pairwise: Mapped[PairwiseResult] = relationship(back_populates="cases")
+    __table_args__ = (UniqueConstraint("pairwise_id", "case_key"),)
 
-    __table_args__ = (
-        Index("ix_certifications_scorecard_id", "scorecard_id"),
-        Index("ix_certifications_level_passed", "level", "passed"),
-        UniqueConstraint("scorecard_id", "level", name="uq_certifications_scorecard_level"),
+
+class EvidenceArtifact(Identifier, Base):
+    __tablename__ = "evidence_artifacts"
+    evaluation_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("skill_evaluations.id", ondelete="CASCADE"))
+    name: Mapped[str] = mapped_column(Text)
+    uri: Mapped[str] = mapped_column(Text)
+    endpoint: Mapped[str | None] = mapped_column(Text)
+    media_type: Mapped[str | None] = mapped_column(String(255))
+    sha256: Mapped[str | None] = mapped_column(String(64))
+    size_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    evaluation: Mapped[SkillEvaluation] = relationship(back_populates="artifacts")
+    __table_args__ = (UniqueConstraint("evaluation_id", "uri"),)
+
+
+class CertificationResult(Identifier, Base):
+    """Certification checks emitted by the pipeline, with no human decision records."""
+
+    __tablename__ = "certification_results"
+    evaluation_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("skill_evaluations.id", ondelete="CASCADE"))
+    level: Mapped[str] = mapped_column(String(20))
+    passed: Mapped[bool] = mapped_column(Boolean)
+    checks_total: Mapped[int] = mapped_column(Integer)
+    checks_passed: Mapped[int] = mapped_column(Integer)
+    checks: Mapped[list] = mapped_column(Json)
+    evaluation: Mapped[SkillEvaluation] = relationship(back_populates="certifications")
+    __table_args__ = (UniqueConstraint("evaluation_id", "level"),)
+
+
+class EvaluationMetrics(Base):
+    __tablename__ = "evaluation_metrics"
+    phase_metrics: Mapped[dict] = mapped_column(Json, default=dict)
+    evaluation_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("skill_evaluations.id", ondelete="CASCADE"), primary_key=True
     )
-
-    def __repr__(self) -> str:
-        return f"<CertificationRow {self.level!r} passed={self.passed!r}>"
-
-
-class ObservabilityMetricsRow(Base):
-    """Token/timing metrics per pipeline run.
-
-    Stores timing, token usage, and available cost estimates from MetricsContext.
-    No FK to scorecards — metrics may outlive scorecard lifecycle.
-    """
-
-    __tablename__ = "observability_metrics"
-
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    pipeline_run_id: Mapped[str] = mapped_column(String(255), nullable=False)
-    submission_name: Mapped[str] = mapped_column(String(255), nullable=False)
-
     model_name: Mapped[str | None] = mapped_column(String(100))
     pipeline_duration_ms: Mapped[int | None] = mapped_column(Integer)
     prepare_duration_ms: Mapped[int | None] = mapped_column(Integer)
@@ -311,27 +287,9 @@ class ObservabilityMetricsRow(Base):
     evaluate_duration_ms: Mapped[int | None] = mapped_column(Integer)
     analyze_duration_ms: Mapped[int | None] = mapped_column(Integer)
     store_duration_ms: Mapped[int | None] = mapped_column(Integer)
-
     total_prompt_tokens: Mapped[int | None] = mapped_column(BigInteger)
     total_completion_tokens: Mapped[int | None] = mapped_column(BigInteger)
     total_tokens: Mapped[int | None] = mapped_column(BigInteger)
     estimated_cost_usd: Mapped[float | None] = mapped_column(Numeric(12, 6))
-
     llm_calls_count: Mapped[int | None] = mapped_column(Integer)
-    trials_count: Mapped[int | None] = mapped_column(Integer)
-    attempt_number: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow)
-
-    __table_args__ = (
-        UniqueConstraint("pipeline_run_id", "attempt_number", name="uq_obs_metrics_run_attempt"),
-        Index("ix_observability_metrics_submission_name", "submission_name"),
-        Index("ix_observability_metrics_created_at", "created_at"),
-        Index("ix_observability_metrics_model_name", "model_name"),
-    )
-
-    def __repr__(self) -> str:
-        return (
-            f"<ObservabilityMetricsRow {self.submission_name!r} "
-            f"tokens={self.total_tokens} cost={self.estimated_cost_usd}>"
-        )
+    evaluation: Mapped[SkillEvaluation] = relationship(back_populates="metrics")

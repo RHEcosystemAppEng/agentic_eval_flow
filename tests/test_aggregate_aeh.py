@@ -705,3 +705,38 @@ class TestExtractMeanReward:
         assert "floor" in md.lower()
         assert "| analysis_accuracy | 1.00/5 |" in md
         assert "| response_received | 1.0000 | 100% |" in md
+
+
+def test_pairwise_arms_keep_independent_judge_scales_and_nested_scores(tmp_path):
+    control, treatment = tmp_path / "control", tmp_path / "treatment"
+    for directory, value in ((control, 1), (treatment, 5)):
+        directory.mkdir()
+        (directory / "summary.yaml").write_text(
+            yaml.safe_dump(
+                {
+                    "per_case": {
+                        "case-1": {"accuracy": {"value": value, "judge_type": "llm", "subscores": {"grounding": value}}}
+                    },
+                    "pairwise": {"wins_a": 1, "wins_b": 0, "ties": 0, "errors": 0},
+                }
+            )
+        )
+    control_config, treatment_config = tmp_path / "control.yaml", tmp_path / "treatment.yaml"
+    control_config.write_text("judges:\n- name: accuracy\n  score_range: [0, 5]\n")
+    treatment_config.write_text("judges:\n- name: accuracy\n  score_range: [1, 5]\n")
+    report = aggregate_pairwise_run(
+        treatment, control, treatment_config_path=treatment_config, control_config_path=control_config
+    )
+    assert report["summary"]["control"]["mean_reward"] == pytest.approx(0.2)
+    assert report["summary"]["treatment"]["mean_reward"] == 1.0
+    assert report["control"]["scoring"]["score_ranges"]["accuracy"] == (0.0, 5.0)
+    assert report["treatment"]["per_case"]["case-1"]["accuracy"]["subscores"] == {"grounding": 5}
+
+
+def test_missing_control_has_no_invented_mean_reward_or_gap(tmp_path):
+    treatment = tmp_path / "treatment"
+    treatment.mkdir()
+    (treatment / "summary.yaml").write_text(yaml.safe_dump({"mean_reward": 0.9}))
+    report = aggregate_pairwise_run(treatment, tmp_path / "absent-control")
+    assert report["summary"]["control"]["mean_reward"] is None
+    assert report["summary"]["mean_reward_gap"] is None

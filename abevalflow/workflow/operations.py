@@ -192,6 +192,7 @@ class Operations:
             aeh_root=config.aeh_root,
             aeh_python=config.aeh_python,
             timeout_retries=config.timeout_retries,
+            n_concurrent=config.n_concurrent,
         )
         tasks = config.output / "tasks"
         jobs = config.output / "jobs"
@@ -225,7 +226,12 @@ class Operations:
             )
             codes = [code]
         path = self.reports / "report.json"
-        report.setdefault("provenance", {}).update(commit_sha=config.revision, pipeline_run_id=config.run_id)
+        report.setdefault("provenance", {}).update(
+            commit_sha=config.revision,
+            pipeline_run_id=config.run_id,
+            plugin_name=config.plugin,
+            built_image_ref=config.built_image_ref,
+        )
         write_json(path, report)
         if any(code not in (0, 1) for code in codes):
             return StepResult(
@@ -355,6 +361,8 @@ class Operations:
             certification=certification,
             provenance={
                 "commit_sha": self.config.revision,
+                "plugin_name": self.config.plugin,
+                "built_image_ref": self.config.built_image_ref,
                 "evaluator_version": result.evaluator_version,
                 "source_digest": next(
                     (s.details.get("source_digest") for s in result.steps if s.name == "prepare"), None

@@ -30,6 +30,8 @@ class RuntimeConfig(BaseModel):
     output: Path
     run_id: str
     revision: str = "unknown"
+    plugin_name: str | None = None
+    built_image_ref: str | None = None
     submission_review: bool = False
     skill_review: bool = False
     continue_on_tier1_failure: bool = False
@@ -53,6 +55,7 @@ class RuntimeConfig(BaseModel):
     quality_command: str = "harness-eval"
     command_timeout: int = Field(default=7200, gt=0)
     timeout_retries: int = Field(default=1, ge=0, le=5)
+    n_concurrent: int = Field(default=1, ge=1)
     insecure_ssl: bool = False
     llm_base_url: str | None = None
     llm_model: str | None = None
@@ -70,6 +73,28 @@ class RuntimeConfig(BaseModel):
     s3_verify_tls: bool = True
     compass_token: SecretStr | None = Field(default=None, exclude=True)
     origins: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("built_image_ref")
+    @classmethod
+    def digest_pinned_image(cls, value: str | None) -> str | None:
+        if value is not None and not re.fullmatch(r"[^\s@]+@sha256:[0-9a-f]{64}", value):
+            raise ValueError("built-image-ref must be repository@sha256:<64 lowercase hex characters>")
+        return value
+
+    @field_validator("plugin_name")
+    @classmethod
+    def valid_plugin_name(cls, value: str | None) -> str | None:
+        if value is not None and not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]*", value):
+            raise ValueError("plugin-name must be a catalog plugin identifier")
+        return value
+
+    @property
+    def plugin(self) -> str | None:
+        if self.plugin_name:
+            return self.plugin_name
+        if self.metadata and self.metadata.plugin_name:
+            return self.metadata.plugin_name
+        return self.skill.parent.parent.name if self.skill.parent.name == "skills" else None
 
     @field_validator("run_id")
     @classmethod
@@ -175,6 +200,13 @@ def resolve_config(options: Mapping[str, Any], environ: Mapping[str, str] | None
     if submission and not submission.is_relative_to(source):
         raise ConfigurationError("Submission must be inside --source; select a common source root")
     metadata = load_metadata(submission) if submission else None
+    path_plugin = skill.parent.parent.name if skill.parent.name == "skills" else None
+    plugin_name = get("plugin_name", metadata.plugin_name if metadata else None)
+    if plugin_name and path_plugin and plugin_name != path_plugin:
+        raise ConfigurationError("plugin-name must match the plugin in the skill source path")
+    if metadata and metadata.plugin_name and plugin_name and metadata.plugin_name != plugin_name:
+        raise ConfigurationError("plugin-name must match submission metadata.plugin_name")
+    plugin_name = plugin_name or path_plugin
     tiers = parse_tiers(get("tiers", "1"))
     if 2 in tiers and submission is None:
         raise ConfigurationError("Tier 2 requires an AEH submission; supply --submission")
@@ -197,6 +229,7 @@ def resolve_config(options: Mapping[str, Any], environ: Mapping[str, str] | None
     destinations = parse_destinations(get("persist", ""))
     values: dict[str, Any] = {
         "skill": skill,
+        "plugin_name": plugin_name,
         "source": source,
         "submission": submission,
         "metadata": metadata,
@@ -208,6 +241,7 @@ def resolve_config(options: Mapping[str, Any], environ: Mapping[str, str] | None
     }
     defaults = {
         "revision": ("unknown", "SUBMISSION_REVISION"),
+        "built_image_ref": (None,),
         "skill_review": (False,),
         "continue_on_tier1_failure": (False,),
         "persistence_required": (True,),
@@ -229,6 +263,7 @@ def resolve_config(options: Mapping[str, Any], environ: Mapping[str, str] | None
         "quality_image": (None,),
         "command_timeout": (7200,),
         "timeout_retries": (1,),
+        "n_concurrent": (1,),
         "insecure_ssl": (False, "AEH_INSECURE_SSL"),
         "llm_base_url": (None, "LLM_BASE_URL", "LLM_API_BASE"),
         "llm_model": (None, "LLM_MODEL"),

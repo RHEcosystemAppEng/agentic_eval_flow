@@ -99,7 +99,7 @@ def summarize(directory: Path, skills: list[str], revision: str, tiers: set[int]
                 raise ValueError("Run directory leaves batch")
             run = RunResult.model_validate_json((run_dir / "run.json").read_text())
             if (
-                run.schema_version != "1.0"
+                run.schema_version not in {"1.0", "1.1"}
                 or run.run_id != item.run_id
                 or run.source_revision != revision
                 or not run.completed_at

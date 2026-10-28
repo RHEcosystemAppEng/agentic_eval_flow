@@ -27,9 +27,10 @@ class StepResult(BaseModel):
 class RunResult(BaseModel):
     """Durable evidence for a workflow, including partial and failed runs."""
 
-    schema_version: str = "1.0"
+    schema_version: str = "1.1"
     run_id: str
     skill: str
+    plugin_name: str | None = None
     source_revision: str
     evaluator_version: str
     started_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

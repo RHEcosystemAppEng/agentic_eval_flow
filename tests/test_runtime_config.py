@@ -136,3 +136,29 @@ def test_container_scanning_requires_explicit_images(catalog, runtime, provided)
 def test_oci_is_not_an_application_persistence_destination(catalog):
     with pytest.raises(ConfigurationError, match="postgres,s3,compass"):
         resolve_config({**catalog, "persist": "oci"}, {})
+
+
+def test_plugin_identity_is_recorded_and_checked_against_catalog(catalog):
+    assert resolve_config(catalog, {}).plugin_name == "pack"
+    (catalog["submission"] / "metadata.yaml").write_text("name: demo\nplugin_name: different\n")
+    with pytest.raises(ConfigurationError, match="plugin"):
+        resolve_config(catalog, {})
+
+
+def test_standalone_plugin_and_evaluated_image_can_be_supplied(tmp_path):
+    from pydantic import ValidationError
+
+    skill = tmp_path / "standalone"
+    skill.mkdir()
+    (skill / "SKILL.md").write_text("# Skill")
+    config = resolve_config(
+        {"skill": skill, "output": tmp_path / "run"},
+        {
+            "ABEVAL_PLUGIN_NAME": "example",
+            "ABEVAL_BUILT_IMAGE_REF": "quay.io/example/plugin@sha256:" + "b" * 64,
+        },
+    )
+    assert config.plugin == "example"
+    assert config.built_image_ref.endswith("b" * 64)
+    with pytest.raises(ValidationError, match="built_image_ref"):
+        resolve_config({"skill": skill, "output": tmp_path / "run", "built_image_ref": "image:latest"}, {})

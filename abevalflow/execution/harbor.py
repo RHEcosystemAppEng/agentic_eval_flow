@@ -85,7 +85,7 @@ class HarborRunner(BaseRunner):
             "--model",
             self.model,
             "--n-concurrent",
-            "1",
+            str(self.n_concurrent),
         ]
         if self.image:
             cmd.extend(["--image", self.image])

@@ -122,8 +122,13 @@ abeval run ./pack/skills/my-skill --tiers 1
 
 # Execute static checks followed by live evaluation.
 abeval run ./pack/skills/my-skill --tiers 1,2 \
-  --submission ./submissions/pack/my-skill --trial-image quay.io/example/trial@sha256:...
+  --submission ./submissions/pack/my-skill --trial-image quay.io/example/trial@sha256:... \
+  --n-concurrent 4
 ```
+
+`--n-concurrent` sets the maximum number of AEH trial cases run at once
+(default: `1`); `ABEVAL_N_CONCURRENT` can set the same value. The workload
+cluster must have capacity for the requested number of trial pods.
 
 Tier 1 is the default. Available credentials never enable model calls or
 publication by themselves. A blocking Tier 1 failure skips Tier 2 while preserving
@@ -241,15 +246,18 @@ export ABEVAL_S3_ENDPOINT=https://minio.example
 export ABEVAL_S3_ACCESS_KEY='...'
 export ABEVAL_S3_SECRET_KEY='...'
 
-abeval run ./pack/skills/my-skill --tiers 1 --persist postgres,s3
+abeval run ./pack/skills/my-skill --tiers 1 --revision "$(git rev-parse HEAD)" --persist postgres,s3
 abeval publish --run-dir .abeval/runs/<run-id> --persist postgres,s3
 abeval report --run-dir .abeval/runs/<run-id>
 ```
 
-PostgreSQL stores evaluation rows, trials, scans, scorecards, certification, and
-review metrics. Retries complete missing records without duplicating a run.
-S3 stores reports and the run manifest under `<skill>/<run-id>/`; source copies
-and kubeconfigs are excluded. Compass publishes the facts selected in metadata.
+PostgreSQL schema v2 stores plugin/skill evaluation history, tier/check results,
+findings, both arms' case/judge scores, pairwise outcomes, certification, metrics,
+and S3 artifact references. It requires a fresh database and a full source commit
+SHA. Latest-per-skill views provide plugin summaries and score drill-down; see
+[the evidence schema and query examples](Docs/persistence.md#postgresql-evidence-schema-v2).
+Retries update a run without duplicating it. S3 stores reports and the run manifest
+under `<plugin>/<skill>/<run-id>/`; source copies and kubeconfigs are excluded. Compass publishes the facts selected in metadata.
 OCI evidence attachment is handled by the consuming CI pipeline using its
 existing Konflux tooling. The CLI publishes to PostgreSQL, S3, and Compass.
 

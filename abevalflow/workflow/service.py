@@ -21,10 +21,11 @@ def create_result(config: RuntimeConfig) -> RunResult:
     try:
         evaluator_version = version("abevalflow")
     except PackageNotFoundError:
-        evaluator_version = "0.4.0"
+        evaluator_version = "0.5.0"
     return RunResult(
         run_id=config.run_id,
         skill=config.name,
+        plugin_name=config.plugin,
         source_revision=config.revision,
         evaluator_version=evaluator_version,
         config=public_config(config),

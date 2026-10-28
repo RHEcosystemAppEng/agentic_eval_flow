@@ -85,7 +85,9 @@ that capability. Defaults and submission discovery make most flags optional.
 | `--tiers` | `ABEVAL_TIERS` | `1`; choices: `1`, `2`, `1,2` (sequential). | Optional. |
 | `--output` | `ABEVAL_OUTPUT` | `.abeval/runs/<run-id>` under the current directory; must be a new directory outside the skill and submission. | Optional. |
 | `--run-id` | `ABEVAL_RUN_ID` | Generated UTC timestamp plus random suffix; explicit IDs use letters, digits, `.`, `_`, `-`, start with a letter/digit, and are at most 101 characters. | Optional. |
-| `--revision` | `ABEVAL_REVISION` | `unknown`; source revision recorded in reports. | Optional. |
+| `--revision` | `ABEVAL_REVISION` | `unknown`; source revision recorded in reports. PostgreSQL requires a full commit SHA. | When publishing to PostgreSQL. |
+| `--plugin-name` | `ABEVAL_PLUGIN_NAME` | Inferred from the catalog path or submission `plugin_name`. | For PostgreSQL when no plugin can be inferred. |
+| `--built-image-ref` | `ABEVAL_BUILT_IMAGE_REF` | Evaluated content image as `repository@sha256:<digest>`; separate from the trial image. | When a built content image is available. |
 | `--[no-]continue-on-tier1-failure` | `ABEVAL_CONTINUE_ON_TIER1_FAILURE` | `false`; continue to Tier 2 while retaining Tier 1 failures. | Optional. |
 | `--command-timeout` | `ABEVAL_COMMAND_TIMEOUT` | `7200` seconds per external command; positive integer. | Optional. |
 
@@ -151,6 +153,7 @@ Use environment variables for credentials so they do not appear in command histo
 | `--namespace` | `ABEVAL_NAMESPACE` | Kubeconfig context namespace or in-cluster namespace, then `default`. | Optional. |
 | `--credentials-secret` | `ABEVAL_CREDENTIALS_SECRET` | `llm-credentials`; an existing Secret in the workload namespace. | Optional. |
 | `--trial-image` | `ABEVAL_TRIAL_IMAGE` | No default; supply a cluster-pullable trial image, preferably pinned by digest. | When Tier 2 is selected. |
+| `--n-concurrent` | `ABEVAL_N_CONCURRENT` | `1`; maximum AEH trial cases running concurrently. Must be at least `1`; cluster capacity should match the requested concurrency. | Optional. |
 | `--aeh-root` | `ABEVAL_AEH_ROOT` | Complete AEH source installation; discover an installed source distribution or the managed cache. | Optional. |
 | `--aeh-python` | `ABEVAL_AEH_PYTHON` | Installation's sibling `.venv/bin/python` if present, otherwise the CLI's interpreter. | Optional. |
 | `--score-script` | `ABEVAL_SCORE_SCRIPT` | External AEH installation's `score.py`; override for pairwise aggregation. | Optional. |

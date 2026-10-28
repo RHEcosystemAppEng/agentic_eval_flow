@@ -72,7 +72,7 @@ def _load_summary(run_dir: Path) -> dict[str, Any]:
 
 
 def _compact_judge(result: Any) -> dict[str, Any] | Any:
-    """Keep value/error/judge_type; drop rationale and other bulky fields."""
+    """Keep score values, components and errors; leave bulky narrative output in the source report."""
     if not isinstance(result, dict):
         return result
     compact: dict[str, Any] = {}
@@ -82,6 +82,9 @@ def _compact_judge(result: Any) -> dict[str, Any] | Any:
         compact["error"] = str(result["error"])
     if result.get("judge_type"):
         compact["judge_type"] = result["judge_type"]
+    for key in ("scores", "subscores", "dimensions", "criteria", "score_range", "weight", "aggregation"):
+        if key in result:
+            compact[key] = result[key]
     return compact
 
 
@@ -353,6 +356,7 @@ def aggregate_single_run(
         "pass_rate": pass_rate,
         "total_cases": total_cases,
         "passed_cases": n_passed,
+        "scoring": {"score_ranges": score_ranges, "case_reward_method": "numeric_mean_with_boolean_gates_v1"},
         "judges": judges_full,
         "per_case": per_case_compact,
         "run_metrics": run_metrics,
@@ -399,17 +403,15 @@ def aggregate_pairwise_run(
 
     treatment_summary = yaml.safe_load(treatment_summary_path.read_text())
 
-    score_ranges = {
-        **load_judge_score_ranges(control_config_path),
-        **load_judge_score_ranges(treatment_config_path),
-    }
-    treatment_mean_reward = _extract_mean_reward(treatment_dir, score_ranges=score_ranges)
+    treatment_ranges = load_judge_score_ranges(treatment_config_path)
+    control_ranges = load_judge_score_ranges(control_config_path)
+    treatment_mean_reward = _extract_mean_reward(treatment_dir, score_ranges=treatment_ranges)
 
     control_summary = {}
-    control_mean_reward = 0.0
+    control_mean_reward = None
     if control_summary_path.exists():
         control_summary = yaml.safe_load(control_summary_path.read_text())
-        control_mean_reward = _extract_mean_reward(control_dir, score_ranges=score_ranges)
+        control_mean_reward = _extract_mean_reward(control_dir, score_ranges=control_ranges)
 
     pairwise = treatment_summary.get("pairwise", {})
     outcome = pairwise_outcome(
@@ -438,10 +440,13 @@ def aggregate_pairwise_run(
     resolved_name = submission_name or (
         treatment_dir.parent.name if treatment_dir.parent != treatment_dir else treatment_dir.name
     )
-    t_mean = treatment_mean_reward if treatment_mean_reward is not None else 0.0
-    c_mean = control_mean_reward if control_mean_reward is not None else 0.0
-    treatment_trials = _trials_from_per_case(treatment_per_case, score_ranges=score_ranges)
-    control_trials = _trials_from_per_case(control_per_case, score_ranges=score_ranges)
+    mean_reward_gap = (
+        treatment_mean_reward - control_mean_reward
+        if treatment_mean_reward is not None and control_mean_reward is not None
+        else None
+    )
+    treatment_trials = _trials_from_per_case(treatment_per_case, score_ranges=treatment_ranges)
+    control_trials = _trials_from_per_case(control_per_case, score_ranges=control_ranges)
 
     treatment_stats = _grounded_variant_stats(treatment_trials)
     control_stats = _grounded_variant_stats(control_trials)
@@ -462,7 +467,7 @@ def aggregate_pairwise_run(
                 "mean_reward": control_mean_reward,
             },
             "uplift": treatment_stats["pass_rate"] - control_stats["pass_rate"],
-            "mean_reward_gap": t_mean - c_mean,
+            "mean_reward_gap": mean_reward_gap,
             "recommendation": recommendation,
         },
         "trials": {
@@ -474,6 +479,10 @@ def aggregate_pairwise_run(
         "treatment": {
             "run_id": treatment_summary.get("run_id", treatment_dir.name),
             "mean_reward": treatment_mean_reward,
+            "scoring": {
+                "score_ranges": treatment_ranges,
+                "case_reward_method": "numeric_mean_with_boolean_gates_v1",
+            },
             "judges": treatment_judges,
             "per_case": treatment_per_case_compact,
             "run_metrics": treatment_summary.get("run_metrics"),
@@ -482,6 +491,10 @@ def aggregate_pairwise_run(
         "control": {
             "run_id": control_summary.get("run_id", control_dir.name),
             "mean_reward": control_mean_reward,
+            "scoring": {
+                "score_ranges": control_ranges,
+                "case_reward_method": "numeric_mean_with_boolean_gates_v1",
+            },
             "judges": control_judges,
             "per_case": control_per_case_compact,
             "run_metrics": control_summary.get("run_metrics"),

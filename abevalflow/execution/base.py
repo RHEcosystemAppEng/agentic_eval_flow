@@ -35,6 +35,7 @@ class BaseRunner(ABC):
         aeh_root: Path | None = None,
         aeh_python: Path | None = None,
         timeout_retries: int = 1,
+        n_concurrent: int = 1,
     ):
         self.model = model
         self.judge_model = judge_model
@@ -45,6 +46,7 @@ class BaseRunner(ABC):
         self.aeh_root = aeh_root
         self.aeh_python = aeh_python
         self.timeout_retries = timeout_retries
+        self.n_concurrent = n_concurrent
 
     @property
     def aeh_runtime(self):

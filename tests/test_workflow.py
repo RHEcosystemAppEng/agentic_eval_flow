@@ -130,17 +130,17 @@ def test_pg_persistence_retry_is_idempotent_and_has_gate_records(catalog, tmp_pa
     from sqlalchemy import create_engine, select
     from sqlalchemy.orm import Session
 
-    from abevalflow.db.models import GateResultRow, ScorecardRow
+    from abevalflow.db.models import CheckResult, SkillEvaluation
     from abevalflow.persistence.postgres import store_snapshot
 
     database = f"sqlite:///{tmp_path / 'results.db'}"
-    config = configure(catalog, tmp_path, database_url=database, persist="postgres")
+    config = configure(catalog, tmp_path, database_url=database, persist="postgres", revision="a" * 40)
     result = run(config)
     assert result.exit_code == 0, result.model_dump_json()
-    store_snapshot(config.output / "reports", database, config.run_id)
+    store_snapshot(config, result, database)
     with Session(create_engine(database)) as session:
-        assert len(session.scalars(select(ScorecardRow)).all()) == 1
-        assert len(session.scalars(select(GateResultRow)).all()) == 3
+        assert len(session.scalars(select(SkillEvaluation)).all()) == 1
+        assert len(session.scalars(select(CheckResult)).all()) == 3
 
 
 def test_persistence_destinations_attempted_independently(catalog, tmp_path):

@@ -21,6 +21,10 @@ eval_engine: aeh
 aeh_mode: single
 ```
 
+Optional `plugin_name` records the owning plugin. It must match the plugin in
+`<plugin>/skills/<skill>` when evaluating a catalog path; standalone skills can
+supply it through metadata or `--plugin-name`.
+
 `aeh_mode: pairwise` selects separate control and treatment configs. Override
 their filenames with `aeh_control_config` and `aeh_treatment_config`.
 `abevalflow/schemas.py` defines supported metadata, including gate policy,

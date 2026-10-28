@@ -89,8 +89,8 @@ class TrialResult(BaseModel):
     judges: dict[str, Any] | None = Field(
         default=None,
         description=(
-            "Per-judge value/error for this case (AEH). Compact: value, error, "
-            "judge_type only — no rationale or response_text."
+            "Per-judge values, errors, type and emitted score components for this case (AEH). "
+            "Narrative rationale and response_text remain in the source report."
         ),
     )
 
@@ -121,6 +121,8 @@ class Provenance(BaseModel):
 
     generated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     commit_sha: str | None = None
+    plugin_name: str | None = None
+    built_image_ref: str | None = None
     pipeline_run_id: str | None = None
     treatment_image_ref: str | None = None
     control_image_ref: str | None = None
@@ -184,6 +186,9 @@ class AnalysisResult(BaseModel):
     trials: dict[str, list[TrialResult]] = Field(
         description="Per-variant list of trial outcomes, keyed by 'treatment'/'control'",
     )
+    treatment: dict[str, Any] | None = None
+    control: dict[str, Any] | None = None
+    scoring: dict[str, Any] = Field(default_factory=dict)
     security_scans: list[SecurityScanResult] = Field(
         default_factory=list,
         description="Results from security scanners. Empty if scanning disabled.",

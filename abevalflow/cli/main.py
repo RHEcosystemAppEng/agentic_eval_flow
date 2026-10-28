@@ -32,6 +32,8 @@ def workflow_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--output", type=Path, help="New run directory (default: .abeval/runs/<run-id>)")
     parser.add_argument("--run-id", help="Stable filesystem-safe run identifier")
     parser.add_argument("--revision", help="Evaluated source revision")
+    parser.add_argument("--plugin-name", help="Owning plugin; otherwise inferred from the catalog path or metadata")
+    parser.add_argument("--built-image-ref", help="Evaluated content image as repository@sha256:digest")
     models.add_argument(
         "--submission-review",
         choices=("auto", "on", "off"),
@@ -78,6 +80,11 @@ def workflow_options(parser: argparse.ArgumentParser) -> None:
     scanners.add_argument("--quality-command", help="Override the included harness-eval executable")
     parser.add_argument("--command-timeout", type=int, help="External command timeout in seconds (default: 7200)")
     parser.add_argument("--timeout-retries", type=int, help="Retry a timed-out AEH arm 0-5 times (default: 1)")
+    workload.add_argument(
+        "--n-concurrent",
+        type=int,
+        help="Maximum concurrent AEH trial cases (default: 1; also ABEVAL_N_CONCURRENT)",
+    )
     models.add_argument("--llm-base-url", help="Submission/skill review API endpoint")
     models.add_argument("--llm-model", help="Submission/skill review model")
     models.add_argument("--agent-base-url", help="Agent API endpoint passed to AEH")
