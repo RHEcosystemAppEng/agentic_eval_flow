@@ -14,52 +14,36 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field, computed_field, field_validator, model_validator
 
+from abevalflow.mcp.phase_config import PHASES
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Phase-specific interpretation config
 # ---------------------------------------------------------------------------
 
+# Mapping is data-driven; keep the old public constants for compatibility with
+# other MCP modules that import them.
 PHASE_CHECK_NAMES: dict[str, dict[str, str]] = {
-    "static-eval": {
-        "mcp-secrets": "Secrets Management",
-        "mcp-no-user-code": "No User-Code Execution",
-        "mcp-license": "License Compliance",
-    },
-    "conformance-eval": {
-        "http-support": "HTTP Support",
-        "protocol-compliance": "Protocol Compliance",
-        "schema-conformance": "Schema Conformance",
-        "tool-annotations": "Tool Annotations",
-        "rate-limiting": "Rate Limiting",
-        "response-size-limit": "Response Size Limit",
-        "mandatory-timeouts": "Mandatory Timeouts",
-        "openapi-conformance": "OpenAPI Conformance",
-        "tool-name-rules": "Tool-Name Rules",
-        "oauth-catalog-match": "OAuth Matches Catalog",
-    },
-    "behavioral-eval": {
-        "tool-correctness": "Tool Correctness",
-        "edge-case-handling": "Edge Case Handling",
-        "sensitive-data-redaction": "Sensitive Data Redaction",
-    },
+    name: {check_id: check["name"] for check_id, check in phase["checks"].items()}
+    for name, phase in PHASES.items()
 }
-
 PHASE_CONSUMED_CHECKS: dict[str, set[str]] = {
-    "conformance-eval": {"tool-name-rules", "oauth-catalog-match"},
+    name: consumed
+    for name, phase in PHASES.items()
+    if (consumed := {check_id for check_id, check in phase["checks"].items() if check.get("consumed")})
 }
-
 PHASE_SOURCE_DEFAULTS: dict[str, str] = {
-    "static-eval": "pipeline",
-    "conformance-eval": "probe",
-    "behavioral-eval": "pipeline",
+    name: phase.get("source", "pipeline") for name, phase in PHASES.items()
 }
-
 PHASE_CHECK_SOURCE_DEFAULTS: dict[str, dict[str, str]] = {
-    "conformance-eval": {
-        "tool-name-rules": "compass",
-        "oauth-catalog-match": "compass",
-    },
+    name: check_sources
+    for name, phase in PHASES.items()
+    if (check_sources := {
+        check_id: check["source"]
+        for check_id, check in phase["checks"].items()
+        if "source" in check
+    })
 }
 
 DEFAULT_SOURCE = "pipeline"

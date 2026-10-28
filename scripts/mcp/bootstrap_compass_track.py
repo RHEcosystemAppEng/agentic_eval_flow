@@ -29,6 +29,7 @@ import urllib.error
 import urllib.request
 from typing import Any
 
+from abevalflow.mcp.phase_config import PHASES
 from abevalflow.mcp.checks.compass_publish import (
     PHASE_FACT_MAPS,
 )
@@ -79,69 +80,14 @@ def _check_def(
     }
 
 
+# Track metadata and order come from the same phase definitions as the publisher.
 PHASE_CHECK_METADATA: dict[str, dict[str, tuple[str, str]]] = {
-    "static-eval": {
-        "mcp-secrets": (
-            "Secrets Management (Pipeline-Verified)",
-            "Static scan of the MCP artifact for hardcoded credentials via gitleaks.",
-        ),
-        "mcp-no-user-code": (
-            "No User-Code Execution (Pipeline-Verified)",
-            "Static analysis for dynamic/arbitrary code execution patterns via semgrep.",
-        ),
-        "mcp-license": (
-            "License Compliance (Pipeline-Verified)",
-            "Top-level declared license validated against the approved license list.",
-        ),
-    },
-    "conformance-eval": {
-        "http-support": (
-            "HTTP Support",
-            "Server responds correctly over HTTP with parseable JSON-RPC.",
-        ),
-        "protocol-compliance": (
-            "Protocol Compliance",
-            "MCP initialize, capability negotiation, and JSON-RPC 2.0 correctness.",
-        ),
-        "schema-conformance": (
-            "Schema Conformance",
-            "Tool input/output schemas are well-formed JSON Schema objects.",
-        ),
-        "tool-annotations": (
-            "Tool Annotations",
-            "Present readOnlyHint/destructiveHint annotations are boolean-typed.",
-        ),
-        "rate-limiting": (
-            "Rate Limiting (Pipeline-Verified)",
-            "Server returns HTTP 429 under burst load (20-request burst).",
-        ),
-        "response-size-limit": (
-            "Response Size Limit",
-            "Server enforces response size cap. Deferred to Phase 3.",
-        ),
-        "mandatory-timeouts": (
-            "Mandatory Timeouts",
-            "Server enforces bounded response time. Deferred to Phase 3.",
-        ),
-        "openapi-conformance": (
-            "OpenAPI Conformance",
-            "Server publishes and conforms to an OpenAPI 3.x contract (or MCP-native equivalent).",
-        ),
-    },
-    "behavioral-eval": {
-        "tool-correctness": (
-            "Tool Correctness",
-            "Behavioral correctness of MCP server tools via mcpchecker.",
-        ),
-        "edge-case-handling": (
-            "Edge Case Handling",
-            "Edge case handling and error resilience via mcpchecker.",
-        ),
-        "sensitive-data-redaction": (
-            "Sensitive Data Redaction",
-            "Sensitive data handling and redaction via mcpchecker.",
-        ),
-    },
+    phase_name: {
+        check_id: (check["track_name"], check["description"])
+        for check_id, check in phase["checks"].items()
+        if check.get("fact_ref") and check.get("track_name") and check.get("description")
+    }
+    for phase_name, phase in PHASES.items()
 }
 
 
@@ -161,74 +107,37 @@ def _build_checks_for_phase(phase_name: str) -> list[dict[str, Any]]:
 
 
 PHASE_CHECKS: dict[str, list[dict[str, Any]]] = {
-    phase_name: _build_checks_for_phase(phase_name) for phase_name in sorted(PHASE_FACT_MAPS.keys())
+    phase_name: _build_checks_for_phase(phase_name) for phase_name in PHASES
 }
-
 ALL_CHECK_DEFS = [check for checks in PHASE_CHECKS.values() for check in checks]
-
-# These two check definitions already belong to the existing MCP Scorecard.
-# The new track references them but must not overwrite or duplicate them.
 CONSUMED_TRACK_CHECKS = [
-    {
-        "id": "mcp-tool-schema-check",
-        "name": "MCP Tool Schema Check",
-        "description": ("Tool names must be 1–128 characters using only A-Za-z0-9, underscore, hyphen, and dot."),
-    },
-    {
-        "id": "mcp-oauth-scope-match",
-        "name": "OAuth Matches Catalog",
-        "description": "Catalog-declared OAuth scopes and auth server URL match the server PRM.",
-    },
+    check
+    for phase in PHASES.values()
+    for check in phase.get("consumed_track_checks", [])
 ]
-
 OWNED_TRACK_CHECKS = [{key: check[key] for key in ("id", "name", "description")} for check in ALL_CHECK_DEFS]
-
 PHASE_LEVEL_METADATA: dict[str, tuple[str, str]] = {
-    "static-eval": (
-        "Phase 1 — Static Analysis",
-        "Pipeline-verified static checks for MCP artifacts.",
-    ),
-    "conformance-eval": (
-        "Phase 2 — Conformance Testing",
-        "MCP protocol and server conformance checks, including existing Compass-owned checks.",
-    ),
-    "behavioral-eval": (
-        "Phase 3 — Behavioral Evaluation",
-        "Behavioral MCP checks aggregated from mcpchecker results.",
-    ),
+    name: (phase.get("display_name", name), phase.get("description", ""))
+    for name, phase in PHASES.items()
 }
 
 
 def _build_levels() -> list[dict[str, Any]]:
-    """Build track levels dynamically from phases."""
+    """Build track levels in registry order with the checks of THAT phase."""
     levels = []
-    ordinal = 1
-    check_offset = 0
-    phase_order = ["static-eval", "conformance-eval", "behavioral-eval"]
-
-    for phase_name in phase_order:
-        phase_checks = PHASE_CHECKS[phase_name]
-        phase_check_count = len(phase_checks)
-        level_checks = OWNED_TRACK_CHECKS[check_offset : check_offset + phase_check_count]
-
-        if phase_name == "conformance-eval":
-            level_checks = level_checks + CONSUMED_TRACK_CHECKS
-
-        level_name, level_description = PHASE_LEVEL_METADATA.get(
-            phase_name, (f"Phase {ordinal}", f"Phase {ordinal} evaluation checks.")
-        )
-
-        levels.append(
-            {
-                "ordinal": ordinal,
-                "name": level_name,
-                "description": level_description,
-                "checks": level_checks,
-            }
-        )
-        ordinal += 1
-        check_offset += phase_check_count
-
+    for ordinal, (phase_name, phase) in enumerate(PHASES.items(), 1):
+        level_checks = [
+            {key: check[key] for key in ("id", "name", "description")}
+            for check in PHASE_CHECKS[phase_name]
+        ]
+        level_checks.extend(phase.get("consumed_track_checks", []))
+        level_name, level_description = PHASE_LEVEL_METADATA[phase_name]
+        levels.append({
+            "ordinal": ordinal,
+            "name": level_name,
+            "description": level_description,
+            "checks": level_checks,
+        })
     return levels
 
 

@@ -28,6 +28,7 @@ from abevalflow.compass_facts import (
     _push_raw_fact,
     _resolve_env_vars,
 )
+from abevalflow.mcp.phase_config import PHASE_CONFIG, PHASES
 from abevalflow.mcp.eval_result import (
     PHASE_CONSUMED_CHECKS,
     McpCheckResult,
@@ -41,42 +42,24 @@ logger = logging.getLogger(__name__)
 # FactRef mapping tables
 # ---------------------------------------------------------------------------
 
-PHASE1_FACT_MAP: dict[str, str] = {
-    "mcp-secrets": "abevalflow:default/mcp_secrets",
-    "mcp-no-user-code": "abevalflow:default/mcp_no_user_code",
-    "mcp-license": "abevalflow:default/mcp_license",
-}
-
-PHASE2_FACT_MAP: dict[str, str] = {
-    "http-support": "abevalflow:default/mcp_http_support",
-    "protocol-compliance": "abevalflow:default/mcp_protocol_compliance",
-    "schema-conformance": "abevalflow:default/mcp_schema_conformance",
-    "tool-annotations": "abevalflow:default/mcp_tool_annotations",
-    "rate-limiting": "abevalflow:default/mcp_rate_limiting",
-    "response-size-limit": "abevalflow:default/mcp_response_size_limit",
-    "mandatory-timeouts": "abevalflow:default/mcp_mandatory_timeouts",
-    "openapi-conformance": "abevalflow:default/mcp_openapi_conformance",
-}
-
-PHASE3_FACT_MAP: dict[str, str] = {
-    "tool-correctness": "abevalflow:default/mcp_tool_correctness",
-    "edge-case-handling": "abevalflow:default/mcp_edge_case_handling",
-    "sensitive-data-redaction": "abevalflow:default/mcp_sensitive_data_redaction",
-}
-
+# Facts are configured per phase; do not add Python conditions for new phases.
 PHASE_FACT_MAPS: dict[str, dict[str, str]] = {
-    "static-eval": PHASE1_FACT_MAP,
-    "conformance-eval": PHASE2_FACT_MAP,
-    "behavioral-eval": PHASE3_FACT_MAP,
+    name: {
+        check_id: check["fact_ref"]
+        for check_id, check in phase["checks"].items()
+        if check.get("fact_ref")
+    }
+    for name, phase in PHASES.items()
 }
-
 PHASE_SUMMARY_FACTS: dict[str, str] = {
-    "static-eval": "abevalflow:default/mcp_phase1",
-    "conformance-eval": "abevalflow:default/mcp_phase2",
-    "behavioral-eval": "abevalflow:default/mcp_phase3",
+    name: phase["summary_fact_ref"] for name, phase in PHASES.items()
 }
+MCP_EVAL_SUMMARY_FACT = PHASE_CONFIG["overall_fact_ref"]
 
-MCP_EVAL_SUMMARY_FACT = "abevalflow:default/mcp_eval"
+# Backwards compatible aliases (may be imported by existing callers/tests).
+PHASE1_FACT_MAP = PHASE_FACT_MAPS.get("static-eval", {})
+PHASE2_FACT_MAP = PHASE_FACT_MAPS.get("conformance-eval", {})
+PHASE3_FACT_MAP = PHASE_FACT_MAPS.get("behavioral-eval", {})
 
 # ---------------------------------------------------------------------------
 # Payload builders
