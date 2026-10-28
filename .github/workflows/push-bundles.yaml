@@ -6,6 +6,12 @@ on:
     paths:
       - 'pipeline/tasks/konflux/**'
       - 'pipeline/integration/Makefile'
+      - 'pipeline/pipelines/mcp-eval-pipeline.yaml'
+      - 'pipeline/pipelines/mcp-eval-pipeline.template.yaml'
+      - 'abevalflow/mcp/phase_registry.json'
+      - 'abevalflow/mcp/phases/**'
+      - 'abevalflow/mcp/phase_config.py'
+      - 'scripts/mcp/generate_mcp_pipeline.py'
   workflow_dispatch:
     inputs:
       version:
@@ -23,6 +29,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set up python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install pipeline generator dependency
+        run: python3 -m pip install PyYAML
+
       - name: Install tkn CLI
         run: |
           TKN_VERSION="0.37.0"
@@ -38,11 +52,15 @@ jobs:
         run: |
           echo "${{ secrets.QUAY_TOKEN }}" | tkn bundle push --help > /dev/null 2>&1 || true
           mkdir -p ~/.docker
-          echo '{"auths":{"quay.io":{"auth":"'$(echo -n "${{ secrets.QUAY_USERNAME }}:${{ secrets.QUAY_TOKEN }}" | base64 -w0)'"}}}' > ~/.docker/config.json
+          echo '{"auths":{"quay.io":{"auth":"'"$(echo -n "${{ secrets.QUAY_USERNAME }}:${{ secrets.QUAY_TOKEN }}" | base64 -w0)"'"}}}' > ~/.docker/config.json
 
       - name: Push all bundles
         working-directory: pipeline/integration
         run: make bundles VERSION=${{ env.VERSION }}
+
+      - name: Push MCP eval bundle
+        working-directory: pipeline/integration
+        run: make bundle-mcp-eval VERSION=${{ env.VERSION }}
 
       - name: Print digests
         working-directory: pipeline/integration

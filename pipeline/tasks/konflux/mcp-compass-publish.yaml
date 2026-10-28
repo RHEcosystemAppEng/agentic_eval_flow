@@ -1,0 +1,87 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: mcp-compass-publish
+  labels:
+    app.kubernetes.io/name: abevalflow
+    app.kubernetes.io/component: konflux
+spec:
+  description: >-
+    Publish MCP static, conformance, and optional behavioral evaluation
+    summaries to Compass SoundCheck as facts on the dedicated MCP evaluation
+    track. Reads validated summary JSON files from a configurable workspace
+    directory. Dry-run by default; set dry-run to "false" to publish.
+  params:
+    - name: mcp-eval-image
+      type: string
+      default: "quay.io/ecosystem-appeng/abevalflow-mcp-eval:0.1"
+    - name: reports-dir
+      type: string
+      default: "reports"
+      description: Workspace-relative directory containing evaluation summary JSON files.
+    - name: entity-ref
+      type: string
+      description: >-
+        Compass entity ref for the MCP server being evaluated, e.g.
+        mcpserver:default/my-server.
+    - name: compass-url
+      type: string
+      default: "https://compass.stage.redhat.com/api/soundcheck/facts/"
+      description: Compass SoundCheck Facts API URL.
+    - name: dry-run
+      type: string
+      default: "true"
+      description: >-
+        Set to "false" to actually publish facts. Default is dry-run (log
+        payloads without sending).
+  workspaces:
+    - name: source
+      description: Workspace containing the reports directory.
+  results:
+    - name: publish-status
+      description: "dry-run | published | failed"
+  steps:
+    - name: publish
+      image: $(params.mcp-eval-image)
+      env:
+        - name: COMPASS_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: compass-api-credentials
+              key: COMPASS_API_KEY
+              optional: true
+        - name: REPORTS_DIR
+          value: $(params.reports-dir)
+        - name: ENTITY_REF
+          value: $(params.entity-ref)
+        - name: COMPASS_URL
+          value: $(params.compass-url)
+        - name: DRY_RUN
+          value: $(params.dry-run)
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        REPORTS_DIR="$(workspaces.source.path)/$REPORTS_DIR"
+
+        DRY_RUN_FLAG=""
+        if [ "$DRY_RUN" = "false" ]; then
+          DRY_RUN_FLAG="--no-dry-run"
+        fi
+
+        PUBLISH_MODE="DRY RUN"
+        [ -n "$DRY_RUN_FLAG" ] && PUBLISH_MODE="LIVE"
+        echo "=== Compass publish ($PUBLISH_MODE) ==="
+        if python -m scripts.mcp.runners.compass_publish \
+          --reports-dir "$REPORTS_DIR" \
+          --entity-ref "$ENTITY_REF" \
+          --compass-url "$COMPASS_URL" \
+          $DRY_RUN_FLAG; then
+          if [ -n "$DRY_RUN_FLAG" ]; then
+            echo -n "published" > "$(results.publish-status.path)"
+          else
+            echo -n "dry-run" > "$(results.publish-status.path)"
+          fi
+        else
+          echo -n "failed" > "$(results.publish-status.path)"
+          exit 1
+        fi

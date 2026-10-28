@@ -1,0 +1,79 @@
+# Template: phase Tasks generated from abevalflow/mcp/phase_registry.json
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: mcp-eval-pipeline
+spec:
+  params:
+  - name: task-bundle
+    type: string
+    description: OCI Tekton Bundle containing the MCP evaluation Tasks
+    default: quay.io/ecosystem-appeng/abevalflow-mcp-eval-bundle:0.1
+  - name: mcp-server-url
+    type: string
+    description: MCP server URL (reserved for callers)
+  - name: submission-name
+    type: string
+    description: Name of the MCP submission being evaluated
+  - name: namespace-name
+    type: string
+    description: Namespace of the deployed MCP server on the target cluster
+  - name: service-name
+    type: string
+    description: Kubernetes Service name of the MCP server
+    default: mcp-server
+  - name: service-port
+    type: string
+    description: Kubernetes Service port of the MCP server
+    default: '8080'
+  - name: mcp-eval-image
+    type: string
+    description: Container image containing MCP evaluation tools and scripts
+    default: quay.io/ecosystem-appeng/abevalflow-mcp-eval:0.1
+  - name: source-subdir
+    type: string
+    description: Path to MCP source code relative to the shared workspace
+    default: .
+  - name: static-eval-mode
+    type: string
+    description: Gate mode for static evaluation (block, warn, disabled)
+    default: block
+  - name: compass-url
+    type: string
+    description: Compass API endpoint
+  - name: compass-dry-run
+    type: string
+    description: If true, prepare but do not submit facts to Compass
+    default: 'true'
+  - name: entity-ref
+    type: string
+    description: Compass entity reference for the MCP server
+  workspaces:
+  - name: workspace
+    description: Shared source and reports workspace
+  - name: target-kubeconfig
+    description: Kubeconfig for the remote cluster hosting the MCP server
+  tasks: []
+  finally:
+  - name: compass-publish
+    taskRef:
+      resolver: bundles
+      params:
+      - name: bundle
+        value: $(params.task-bundle)
+      - name: name
+        value: mcp-compass-publish
+      - name: kind
+        value: Task
+    params:
+    - name: mcp-eval-image
+      value: $(params.mcp-eval-image)
+    - name: entity-ref
+      value: $(params.entity-ref)
+    - name: compass-url
+      value: $(params.compass-url)
+    - name: dry-run
+      value: $(params.compass-dry-run)
+    workspaces:
+    - name: source
+      workspace: workspace

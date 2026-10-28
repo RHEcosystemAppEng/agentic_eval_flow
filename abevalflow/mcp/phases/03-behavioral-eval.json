@@ -1,0 +1,47 @@
+{
+  "order": 30,
+  "id": "behavioral-eval",
+  "display_name": "Phase 3 — Behavioral Evaluation",
+  "description": "Behavioral MCP checks aggregated from mcpchecker results.",
+  "source": "pipeline",
+  "summary_fact_ref": "abevalflow:default/mcp_phase3",
+  "checks": {
+    "tool-correctness": {
+      "name": "Tool Correctness",
+      "fact_ref": "abevalflow:default/mcp_tool_correctness",
+      "track_name": "Tool Correctness",
+      "description": "Behavioral correctness of MCP server tools via mcpchecker."
+    },
+    "edge-case-handling": {
+      "name": "Edge Case Handling",
+      "fact_ref": "abevalflow:default/mcp_edge_case_handling",
+      "track_name": "Edge Case Handling",
+      "description": "Edge case handling and error resilience via mcpchecker."
+    },
+    "sensitive-data-redaction": {
+      "name": "Sensitive Data Redaction",
+      "fact_ref": "abevalflow:default/mcp_sensitive_data_redaction",
+      "track_name": "Sensitive Data Redaction",
+      "description": "Sensitive data handling and redaction via mcpchecker."
+    }
+  },
+  "task": {
+    "name": "mcp-behavioral-eval",
+    "file": "pipeline/tasks/konflux/mcp-behavioral-eval.yaml",
+    "params": {
+      "mcp-eval-image": "$(params.mcp-eval-image)",
+      "namespace-name": "$(params.namespace-name)",
+      "service-name": "$(params.service-name)",
+      "service-port": "$(params.service-port)",
+      "pipeline-run-id": "$(context.pipelineRun.name)",
+      "submission-name": "$(params.submission-name)"
+    },
+    "workspaces": {
+      "source": "workspace",
+      "target-kubeconfig": "target-kubeconfig"
+    }
+  },
+  "depends_on": [
+    "conformance-eval"
+  ]
+}
