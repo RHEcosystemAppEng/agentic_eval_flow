@@ -52,7 +52,7 @@ jobs:
         run: |
           echo "${{ secrets.QUAY_TOKEN }}" | tkn bundle push --help > /dev/null 2>&1 || true
           mkdir -p ~/.docker
-          echo '{"auths":{"quay.io":{"auth":"'$(echo -n "${{ secrets.QUAY_USERNAME }}:${{ secrets.QUAY_TOKEN }}" | base64 -w0)'"}}}' > ~/.docker/config.json
+          echo '{"auths":{"quay.io":{"auth":"'"$(echo -n "${{ secrets.QUAY_USERNAME }}:${{ secrets.QUAY_TOKEN }}" | base64 -w0)"'"}}}' > ~/.docker/config.json
 
       - name: Push all bundles
         working-directory: pipeline/integration
