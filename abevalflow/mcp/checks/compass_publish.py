@@ -28,13 +28,13 @@ from abevalflow.compass_facts import (
     _push_raw_fact,
     _resolve_env_vars,
 )
-from abevalflow.mcp.phase_config import PHASE_CONFIG, PHASES
 from abevalflow.mcp.eval_result import (
     PHASE_CONSUMED_CHECKS,
     McpCheckResult,
     McpEvalResult,
     McpPhaseResult,
 )
+from abevalflow.mcp.phase_config import PHASE_CONFIG, PHASES
 
 logger = logging.getLogger(__name__)
 
@@ -44,16 +44,10 @@ logger = logging.getLogger(__name__)
 
 # Facts are configured per phase; do not add Python conditions for new phases.
 PHASE_FACT_MAPS: dict[str, dict[str, str]] = {
-    name: {
-        check_id: check["fact_ref"]
-        for check_id, check in phase["checks"].items()
-        if check.get("fact_ref")
-    }
+    name: {check_id: check["fact_ref"] for check_id, check in phase["checks"].items() if check.get("fact_ref")}
     for name, phase in PHASES.items()
 }
-PHASE_SUMMARY_FACTS: dict[str, str] = {
-    name: phase["summary_fact_ref"] for name, phase in PHASES.items()
-}
+PHASE_SUMMARY_FACTS: dict[str, str] = {name: phase["summary_fact_ref"] for name, phase in PHASES.items()}
 MCP_EVAL_SUMMARY_FACT = PHASE_CONFIG["overall_fact_ref"]
 
 # Backwards compatible aliases (may be imported by existing callers/tests).

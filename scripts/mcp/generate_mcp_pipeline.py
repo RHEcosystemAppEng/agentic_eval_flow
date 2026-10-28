@@ -6,6 +6,7 @@ Run from repo root:
     python -m scripts.mcp.generate_mcp_pipeline --check  # CI consistency check
     python -m scripts.mcp.generate_mcp_pipeline --task-files
 """
+
 from __future__ import annotations
 
 import argparse
@@ -100,8 +101,11 @@ def main() -> int:
     if args.task_files:
         print(" ".join(os.path.relpath(p, REPO_ROOT / "pipeline/integration") for p in task_files()))
         return 0
-    generated = "# GENERATED from phase_registry.json; edit the template or registry, not this file.\n" + yaml.safe_dump(
-        build_pipeline(), sort_keys=False, allow_unicode=True,
+    header = "# GENERATED from phase_registry.json; edit the template or registry, not this file.\n"
+    generated = header + yaml.safe_dump(
+        build_pipeline(),
+        sort_keys=False,
+        allow_unicode=True,
     )
     if args.check:
         verify_task_interfaces()

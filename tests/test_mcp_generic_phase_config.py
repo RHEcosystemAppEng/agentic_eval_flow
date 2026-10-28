@@ -1,4 +1,5 @@
 """Regression checks for declarative MCP phases and the generated Pipeline."""
+
 from __future__ import annotations
 
 import json
@@ -8,8 +9,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-import yaml
 import pytest
+import yaml
 
 from abevalflow.mcp.phase_config import PHASES, load_phase_config
 from scripts.mcp.generate_mcp_pipeline import build_pipeline
@@ -79,6 +80,10 @@ assert 'performance-eval' in PHASES
 assert build_pipeline()['spec']['tasks'][-1]['name'] == 'performance-eval'
 """
     result = subprocess.run(
-        [sys.executable, "-c", script], cwd=ROOT, env=env, text=True, capture_output=True,
+        [sys.executable, "-c", script],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
     )
     assert result.returncode == 0, result.stderr

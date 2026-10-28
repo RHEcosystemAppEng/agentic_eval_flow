@@ -162,10 +162,7 @@ class TestMCPBundleContent(unittest.TestCase):
         """Pipeline dependencies match the phase registry."""
         from abevalflow.mcp.phase_config import PHASES
 
-        tasks = {
-            task["name"]: task
-            for task in self.pipeline["spec"]["tasks"]
-        }
+        tasks = {task["name"]: task for task in self.pipeline["spec"]["tasks"]}
 
         for phase_name, phase in PHASES.items():
             expected_dependencies = phase.get("depends_on", [])
@@ -178,40 +175,26 @@ class TestMCPBundleContent(unittest.TestCase):
             )
 
         # Publishing is executed after the evaluation tasks.
-        final_names = [
-            task["name"]
-            for task in self.pipeline["spec"]["finally"]
-        ]
+        final_names = [task["name"] for task in self.pipeline["spec"]["finally"]]
         self.assertIn("compass-publish", final_names)
 
     def test_pipeline_task_references(self):
         """All evaluation tasks use the correct Tekton Bundle references."""
         from abevalflow.mcp.phase_config import PHASES
 
-        tasks = {
-            task["name"]: task
-            for task in self.pipeline["spec"]["tasks"]
-        }
+        tasks = {task["name"]: task for task in self.pipeline["spec"]["tasks"]}
 
         tasks["compass-publish"] = next(
-            task
-            for task in self.pipeline["spec"]["finally"]
-            if task["name"] == "compass-publish"
+            task for task in self.pipeline["spec"]["finally"] if task["name"] == "compass-publish"
         )
 
-        expected = {
-            name: phase["task"]["name"]
-            for name, phase in PHASES.items()
-        }
+        expected = {name: phase["task"]["name"] for name, phase in PHASES.items()}
         expected["compass-publish"] = "mcp-compass-publish"
 
         for logical_name, task_name in expected.items():
             ref = tasks[logical_name]["taskRef"]
 
-            params = {
-                param["name"]: param["value"]
-                for param in ref["params"]
-            }
+            params = {param["name"]: param["value"] for param in ref["params"]}
 
             self.assertEqual(ref.get("resolver"), "bundles", logical_name)
             self.assertEqual(
@@ -224,9 +207,7 @@ class TestMCPBundleContent(unittest.TestCase):
 
     def test_bundle_makefile_uses_registry(self):
         """Bundle build discovers evaluation tasks from the phase registry."""
-        makefile_path = (
-                self.repo_root / "pipeline" / "integration" / "Makefile"
-        )
+        makefile_path = self.repo_root / "pipeline" / "integration" / "Makefile"
         makefile = makefile_path.read_text()
 
         expected_entries = (
@@ -240,6 +221,7 @@ class TestMCPBundleContent(unittest.TestCase):
 
         for entry in expected_entries:
             self.assertIn(entry, makefile)
+
 
 if __name__ == "__main__":
     unittest.main()

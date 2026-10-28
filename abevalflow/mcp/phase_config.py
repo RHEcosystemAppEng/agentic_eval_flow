@@ -5,6 +5,7 @@ source of truth for Compass mapping, track definitions and Tekton entries.
 Adding a phase requires adding one new phases/*.json file and its Tekton Task.
 MCP_PHASE_CONFIG and MCP_PHASES_DIR can be overridden for isolated tests.
 """
+
 from __future__ import annotations
 
 import json

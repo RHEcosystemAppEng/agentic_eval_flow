@@ -29,10 +29,10 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-from abevalflow.mcp.phase_config import PHASES
 from abevalflow.mcp.checks.compass_publish import (
     PHASE_FACT_MAPS,
 )
+from abevalflow.mcp.phase_config import PHASES
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -110,15 +110,10 @@ PHASE_CHECKS: dict[str, list[dict[str, Any]]] = {
     phase_name: _build_checks_for_phase(phase_name) for phase_name in PHASES
 }
 ALL_CHECK_DEFS = [check for checks in PHASE_CHECKS.values() for check in checks]
-CONSUMED_TRACK_CHECKS = [
-    check
-    for phase in PHASES.values()
-    for check in phase.get("consumed_track_checks", [])
-]
+CONSUMED_TRACK_CHECKS = [check for phase in PHASES.values() for check in phase.get("consumed_track_checks", [])]
 OWNED_TRACK_CHECKS = [{key: check[key] for key in ("id", "name", "description")} for check in ALL_CHECK_DEFS]
 PHASE_LEVEL_METADATA: dict[str, tuple[str, str]] = {
-    name: (phase.get("display_name", name), phase.get("description", ""))
-    for name, phase in PHASES.items()
+    name: (phase.get("display_name", name), phase.get("description", "")) for name, phase in PHASES.items()
 }
 
 
@@ -127,17 +122,18 @@ def _build_levels() -> list[dict[str, Any]]:
     levels = []
     for ordinal, (phase_name, phase) in enumerate(PHASES.items(), 1):
         level_checks = [
-            {key: check[key] for key in ("id", "name", "description")}
-            for check in PHASE_CHECKS[phase_name]
+            {key: check[key] for key in ("id", "name", "description")} for check in PHASE_CHECKS[phase_name]
         ]
         level_checks.extend(phase.get("consumed_track_checks", []))
         level_name, level_description = PHASE_LEVEL_METADATA[phase_name]
-        levels.append({
-            "ordinal": ordinal,
-            "name": level_name,
-            "description": level_description,
-            "checks": level_checks,
-        })
+        levels.append(
+            {
+                "ordinal": ordinal,
+                "name": level_name,
+                "description": level_description,
+                "checks": level_checks,
+            }
+        )
     return levels
 
 
@@ -145,10 +141,7 @@ TRACK_DEFINITION = {
     "id": TRACK_ID,
     "type": "standard",
     "name": TRACK_NAME,
-    "description": (
-        "MCP evaluation results from ABEvalFlow. "
-        "Each configured phase is shown as a separate level."
-    ),
+    "description": ("MCP evaluation results from ABEvalFlow. Each configured phase is shown as a separate level."),
     "ownerEntityRef": OWNER,
     "filter": FILTER,
     "levels": _build_levels(),

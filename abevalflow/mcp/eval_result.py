@@ -25,25 +25,20 @@ logger = logging.getLogger(__name__)
 # Mapping is data-driven; keep the old public constants for compatibility with
 # other MCP modules that import them.
 PHASE_CHECK_NAMES: dict[str, dict[str, str]] = {
-    name: {check_id: check["name"] for check_id, check in phase["checks"].items()}
-    for name, phase in PHASES.items()
+    name: {check_id: check["name"] for check_id, check in phase["checks"].items()} for name, phase in PHASES.items()
 }
 PHASE_CONSUMED_CHECKS: dict[str, set[str]] = {
     name: consumed
     for name, phase in PHASES.items()
     if (consumed := {check_id for check_id, check in phase["checks"].items() if check.get("consumed")})
 }
-PHASE_SOURCE_DEFAULTS: dict[str, str] = {
-    name: phase.get("source", "pipeline") for name, phase in PHASES.items()
-}
+PHASE_SOURCE_DEFAULTS: dict[str, str] = {name: phase.get("source", "pipeline") for name, phase in PHASES.items()}
 PHASE_CHECK_SOURCE_DEFAULTS: dict[str, dict[str, str]] = {
     name: check_sources
     for name, phase in PHASES.items()
-    if (check_sources := {
-        check_id: check["source"]
-        for check_id, check in phase["checks"].items()
-        if "source" in check
-    })
+    if (
+        check_sources := {check_id: check["source"] for check_id, check in phase["checks"].items() if "source" in check}
+    )
 }
 
 DEFAULT_SOURCE = "pipeline"
