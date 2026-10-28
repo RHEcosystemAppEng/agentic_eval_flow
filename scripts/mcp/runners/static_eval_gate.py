@@ -27,7 +27,7 @@ SUMMARY_FILENAME = "static-eval-summary.json"
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run MCP static evaluation gates")
+    parser = argparse.ArgumentParser(description="Run MCP Phase 1 gates")
     parser.add_argument(
         "--results-dir",
         type=Path,
@@ -92,7 +92,7 @@ def main() -> int:
         )
     )
     logger.info(
-        "Static evaluation overall: %s",
+        "Phase 1 overall: %s",
         "PASS" if overall_passed else "FAIL",
     )
     if not overall_passed and args.mode == GateMode.BLOCK.value:

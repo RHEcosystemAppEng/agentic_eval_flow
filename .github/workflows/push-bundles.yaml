@@ -6,6 +6,7 @@ on:
     paths:
       - 'pipeline/tasks/konflux/**'
       - 'pipeline/integration/Makefile'
+      - 'pipeline/pipelines/mcp-eval-pipeline.yaml'
   workflow_dispatch:
     inputs:
       version:
