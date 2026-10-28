@@ -40,6 +40,7 @@ RUN chmod +x /usr/local/bin/mcpchecker
 # gates, schemas, observability; scripts.mcp are the Tekton entry points).
 COPY abevalflow/__init__.py /opt/abevalflow/__init__.py
 COPY abevalflow/schemas.py /opt/abevalflow/schemas.py
+COPY abevalflow/compass_facts.py /opt/abevalflow/compass_facts.py
 COPY abevalflow/mcp /opt/abevalflow/mcp
 COPY abevalflow/gates /opt/abevalflow/gates
 COPY abevalflow/observability /opt/abevalflow/observability

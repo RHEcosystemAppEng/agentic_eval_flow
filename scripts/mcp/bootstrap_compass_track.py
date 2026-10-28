@@ -146,8 +146,8 @@ TRACK_DEFINITION = {
     "type": "standard",
     "name": TRACK_NAME,
     "description": (
-        "Static, conformance, and behavioral MCP evaluation results from ABEvalFlow. "
-        "Each phase is shown as a separate level."
+        "MCP evaluation results from ABEvalFlow. "
+        "Each configured phase is shown as a separate level."
     ),
     "ownerEntityRef": OWNER,
     "filter": FILTER,

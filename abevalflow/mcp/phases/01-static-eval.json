@@ -1,0 +1,40 @@
+{
+  "order": 10,
+  "id": "static-eval",
+  "display_name": "Phase 1 — Static Analysis",
+  "description": "Pipeline-verified static checks for MCP artifacts.",
+  "source": "pipeline",
+  "summary_fact_ref": "abevalflow:default/mcp_phase1",
+  "checks": {
+    "mcp-secrets": {
+      "name": "Secrets Management",
+      "fact_ref": "abevalflow:default/mcp_secrets",
+      "track_name": "Secrets Management (Pipeline-Verified)",
+      "description": "Static scan of the MCP artifact for hardcoded credentials via gitleaks."
+    },
+    "mcp-no-user-code": {
+      "name": "No User-Code Execution",
+      "fact_ref": "abevalflow:default/mcp_no_user_code",
+      "track_name": "No User-Code Execution (Pipeline-Verified)",
+      "description": "Static analysis for dynamic/arbitrary code execution patterns via semgrep."
+    },
+    "mcp-license": {
+      "name": "License Compliance",
+      "fact_ref": "abevalflow:default/mcp_license",
+      "track_name": "License Compliance (Pipeline-Verified)",
+      "description": "Top-level declared license validated against the approved license list."
+    }
+  },
+  "task": {
+    "name": "mcp-static-eval",
+    "file": "pipeline/tasks/konflux/mcp-static-eval.yaml",
+    "params": {
+      "mcp-eval-image": "$(params.mcp-eval-image)",
+      "source-subdir": "$(params.source-subdir)",
+      "mode": "$(params.static-eval-mode)"
+    },
+    "workspaces": {
+      "source": "workspace"
+    }
+  }
+}

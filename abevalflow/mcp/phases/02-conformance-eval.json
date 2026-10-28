@@ -1,0 +1,97 @@
+{
+  "order": 20,
+  "id": "conformance-eval",
+  "display_name": "Phase 2 — Conformance Testing",
+  "description": "MCP protocol and server conformance checks, including existing Compass-owned checks.",
+  "source": "probe",
+  "summary_fact_ref": "abevalflow:default/mcp_phase2",
+  "checks": {
+    "http-support": {
+      "name": "HTTP Support",
+      "fact_ref": "abevalflow:default/mcp_http_support",
+      "track_name": "HTTP Support",
+      "description": "Server responds correctly over HTTP with parseable JSON-RPC."
+    },
+    "protocol-compliance": {
+      "name": "Protocol Compliance",
+      "fact_ref": "abevalflow:default/mcp_protocol_compliance",
+      "track_name": "Protocol Compliance",
+      "description": "MCP initialize, capability negotiation, and JSON-RPC 2.0 correctness."
+    },
+    "schema-conformance": {
+      "name": "Schema Conformance",
+      "fact_ref": "abevalflow:default/mcp_schema_conformance",
+      "track_name": "Schema Conformance",
+      "description": "Tool input/output schemas are well-formed JSON Schema objects."
+    },
+    "tool-annotations": {
+      "name": "Tool Annotations",
+      "fact_ref": "abevalflow:default/mcp_tool_annotations",
+      "track_name": "Tool Annotations",
+      "description": "Present readOnlyHint/destructiveHint annotations are boolean-typed."
+    },
+    "rate-limiting": {
+      "name": "Rate Limiting",
+      "fact_ref": "abevalflow:default/mcp_rate_limiting",
+      "track_name": "Rate Limiting (Pipeline-Verified)",
+      "description": "Server returns HTTP 429 under burst load (20-request burst)."
+    },
+    "response-size-limit": {
+      "name": "Response Size Limit",
+      "fact_ref": "abevalflow:default/mcp_response_size_limit",
+      "track_name": "Response Size Limit",
+      "description": "Server enforces response size cap. Deferred to Phase 3."
+    },
+    "mandatory-timeouts": {
+      "name": "Mandatory Timeouts",
+      "fact_ref": "abevalflow:default/mcp_mandatory_timeouts",
+      "track_name": "Mandatory Timeouts",
+      "description": "Server enforces bounded response time. Deferred to Phase 3."
+    },
+    "openapi-conformance": {
+      "name": "OpenAPI Conformance",
+      "fact_ref": "abevalflow:default/mcp_openapi_conformance",
+      "track_name": "OpenAPI Conformance",
+      "description": "Server publishes and conforms to an OpenAPI 3.x contract (or MCP-native equivalent)."
+    },
+    "tool-name-rules": {
+      "name": "Tool-Name Rules",
+      "source": "compass",
+      "consumed": true
+    },
+    "oauth-catalog-match": {
+      "name": "OAuth Matches Catalog",
+      "source": "compass",
+      "consumed": true
+    }
+  },
+  "task": {
+    "name": "mcp-conformance-eval",
+    "file": "pipeline/tasks/konflux/mcp-conformance-eval.yaml",
+    "params": {
+      "mcp-eval-image": "$(params.mcp-eval-image)",
+      "namespace-name": "$(params.namespace-name)",
+      "service-name": "$(params.service-name)",
+      "service-port": "$(params.service-port)"
+    },
+    "workspaces": {
+      "source": "workspace",
+      "target-kubeconfig": "target-kubeconfig"
+    }
+  },
+  "depends_on": [
+    "static-eval"
+  ],
+  "consumed_track_checks": [
+    {
+      "id": "mcp-tool-schema-check",
+      "name": "MCP Tool Schema Check",
+      "description": "Tool names must be 1–128 characters using only A-Za-z0-9, underscore, hyphen, and dot."
+    },
+    {
+      "id": "mcp-oauth-scope-match",
+      "name": "OAuth Matches Catalog",
+      "description": "Catalog-declared OAuth scopes and auth server URL match the server PRM."
+    }
+  ]
+}

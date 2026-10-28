@@ -7,10 +7,12 @@ TASKS = parse-snapshot prepare test red-team evaluate analyze-scorecard store em
         create-namespace deploy-mcp wait-ready teardown-namespace \
         mcp-static-eval mcp-conformance-eval mcp-behavioral-eval mcp-compass-publish check-label
 
-MCP_EVAL_TASKS = mcp-static-eval mcp-conformance-eval mcp-behavioral-eval mcp-compass-publish
+# The phase registry drives the evaluation Task files in the dedicated bundle.
+# The Compass publishing Task remains a fixed "finally" Task.
+MCP_EVAL_TASK_FILES := $(shell cd ../.. && python3 -m scripts.mcp.generate_mcp_pipeline --task-files)
 MCP_EVAL_PIPELINE = mcp-eval-pipeline
 
-.PHONY: bundles mcp-bundles login list clean help
+.PHONY: bundles mcp-bundles verify-mcp-pipeline login list clean help
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -25,12 +27,13 @@ bundle-%: ## Push a single task bundle (e.g. make bundle-parse-snapshot)
 	  -f $(TASKS_DIR)/$*.yaml
 	@echo ""
 
-bundle-mcp-eval: ## Push MCP eval bundle (4 tasks + pipeline into single image)
+verify-mcp-pipeline: ## Validate generated Pipeline matches registry and Tasks
+	cd ../.. && python3 -m scripts.mcp.generate_mcp_pipeline --check
+
+bundle-mcp-eval: verify-mcp-pipeline ## Push MCP eval bundle (eval tasks + Compass publisher + pipeline)
 	@echo "=== Pushing abevalflow-mcp-eval-bundle ==="
 	tkn bundle push $(QUAY_NS)/abevalflow-mcp-eval-bundle:$(VERSION) \
-	  -f $(TASKS_DIR)/mcp-static-eval.yaml \
-	  -f $(TASKS_DIR)/mcp-conformance-eval.yaml \
-	  -f $(TASKS_DIR)/mcp-behavioral-eval.yaml \
+	  $(foreach file,$(MCP_EVAL_TASK_FILES),-f $(file)) \
 	  -f $(TASKS_DIR)/mcp-compass-publish.yaml \
 	  -f $(PIPELINES_DIR)/mcp-eval-pipeline.yaml
 	@echo ""
