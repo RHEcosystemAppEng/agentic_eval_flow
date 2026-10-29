@@ -123,6 +123,91 @@ Three Tekton Tasks run inside the eval container image
 Task YAMLs: `pipeline/tasks/konflux/mcp-static-eval.yaml`,
 `mcp-conformance-eval.yaml`, and `mcp-behavioral-eval.yaml`.
 
+## Publishing results to Compass SoundCheck
+
+The evaluation writes phase summaries locally first. The Compass publisher
+converts those summaries into SoundCheck facts for the evaluated MCP catalog
+entity. The API is the delivery mechanism; the code here makes publishing
+repeatable for local and pipeline runs.
+
+```text
+Static evaluation ────────> static-eval-summary.json ──┐
+Conformance evaluation ───> conformance-eval-summary.json ─┼─> publisher ─> SoundCheck facts
+Behavioral evaluation ────> behavioral-eval-summary.json ─┘  (optional)
+```
+
+The fact generation logic lives in `scripts/mcp/fact_generator.py`. The CLI
+entry point is `scripts/mcp/runners/generate_compass_facts.py`; the Tekton
+tasks are `pipeline/tasks/konflux/generate-compass-facts.yaml` and
+`pipeline/tasks/konflux/publish-to-compass.yaml`.
+
+### Publishing evaluation facts
+
+The publishing flow is split into two stages:
+
+1. **Fact generation** (`generate_compass_facts.py`) — transforms phase summary
+   JSON files into Compass fact payloads. Each fact file contains `factRef` and
+   `data`, but **not** `entityRef` (that's injected at publish time from the
+   target cluster Secret).
+
+2. **Publishing** (`publish-to-compass.yaml` task) — creates a ConfigMap from
+   fact files, launches a Kubernetes Job on the target cluster that injects
+   `entityRef` from the Compass Secret and POSTs each fact to the SoundCheck
+   API.
+
+The runner accepts a directory containing phase summary JSON files
+(`*-summary.json`). It generates mapped individual check facts, one phase
+summary fact per phase, and one combined evaluation summary fact. Each fact
+file has this structure (no `entityRef` yet):
+
+```json
+{
+  "factRef": "abevalflow:default/mcp_http_support",
+  "data": {
+    "passed": true,
+    "score": 1.0,
+    "status": "pass",
+    "message": "Server responded correctly over HTTP.",
+    "source": "probe",
+    "evaluated_at": "2026-10-29T12:00:00Z"
+  }
+}
+```
+
+Generate fact files locally:
+
+```bash
+python -m scripts.mcp.runners.generate_compass_facts \
+  --summary-dir reports/my-server \
+  --output-dir facts
+```
+
+The Tekton task handles publishing. It copies the Compass Secret from a
+configured namespace, creates a ConfigMap with the fact files, and launches a
+Job that injects `entityRef` and POSTs to Compass. Dry-run is enabled by
+default.
+
+Not-evaluated checks are omitted as individual facts. The two Compass-consumed
+checks (`tool-name-rules`, `oauth-catalog-match`) are included in the phase
+summary but are not re-published individually, avoiding a circular write. The
+pipeline can read those existing results with `GET
+/api/soundcheck/results?entityRef=<url-encoded-ref>&checks=mcp-tool-schema-check&checks=mcp-oauth-scope-match`.
+
+### Adding a phase
+
+The fact generator accepts any phase name with the standard summary schema. To
+add a new phase, update `scripts/mcp/fact_generator.py` with:
+
+1. **Check display names** in `PHASE_CHECK_NAMES`
+2. **Consumed checks** (if any) in `PHASE_CONSUMED_CHECKS`
+3. **Source defaults** in `PHASE_SOURCE_DEFAULTS` and `PHASE_CHECK_SOURCE_DEFAULTS`
+4. **Fact ref mappings** in `PHASE_FACT_MAPS`
+5. **Phase summary fact ref** in `PHASE_SUMMARY_FACTS`
+
+Unmapped facts are skipped with a warning. Compass track and check definitions
+are managed separately via infrastructure setup (not part of the evaluation
+pipeline).
+
 ## Future repo split
 
 If Tekton task YAMLs move to a separate repo, the Python code stays here (baked
