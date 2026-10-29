@@ -136,142 +136,77 @@ Conformance evaluation ───> conformance-eval-summary.json ─┼─> publi
 Behavioral evaluation ────> behavioral-eval-summary.json ─┘  (optional)
 ```
 
-The report model and fact mapping live in `abevalflow/mcp/eval_result.py` and
-`abevalflow/mcp/checks/compass_publish.py`. The CLI entry point is
-`scripts/mcp/runners/compass_publish.py`; the Tekton task is
-`pipeline/tasks/konflux/mcp-compass-publish.yaml`.
+The fact generation logic lives in `scripts/mcp/fact_generator.py`. The CLI
+entry point is `scripts/mcp/runners/generate_compass_facts.py`; the Tekton
+tasks are `pipeline/tasks/konflux/generate-compass-facts.yaml` and
+`pipeline/tasks/konflux/publish-to-compass.yaml`.
 
-### Track and check setup
+### Publishing evaluation facts
 
-The dedicated track is **ABEvalFlow MCP Evaluation** (`abevalflow-mcp-evaluation`),
-owned by `group:redhat/ai5-marketplace` and filtered to MCP server entities.
-It separates checks into three levels:
+The publishing flow is split into two stages:
 
-1. Phase 1 — Static Analysis
-2. Phase 2 — Conformance Testing
-3. Phase 3 — Behavioral Evaluation
+1. **Fact generation** (`generate_compass_facts.py`) — transforms phase summary
+   JSON files into Compass fact payloads. Each fact file contains `factRef` and
+   `data`, but **not** `entityRef` (that's injected at publish time from the
+   target cluster Secret).
 
-The setup script, `scripts/mcp/bootstrap_compass_track.py`, is a manual,
-per-environment provisioning step—not part of each evaluation run. It
-registers twelve ABEvalFlow-owned check definitions, then creates the track or
-updates its levels if it already exists. Two existing Compass checks
-(`mcp-tool-schema-check` and `mcp-oauth-scope-match`) are referenced in the
-Phase 2 level; their definitions are not recreated by this script.
+2. **Publishing** (`publish-to-compass.yaml` task) — creates a ConfigMap from
+   fact files, launches a Kubernetes Job on the target cluster that injects
+   `entityRef` from the Compass Secret and POSTs each fact to the SoundCheck
+   API.
 
-Both setup and publishing are **dry-run by default**. Use `--no-dry-run` only
-for an explicitly authorized live write. The API key must be provided via the
-`COMPASS_API_KEY` environment variable; never put it in source, reports, or
-command examples.
-
-Preview setup requests:
-
-```bash
-python -m scripts.mcp.bootstrap_compass_track \
-  --compass-url https://compass.stage.redhat.com/api/soundcheck
-```
-
-Actually provision a permitted environment:
-
-```bash
-python -m scripts.mcp.bootstrap_compass_track \
-  --compass-url https://compass.stage.redhat.com/api/soundcheck \
-  --no-dry-run
-```
-
-The bootstrap uses `POST /checks` with `{"checks": [...]}`. If that returns
-HTTP 409 for existing check IDs, it falls back to `PUT /checks/{check-id}`.
-It creates the track using `POST /tracks` with `{"tracks": [track]}`; if the
-track already exists (HTTP 409), it updates it with `PUT /tracks/{track-id}`
-and the track definition as the body.
-
-### Preview and publish evaluation facts
-
-The runner accepts explicit summary paths or a scoped report directory. In
-directory mode, it discovers `*-summary.json` recursively beneath that
-directory only. Summary filenames use `<phase-name>-summary.json`; the phase
-name must match the JSON `phase` field. It publishes mapped individual checks,
-one summary fact per mapped phase, and one combined summary fact to the
-SoundCheck Facts API. The request shape is `POST /api/soundcheck/facts/` with a `facts` array;
-each fact contains `factRef`, `entityRef`, and `data`. For example:
+The runner accepts a directory containing phase summary JSON files
+(`*-summary.json`). It generates mapped individual check facts, one phase
+summary fact per phase, and one combined evaluation summary fact. Each fact
+file has this structure (no `entityRef` yet):
 
 ```json
 {
-  "facts": [{
-    "factRef": "abevalflow:default/mcp_http_support",
-    "entityRef": "mcpserver:default/my-server",
-    "data": {
-      "passed": true,
-      "score": 1.0,
-      "status": "pass",
-      "message": "Server responded correctly over HTTP.",
-      "source": "probe",
-      "evaluated_at": "<UTC timestamp>"
-    }
-  }]
+  "factRef": "abevalflow:default/mcp_http_support",
+  "data": {
+    "passed": true,
+    "score": 1.0,
+    "status": "pass",
+    "message": "Server responded correctly over HTTP.",
+    "source": "probe",
+    "evaluated_at": "2026-10-29T12:00:00Z"
+  }
 }
 ```
 
-Preview (no HTTP write):
+Generate fact files locally:
 
 ```bash
-python -m scripts.mcp.runners.compass_publish \
-  --reports-dir reports/my-server \
-  --entity-ref mcpserver:default/my-server \
-  --compass-url https://compass.stage.redhat.com/api/soundcheck/facts/
+python -m scripts.mcp.runners.generate_compass_facts \
+  --summary-dir reports/my-server \
+  --output-dir facts
 ```
 
-Pass exact summary files when a task already has their paths:
-
-```bash
-python -m scripts.mcp.runners.compass_publish \
-  --summary-files reports/my-server/static-eval-summary.json reports/my-server/conformance-eval-summary.json reports/my-server/behavioral-eval-summary.json \
-  --entity-ref mcpserver:default/my-server \
-  --compass-url https://compass.stage.redhat.com/api/soundcheck/facts/
-```
-
-Live publish requires explicit opt-in and the API key in the environment:
-
-```bash
-python -m scripts.mcp.runners.compass_publish \
-  --reports-dir reports/my-server \
-  --entity-ref mcpserver:default/my-server \
-  --compass-url https://compass.stage.redhat.com/api/soundcheck/facts/ \
-  --no-dry-run
-```
+The Tekton task handles publishing. It copies the Compass Secret from a
+configured namespace, creates a ConfigMap with the fact files, and launches a
+Job that injects `entityRef` and POSTs to Compass. Dry-run is enabled by
+default.
 
 Not-evaluated checks are omitted as individual facts. The two Compass-consumed
-checks are included in the phase summary but are not re-published individually,
-avoiding a circular write. The pipeline can read those existing results with
-`GET /api/soundcheck/results?entityRef=<url-encoded-ref>&checks=mcp-tool-schema-check&checks=mcp-oauth-scope-match`.
+checks (`tool-name-rules`, `oauth-catalog-match`) are included in the phase
+summary but are not re-published individually, avoiding a circular write. The
+pipeline can read those existing results with `GET
+/api/soundcheck/results?entityRef=<url-encoded-ref>&checks=mcp-tool-schema-check&checks=mcp-oauth-scope-match`.
 
 ### Adding a phase
 
-The loader and publisher accept any phase name with the standard summary
-schema. Add phase configuration for check display names, consumed checks,
-source defaults, check fact references, and the phase summary fact reference.
-Unmapped facts are skipped with a warning. Compass track definitions remain a
-separate registration concern.
+The fact generator accepts any phase name with the standard summary schema. To
+add a new phase, update `scripts/mcp/fact_generator.py` with:
 
-The staging validation used
-`mcpserver:ai5-marketplace/openshift-mcp-server`. The local MCP endpoint served
-its protocol/tool surface, but cluster authentication was unavailable, so no
-Kubernetes operations were tested or performed. The publisher sent 11 facts;
-all POSTs returned HTTP 200. Read-back returned HTTP 200 with 10 result
-entries. Phase 1's secrets scan reported 112 high-severity matches (not
-triaged here, so these are scanner findings, not confirmed exposed secrets).
-Phase 2 had passing HTTP support, schema, annotations, and OpenAPI/MCP-native
-contract checks; protocol compliance failed, and rate limiting, response-size
-limit, and mandatory-timeout checks were not evaluated. The two existing
-Compass-consumed results returned errors because expected catalog metadata was
-missing; their definitions were not modified by the publisher.
+1. **Check display names** in `PHASE_CHECK_NAMES`
+2. **Consumed checks** (if any) in `PHASE_CONSUMED_CHECKS`
+3. **Source defaults** in `PHASE_SOURCE_DEFAULTS` and `PHASE_CHECK_SOURCE_DEFAULTS`
+4. **Fact ref mappings** in `PHASE_FACT_MAPS`
+5. **Phase summary fact ref** in `PHASE_SUMMARY_FACTS`
 
-The dedicated track is visible at:
-<https://compass.stage.redhat.com/soundcheck/tracks/abevalflow-mcp-evaluation/overview?section=checks-by-levels>
-
-The Tekton task is prepared with dry-run enabled by default. Before automated
-live publishing, verify that the pipeline invokes it after the Phase 1 and 2
-gates and that the cluster secret `compass-api-credentials` is configured with
-appropriate access. Track/check provisioning remains a separate manual step.
+Unmapped facts are skipped with a warning. Compass track and check definitions
+are managed separately via infrastructure setup (not part of the evaluation
+pipeline).
 
 ## Future repo split
 

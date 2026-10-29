@@ -4,7 +4,8 @@ TASKS_DIR := ../tasks/konflux
 
 TASKS = parse-snapshot prepare test red-team evaluate analyze-scorecard store emit-result \
         create-namespace deploy-mcp wait-ready teardown-namespace \
-        mcp-static-eval mcp-conformance-eval mcp-behavioral-eval check-label
+        mcp-static-eval mcp-conformance-eval mcp-behavioral-eval \
+        generate-compass-facts publish-to-compass check-label
 
 .PHONY: bundles login list clean help
 
