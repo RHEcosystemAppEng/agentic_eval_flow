@@ -128,7 +128,8 @@ Only skills that have been published to this database are included in its catalo
 | View | Result |
 |---|---|
 | `plugin_results` | Counts of known/evaluated skills, emitted recommendations, errors and findings by severity, using each skill's latest evaluation. |
-| `latest_skill_results` | One row per evaluated skill: provenance, tier status/verdicts, treatment/control reward, pairwise score/outcome counts, and severity counts. |
+| `latest_skill_scorecards` | One readable row per evaluated skill: quality/security scan scores, submission review, behavior score, sample sizes, status, and severity counts. |
+| `latest_skill_results` | Detailed one-row-per-skill result: provenance, tier status/verdicts, treatment/control reward, pairwise outcomes, and findings by severity. |
 | `latest_skill_judge_scores` | Latest aggregate judge scores per skill and arm, including tool-emitted details. |
 | `check_finding_counts` | Counts of every severity per check, for all evaluations. |
 | `latest_skill_evaluations` | Latest parent evaluation for each skill, including failed and partial runs. |
@@ -136,6 +137,7 @@ Only skills that have been published to this database are included in its catalo
 ```sql
 -- Plugin overview and each skill's latest scores.
 SELECT * FROM plugin_results WHERE plugin_name = 'rh-sre';
+SELECT * FROM latest_skill_scorecards WHERE plugin_name = 'rh-sre';
 SELECT * FROM latest_skill_results WHERE plugin_name = 'rh-sre';
 SELECT * FROM latest_skill_judge_scores WHERE plugin_name = 'rh-sre';
 
@@ -157,8 +159,28 @@ WHERE v.evaluation_id = :evaluation_id;
 SELECT * FROM evidence_artifacts WHERE evaluation_id = :evaluation_id;
 ```
 
-Views do not invent a single plugin score across different score types. The
-pipeline's recommendation and every underlying score remain distinct outputs.
+`latest_skill_scorecards` keeps separate score meanings: quality scan,
+submission review, security scan, absolute treatment reward, and pairwise win
+rate. Scanner scores use `severity_penalty_v1`: start at 1.0 and subtract 1.0
+per critical, 0.30 per high, 0.10 per medium, and 0.02 per low finding, clamped
+to [0, 1]. Informational findings do not reduce the score. A failed or
+incomplete scan has a null score. The finding counts and the check's `details`
+include the calculation breakdown. These weights are policy values, not a
+claim that severity can be measured objectively.
+
+Behavior score is the treatment's absolute mean reward on [0, 1]. For the
+standardized CVE submissions it is the configured weighted mean of
+`task_accuracy` (0.65), `workflow_contract` (0.30), and
+`report_completeness` (0.05). The same weights are used by both CVE skills,
+both pairwise arms, and single-run configs. The configured weights and score
+ranges are retained in each variant's `scoring` data. Pairwise win rate is a
+separate relative comparison and should always be read with its case count.
+
+The optional `gate_policy.gates.evaluation.minimum_reward` sets the absolute
+treatment reward floor in pairwise mode; `threshold` remains the separate
+pairwise win-rate threshold. A pairwise result passes only when both configured
+conditions pass. The recommendation and each underlying score remain separate
+outputs; there is no cross-aspect grand total.
 
 ### Publication ordering and retries
 
@@ -182,6 +204,14 @@ includes `valid_skill_structure`, Compass also receives a standalone
 `<fact_ref_prefix>valid-skill-structure` fact with that check's own result,
 independent of its certification level's overall status. Certification push
 outcomes are recorded in `scorecard.json`.
+
+Compass verifies TLS certificates and hostnames by default using Python's trust
+store (including `SSL_CERT_FILE`). For environments that explicitly opt out,
+`--insecure-ssl` / `ABEVAL_INSECURE_SSL=true` also disables verification for all
+Compass gate, certification, summary, and structure fact requests. This is a
+runtime setting, not submission metadata, and logs a warning when used. It
+removes server authentication, including protection for the bearer token; it
+does not affect Kubernetes API TLS or S3's separate verification setting.
 
 ## PostgreSQL TLS routes
 

@@ -60,7 +60,7 @@ def publish(config: RuntimeConfig, result: RunResult) -> list[StepResult]:
                     scorecard.policy.push_facts = config.metadata.gate_policy.push_facts.model_copy(deep=True)
                 if config.compass_token:
                     scorecard.policy.push_facts.bearer_token = config.compass_token.get_secret_value()
-                success = publish_scorecard(scorecard)
+                success = publish_scorecard(scorecard, verify_tls=not config.insecure_ssl)
                 scorecard.policy.push_facts.bearer_token = "${COMPASS_API_TOKEN}"
                 write_json(path, scorecard.model_dump(mode="json"))
                 if not success:

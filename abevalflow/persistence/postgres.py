@@ -117,6 +117,23 @@ def _checks(config: RuntimeConfig, result: RunResult, scorecard: Scorecard | Non
                 )
             )
             unavailable = step.status != "completed" or (gate and gate.details.get("scoring_unavailable"))
+            scoring_details = details.get("scoring") or {}
+            score_method = (
+                scoring_details.get("method", "severity_penalty_v1")
+                if step.name in {"security", "quality"}
+                else (
+                    (gate.details.get("score_method") if gate else None)
+                    or (
+                        "pairwise_win_rate"
+                        if config.metadata and config.metadata.aeh_mode.value == "pairwise"
+                        else "mean_reward"
+                    )
+                    if step.name == "evaluate"
+                    else "llm_review_overall_score"
+                    if step.name == "submission-review"
+                    else "tool_gate_score"
+                )
+            )
             check = CheckResult(
                 name=step.name,
                 category=category,
@@ -125,13 +142,7 @@ def _checks(config: RuntimeConfig, result: RunResult, scorecard: Scorecard | Non
                 verdict=step.verdict,
                 blocking=step.blocking,
                 score=None if unavailable else gate.score if gate else _number(step.details.get("overall_score")),
-                score_method=(
-                    "pairwise_win_rate"
-                    if config.metadata and config.metadata.aeh_mode.value == "pairwise"
-                    else "mean_reward"
-                )
-                if step.name == "evaluate"
-                else "tool_gate_score",
+                score_method=score_method,
                 passed=gate.passed if gate else None,
                 evaluated_at=gate.evaluated_at if gate else None,
                 enforcement_mode=gate.mode.value if gate else None,

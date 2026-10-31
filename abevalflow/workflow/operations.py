@@ -176,6 +176,10 @@ class Operations:
 
         config = self.config
         metadata = config.metadata
+        evaluation_policy = (
+            metadata.gate_policy.get_gate_policy("evaluation") if metadata and metadata.gate_policy else None
+        )
+        minimum_reward = evaluation_policy.minimum_reward if evaluation_policy else None
         evaluation = self.submission / (
             metadata.aeh_treatment_config if metadata.aeh_mode.value == "pairwise" else "eval.yaml"
         )
@@ -214,6 +218,7 @@ class Operations:
                 control_dir=Path(execution["control_dir"]),
                 submission_name=config.name,
                 threshold=threshold,
+                minimum_reward=minimum_reward,
                 treatment_config_path=evaluation,
                 control_config_path=control,
             )
@@ -262,6 +267,7 @@ class Operations:
         from abevalflow.reporting.scorecard import write_certification, write_scorecard
         from abevalflow.schemas import GatePolicy
         from abevalflow.scorecard import Scorecard, apply_combination_logic
+        from abevalflow.scoring import score_scan_findings
         from abevalflow.skill_structure import load_skill_structure_result
 
         metadata = self.config.metadata
@@ -277,6 +283,21 @@ class Operations:
             category = "security" if step.name == "security" else "quality"
             if step.name in {"structure", "submission"}:
                 category = "validation"
+            scanner_scoring = None
+            if step.name in {"security", "quality"}:
+                evidence_complete = step.status == "completed" and step.details.get("evidence_complete", True)
+                score, scanner_scoring = score_scan_findings(
+                    step.details.get("findings", []), evidence_complete=evidence_complete
+                )
+            else:
+                score = step.details.get("overall_score", 1.0 if step.verdict == "pass" else 0.0)
+            gate_details = {
+                "execution_status": step.status,
+                "evidence_complete": step.status == "completed",
+                **step.details,
+            }
+            if scanner_scoring is not None:
+                gate_details["scoring"] = scanner_scoring
             gates.append(
                 GateResult(
                     gate_type=(
@@ -291,7 +312,7 @@ class Operations:
                         "submission-review": "llm-review",
                     }.get(step.name, step.name),
                     passed=step.status == "completed" and step.verdict != "fail",
-                    score=step.details.get("overall_score", 1.0 if step.verdict == "pass" else 0.0),
+                    score=score if score is not None else 0.0,
                     mode=(
                         policy.get_gate_policy("quality").mode
                         if step.name == "submission-review"
@@ -310,11 +331,7 @@ class Operations:
                         )
                         for f in step.details.get("findings", [])
                     ],
-                    details={
-                        "execution_status": step.status,
-                        "evidence_complete": step.status == "completed",
-                        **step.details,
-                    },
+                    details=gate_details,
                 )
             )
         recorded = {step.name for step in result.steps}

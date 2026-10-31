@@ -165,6 +165,38 @@ def load_judge_score_ranges(config_path: Path | str | None) -> dict[str, tuple[f
     return ranges
 
 
+def load_judge_weights(config_path: Path | str | None) -> dict[str, float]:
+    """Read the configured reward weights from an AEH eval config.
+
+    Judges omitted from ``reward.weights`` are diagnostics and must not alter
+    the reward. Persisting this mapping makes each aggregate explainable.
+    """
+    if config_path is None:
+        return {}
+    path = Path(config_path)
+    if not path.is_file():
+        return {}
+    try:
+        data = yaml.safe_load(path.read_text()) or {}
+    except (OSError, yaml.YAMLError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    reward = data.get("reward") or {}
+    weights = reward.get("weights") if isinstance(reward, dict) else None
+    if not isinstance(weights, dict):
+        return {}
+    result: dict[str, float] = {}
+    for name, raw_weight in weights.items():
+        try:
+            weight = float(raw_weight)
+        except (TypeError, ValueError):
+            continue
+        if name and weight > 0:
+            result[str(name)] = weight
+    return result
+
+
 def _normalize_numeric_value(
     value: int | float,
     score_range: tuple[float, float] | None = None,
@@ -221,6 +253,7 @@ def _is_llm_or_numeric_judge(result: Any) -> bool:
 def case_reward_from_judges(
     case_data: Any,
     score_ranges: dict[str, tuple[float, float]] | None = None,
+    judge_weights: dict[str, float] | None = None,
 ) -> float | None:
     """Derive a single grounded reward from one case's judge results.
 
@@ -230,11 +263,11 @@ def case_reward_from_judges(
     report's ``trials[]``/``summary`` blocks were computed independently of
     the gate's own grounded per-case view.
 
-    Successful numeric judges are normalized to [0, 1] and averaged. Failed
-    boolean judges gate the case to 0.0. Errored judges are skipped -- they are
-    not treated as 0.0. If the only remaining signal is booleans but an LLM
-    judge errored, return None so operational checks cannot masquerade as a
-    quality score.
+    When ``judge_weights`` is supplied, only configured reward judges
+    participate. Their normalized values (booleans map to 0/1) are combined as
+    a weighted mean. A missing or errored weighted judge makes the derived
+    score unavailable. Without weights, retain the legacy numeric-mean and
+    boolean-gate behavior for older submissions.
 
     ``score_ranges`` (typically from :func:`load_judge_score_ranges`) maps
     judge name -> declared ``(lo, hi)`` scale. When a judge's name is present,
@@ -250,6 +283,27 @@ def case_reward_from_judges(
     """
     if not isinstance(case_data, dict):
         return None
+
+    if judge_weights:
+        weighted_score = 0.0
+        total_weight = 0.0
+        for name, weight in judge_weights.items():
+            if weight <= 0:
+                continue
+            result = case_data.get(name)
+            if result is None or _judge_errored(result):
+                return None
+            value = result.get("value") if isinstance(result, dict) and "value" in result else result
+            if isinstance(value, bool):
+                normalized = 1.0 if value else 0.0
+            elif isinstance(value, (int, float)):
+                score_range = score_ranges.get(name) if score_ranges else None
+                normalized = _normalize_numeric_value(value, score_range)
+            else:
+                return None
+            weighted_score += normalized * weight
+            total_weight += weight
+        return weighted_score / total_weight if total_weight > 0 else None
 
     if isinstance(case_data.get("reward"), (int, float)) and not isinstance(case_data.get("reward"), bool):
         return float(case_data["reward"])

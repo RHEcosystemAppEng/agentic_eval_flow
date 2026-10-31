@@ -13,6 +13,7 @@ from abevalflow.aeh_scoring import (
     _is_llm_or_numeric_judge,
     _judge_errored,
     load_judge_score_ranges,
+    load_judge_weights,
     pairwise_outcome,
 )
 from abevalflow.aeh_scoring import (
@@ -108,12 +109,13 @@ def _is_likert_int(value: Any) -> bool:
 def _mean_reward_from_per_case(
     per_case: Any,
     score_ranges: dict[str, tuple[float, float]] | None = None,
+    judge_weights: dict[str, float] | None = None,
 ) -> float | None:
     if not isinstance(per_case, dict) or not per_case:
         return None
-    rewards = [_case_reward(case_data, score_ranges) for case_data in per_case.values()]
+    rewards = [_case_reward(case_data, score_ranges, judge_weights) for case_data in per_case.values()]
     scored = [r for r in rewards if r is not None]
-    if not scored:
+    if not scored or (judge_weights and len(scored) != len(rewards)):
         return None
     return sum(scored) / len(scored)
 
@@ -151,20 +153,29 @@ def _parse_optional_float(value: Any) -> float | None:
 def _extract_mean_reward(
     run_dir: Path,
     score_ranges: dict[str, tuple[float, float]] | None = None,
+    judge_weights: dict[str, float] | None = None,
 ) -> float | None:
     """Extract mean_reward from run_result.json, summary.yaml, or per-case judges.
 
     Missing or all-errored scoring judges yield None — never a silent 0.0 quality
-    score. Declared mean_reward is used when present unless judge errors made
-    quality scoring unavailable when mean_reward is absent.
+    score. When weights are configured, the declared formula is recomputed from
+    its named per-case judge results and is unavailable if that breakdown is
+    missing or incomplete. Older unweighted submissions can use a declared
+    aggregate reward when available.
 
     ``score_ranges`` (see :func:`abevalflow.aeh_scoring.load_judge_score_ranges`)
     disambiguates bare numeric judge values when recomputing from per-case data.
     """
     summary = _load_summary(run_dir)
     per_case = summary.get("per_case")
-    from_cases = _mean_reward_from_per_case(per_case, score_ranges=score_ranges)
+    from_cases = _mean_reward_from_per_case(per_case, score_ranges=score_ranges, judge_weights=judge_weights)
     unavailable = _scoring_unavailable_from_errors(per_case)
+
+    # When the submission declares reward weights, recompute from those named
+    # per-case judges. Do not let an upstream aggregate silently use a different
+    # formula, and do not accept a score that cannot be drilled into by case.
+    if judge_weights:
+        return None if unavailable else from_cases
 
     declared = _parse_optional_float(summary.get("mean_reward"))
     run_declared: float | None = None
@@ -191,6 +202,7 @@ def _extract_mean_reward(
 def _trials_from_per_case(
     per_case: Any,
     score_ranges: dict[str, tuple[float, float]] | None = None,
+    judge_weights: dict[str, float] | None = None,
 ) -> list[dict[str, Any]]:
     """Map AEH per_case dict → TrialResult-shaped list for report.json."""
     if not isinstance(per_case, dict):
@@ -203,7 +215,7 @@ def _trials_from_per_case(
         trials.append(
             {
                 "trial_name": str(case_id),
-                "reward": _case_reward(case_data, score_ranges),
+                "reward": _case_reward(case_data, score_ranges, judge_weights),
                 "judges": judges,
             }
         )
@@ -293,13 +305,14 @@ def aggregate_single_run(
 
     summary = yaml.safe_load(summary_path.read_text()) or {}
     score_ranges = load_judge_score_ranges(config_path)
-    mean_reward = _extract_mean_reward(run_dir, score_ranges=score_ranges)
+    judge_weights = load_judge_weights(config_path)
+    mean_reward = _extract_mean_reward(run_dir, score_ranges=score_ranges, judge_weights=judge_weights)
 
     judges_full = summary.get("judges", {}) or {}
     per_case_full = summary.get("per_case", {}) or {}
     per_case_compact = _compact_per_case(per_case_full)
     run_metrics = summary.get("run_metrics")
-    trials = _trials_from_per_case(per_case_full, score_ranges=score_ranges)
+    trials = _trials_from_per_case(per_case_full, score_ranges=score_ranges, judge_weights=judge_weights)
 
     total_cases = len(per_case_full) if isinstance(per_case_full, dict) else 0
     stats = _grounded_variant_stats(trials)
@@ -356,7 +369,13 @@ def aggregate_single_run(
         "pass_rate": pass_rate,
         "total_cases": total_cases,
         "passed_cases": n_passed,
-        "scoring": {"score_ranges": score_ranges, "case_reward_method": "numeric_mean_with_boolean_gates_v1"},
+        "scoring": {
+            "score_ranges": score_ranges,
+            "judge_weights": judge_weights,
+            "case_reward_method": (
+                "weighted_configured_judges_v1" if judge_weights else "numeric_mean_with_boolean_gates_v1"
+            ),
+        },
         "judges": judges_full,
         "per_case": per_case_compact,
         "run_metrics": run_metrics,
@@ -372,6 +391,7 @@ def aggregate_pairwise_run(
     *,
     submission_name: str | None = None,
     threshold: float = DEFAULT_AEH_THRESHOLD,
+    minimum_reward: float | None = None,
     eval_engine: str = "aeh",
     treatment_config_path: Path | None = None,
     control_config_path: Path | None = None,
@@ -405,13 +425,19 @@ def aggregate_pairwise_run(
 
     treatment_ranges = load_judge_score_ranges(treatment_config_path)
     control_ranges = load_judge_score_ranges(control_config_path)
-    treatment_mean_reward = _extract_mean_reward(treatment_dir, score_ranges=treatment_ranges)
+    treatment_weights = load_judge_weights(treatment_config_path)
+    control_weights = load_judge_weights(control_config_path)
+    treatment_mean_reward = _extract_mean_reward(
+        treatment_dir, score_ranges=treatment_ranges, judge_weights=treatment_weights
+    )
 
     control_summary = {}
     control_mean_reward = None
     if control_summary_path.exists():
         control_summary = yaml.safe_load(control_summary_path.read_text())
-        control_mean_reward = _extract_mean_reward(control_dir, score_ranges=control_ranges)
+        control_mean_reward = _extract_mean_reward(
+            control_dir, score_ranges=control_ranges, judge_weights=control_weights
+        )
 
     pairwise = treatment_summary.get("pairwise", {})
     outcome = pairwise_outcome(
@@ -427,7 +453,33 @@ def aggregate_pairwise_run(
     errors = outcome["errors"]
     total = outcome["total"]
     win_rate = outcome["win_rate"]
-    recommendation = outcome["recommendation"]
+    pairwise_recommendation = outcome["recommendation"]
+    recommendation = pairwise_recommendation
+    recommendation_reason = f"Treatment pairwise win rate {win_rate:.3f} (threshold {threshold:.3f})."
+    reward_passed = None
+    if minimum_reward is not None:
+        reward_passed = treatment_mean_reward is not None and treatment_mean_reward >= minimum_reward
+        if treatment_mean_reward is None:
+            recommendation = "fail"
+            recommendation_reason = (
+                "Treatment reward is unavailable; the absolute quality threshold cannot be assessed."
+            )
+        elif not reward_passed:
+            recommendation = "fail"
+            recommendation_reason = (
+                f"Treatment reward {treatment_mean_reward:.3f} is below the absolute threshold {minimum_reward:.3f}."
+            )
+        elif pairwise_recommendation != "pass":
+            recommendation = "fail"
+            recommendation_reason = (
+                f"Treatment reward {treatment_mean_reward:.3f} meets the absolute threshold, "
+                f"but pairwise win rate {win_rate:.3f} is below {threshold:.3f}."
+            )
+        else:
+            recommendation_reason = (
+                f"Treatment reward {treatment_mean_reward:.3f} meets {minimum_reward:.3f}; "
+                f"pairwise win rate {win_rate:.3f} meets {threshold:.3f}."
+            )
     cases_compared = pairwise.get("cases_compared", total)
 
     treatment_judges = treatment_summary.get("judges", {})
@@ -445,8 +497,10 @@ def aggregate_pairwise_run(
         if treatment_mean_reward is not None and control_mean_reward is not None
         else None
     )
-    treatment_trials = _trials_from_per_case(treatment_per_case, score_ranges=treatment_ranges)
-    control_trials = _trials_from_per_case(control_per_case, score_ranges=control_ranges)
+    treatment_trials = _trials_from_per_case(
+        treatment_per_case, score_ranges=treatment_ranges, judge_weights=treatment_weights
+    )
+    control_trials = _trials_from_per_case(control_per_case, score_ranges=control_ranges, judge_weights=control_weights)
 
     treatment_stats = _grounded_variant_stats(treatment_trials)
     control_stats = _grounded_variant_stats(control_trials)
@@ -469,6 +523,7 @@ def aggregate_pairwise_run(
             "uplift": treatment_stats["pass_rate"] - control_stats["pass_rate"],
             "mean_reward_gap": mean_reward_gap,
             "recommendation": recommendation,
+            "recommendation_reason": recommendation_reason,
         },
         "trials": {
             "treatment": treatment_trials,
@@ -481,7 +536,10 @@ def aggregate_pairwise_run(
             "mean_reward": treatment_mean_reward,
             "scoring": {
                 "score_ranges": treatment_ranges,
-                "case_reward_method": "numeric_mean_with_boolean_gates_v1",
+                "judge_weights": treatment_weights,
+                "case_reward_method": (
+                    "weighted_configured_judges_v1" if treatment_weights else "numeric_mean_with_boolean_gates_v1"
+                ),
             },
             "judges": treatment_judges,
             "per_case": treatment_per_case_compact,
@@ -493,7 +551,10 @@ def aggregate_pairwise_run(
             "mean_reward": control_mean_reward,
             "scoring": {
                 "score_ranges": control_ranges,
-                "case_reward_method": "numeric_mean_with_boolean_gates_v1",
+                "judge_weights": control_weights,
+                "case_reward_method": (
+                    "weighted_configured_judges_v1" if control_weights else "numeric_mean_with_boolean_gates_v1"
+                ),
             },
             "judges": control_judges,
             "per_case": control_per_case_compact,
@@ -513,6 +574,9 @@ def aggregate_pairwise_run(
             "stability": pairwise.get("stability"),
         },
         "mean_reward": treatment_mean_reward,
+        "minimum_reward_threshold": minimum_reward,
+        "pairwise_recommendation": pairwise_recommendation,
+        "absolute_reward_passed": reward_passed,
         "judges": treatment_judges,
         "per_case": treatment_per_case_compact,
         "aeh_warnings": (["pairwise section missing from treatment summary.yaml"] if not pairwise else []),
@@ -527,6 +591,7 @@ def aggregate_aeh_results(
     *,
     submission_name: str | None = None,
     threshold: float = DEFAULT_AEH_THRESHOLD,
+    minimum_reward: float | None = None,
     eval_engine: str = "aeh",
     config_path: Path | None = None,
     treatment_config_path: Path | None = None,
@@ -555,6 +620,7 @@ def aggregate_aeh_results(
             control_dir,
             submission_name=submission_name,
             threshold=threshold,
+            minimum_reward=minimum_reward,
             eval_engine=eval_engine,
             treatment_config_path=treatment_config_path,
             control_config_path=control_config_path,

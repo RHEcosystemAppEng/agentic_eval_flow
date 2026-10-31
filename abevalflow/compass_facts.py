@@ -21,6 +21,7 @@ import json
 import logging
 import os
 import re
+import ssl
 import urllib.error
 import urllib.request
 from datetime import UTC, datetime
@@ -36,6 +37,16 @@ if TYPE_CHECKING:
     from abevalflow.schemas import PushFactsConfig
 
 logger = logging.getLogger(__name__)
+
+
+def _tls_context(verify_tls: bool) -> ssl.SSLContext | None:
+    """Use urllib's normal trust store unless this publication opts out."""
+    if verify_tls:
+        return None
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+    return context
 
 
 def _resolve_env_vars(value: str | None) -> str | None:
@@ -117,6 +128,7 @@ def push_gate_fact(
     fact_ref: str,
     timeout_sec: float = 30.0,
     bearer_token: str | None = None,
+    verify_tls: bool = True,
 ) -> FactPushResult:
     """Push a gate result to Compass Facts API.
 
@@ -127,6 +139,7 @@ def push_gate_fact(
         fact_ref: Unique fact identifier for this gate
         timeout_sec: Request timeout in seconds
         bearer_token: Optional bearer token for authentication
+        verify_tls: Verify the server certificate and hostname (default: True)
 
     Returns:
         FactPushResult with success status and any error details
@@ -149,7 +162,7 @@ def push_gate_fact(
             method="POST",
         )
 
-        with urllib.request.urlopen(request, timeout=timeout_sec) as response:
+        with urllib.request.urlopen(request, timeout=timeout_sec, context=_tls_context(verify_tls)) as response:
             status = response.status
             if status in (200, 201, 202):
                 logger.info(
@@ -214,6 +227,8 @@ def push_gate_fact(
 def push_gate_fact_from_config(
     gate_result: GateResult,
     push_facts_config: PushFactsConfig,
+    *,
+    verify_tls: bool = True,
 ) -> FactPushResult:
     """Push a gate result using PushFactsConfig settings.
 
@@ -248,6 +263,7 @@ def push_gate_fact_from_config(
         entity_ref=push_facts_config.entity_ref,
         fact_ref=fact_ref,
         bearer_token=resolved_token,
+        verify_tls=verify_tls,
     )
 
 
@@ -389,6 +405,7 @@ def push_certification_level_fact(
     fact_ref: str,
     timeout_sec: float = 30.0,
     bearer_token: str | None = None,
+    verify_tls: bool = True,
 ) -> CertificationFactPushResult:
     """Push a certification level result to Compass Facts API.
 
@@ -399,6 +416,7 @@ def push_certification_level_fact(
         fact_ref: Unique fact identifier for this level
         timeout_sec: Request timeout in seconds
         bearer_token: Optional bearer token for authentication
+        verify_tls: Verify the server certificate and hostname (default: True)
 
     Returns:
         CertificationFactPushResult with success status
@@ -416,6 +434,7 @@ def push_certification_level_fact(
         level=level_result.level.value,
         timeout_sec=timeout_sec,
         bearer_token=bearer_token,
+        verify_tls=verify_tls,
     )
 
 
@@ -454,6 +473,7 @@ def _push_raw_fact(
     level: str,
     timeout_sec: float = 30.0,
     bearer_token: str | None = None,
+    verify_tls: bool = True,
 ) -> CertificationFactPushResult:
     """Push a raw fact payload to Compass Facts API.
 
@@ -464,6 +484,7 @@ def _push_raw_fact(
         level: Level name for the result
         timeout_sec: Request timeout in seconds
         bearer_token: Optional bearer token for authentication
+        verify_tls: Verify the server certificate and hostname (default: True)
 
     Returns:
         CertificationFactPushResult with success status
@@ -484,7 +505,7 @@ def _push_raw_fact(
             method="POST",
         )
 
-        with urllib.request.urlopen(request, timeout=timeout_sec) as response:
+        with urllib.request.urlopen(request, timeout=timeout_sec, context=_tls_context(verify_tls)) as response:
             status = response.status
             if status in (200, 201, 202):
                 logger.info("Pushed %s fact %s (status=%d)", level, fact_ref, status)
@@ -540,6 +561,8 @@ def _push_raw_fact(
 def push_certification_facts(
     certification_result: CertificationResult,
     push_facts_config: PushFactsConfig,
+    *,
+    verify_tls: bool = True,
 ) -> list[CertificationFactPushResult]:
     """Push certification levels, summary, and skill structure check to Compass.
 
@@ -587,6 +610,7 @@ def push_certification_facts(
             entity_ref=push_facts_config.entity_ref,
             fact_ref=fact_ref,
             bearer_token=resolved_token,
+            verify_tls=verify_tls,
         )
         results.append(result)
 
@@ -603,6 +627,7 @@ def push_certification_facts(
             fact_ref=summary_fact_ref,
             level="summary",
             bearer_token=resolved_token,
+            verify_tls=verify_tls,
         )
     )
 
@@ -641,6 +666,7 @@ def push_certification_facts(
                 fact_ref=fact_ref,
                 level=fact_name,
                 bearer_token=resolved_token,
+                verify_tls=verify_tls,
             )
         )
 

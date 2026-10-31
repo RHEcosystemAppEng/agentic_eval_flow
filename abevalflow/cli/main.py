@@ -93,7 +93,10 @@ def workflow_options(parser: argparse.ArgumentParser) -> None:
         "--insecure-ssl",
         action=argparse.BooleanOptionalAction,
         default=None,
-        help="Skip certificate verification for evaluation HTTP clients and the database TLS route (default: false)",
+        help=(
+            "Skip certificate verification for evaluation HTTP clients, Compass, "
+            "and the database TLS route (default: false)"
+        ),
     )
     for secret in ("llm-api-key", "agent-api-key", "judge-api-key", "s3-access-key", "s3-secret-key", "compass-token"):
         credentials.add_argument(f"--{secret}", help=f"Credential; prefer ABEVAL_{secret.upper().replace('-', '_')}")

@@ -260,7 +260,11 @@ class AEHEngine:
         errors = outcome["errors"]
         total = outcome["total"]
         win_rate = outcome["win_rate"]
-        passed = outcome["passed"]
+        treatment = raw_result.get("treatment") or {}
+        mean_reward = treatment.get("mean_reward", raw_result.get("mean_reward"))
+        summary_recommendation = (raw_result.get("summary") or {}).get("recommendation")
+        minimum_reward = gate_policy.minimum_reward
+        passed = outcome["passed"] if minimum_reward is None else summary_recommendation == "pass"
 
         findings = self._extract_findings_pairwise(raw_result)
 
@@ -275,23 +279,41 @@ class AEHEngine:
             f"AEH pairwise: treatment wins {wins_a}/{total} ({win_rate:.0%}) "
             f"| ties={ties}, errors={errors}{stability_note}"
         )
+        score = win_rate
+        score_threshold = threshold
+        score_method = "pairwise_win_rate"
+        if minimum_reward is not None:
+            score = float(mean_reward) if mean_reward is not None else 0.0
+            score_threshold = minimum_reward
+            score_method = "mean_reward"
+            reward_text = f"{mean_reward:.3f}" if mean_reward is not None else "unavailable"
+            message = (
+                f"AEH pairwise: treatment mean_reward={reward_text} (minimum={minimum_reward:.3f}); "
+                f"win_rate={win_rate:.0%} ({wins_a}/{total}, threshold={threshold:.0%})"
+                f" | ties={ties}, errors={errors}{stability_note}"
+            )
 
         return GateResult(
             gate_type=GateType.ENGINE,
             gate_name="evaluation",
             policy_key=self.name,
             passed=passed,
-            score=win_rate,
+            score=score,
             mode=gate_policy.mode,
-            threshold=threshold,
+            threshold=score_threshold,
             findings=findings,
             details={
                 "engine": self.name,
                 "mode": "pairwise",
                 "pairwise": pairwise,
-                "treatment": raw_result.get("treatment"),
+                "treatment": treatment,
                 "control": raw_result.get("control"),
-                "mean_reward": raw_result.get("mean_reward"),
+                "mean_reward": mean_reward,
+                "score_method": score_method,
+                "pairwise_threshold": threshold,
+                "minimum_reward": minimum_reward,
+                "recommendation_reason": (raw_result.get("summary") or {}).get("recommendation_reason"),
+                "scoring_unavailable": minimum_reward is not None and mean_reward is None,
                 "aeh_warnings": raw_result.get("aeh_warnings", []),
             },
             message=message,

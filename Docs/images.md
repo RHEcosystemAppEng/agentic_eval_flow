@@ -7,8 +7,12 @@ Podman, the shared image repository, the tag prefix, and the target platform.
 The default platform is `linux/amd64`.
 
 ```sh
-make images IMAGE_REPOSITORY=quay.io/example/agent-eval-harness VERSION=v1.0.2
-make aeh-trial IMAGE_REPOSITORY=quay.io/example/agent-eval-harness VERSION=v1.0.2
+make agent-eval-harness
+make push-agent-eval-harness
+
+# Build and push both images when both runtimes need changes.
+make images IMAGE_REPOSITORY=quay.io/example/agent-eval-harness VERSION=v1.0.5
+make push IMAGE_REPOSITORY=quay.io/example/agent-eval-harness VERSION=v1.0.5
 ```
 
 | Build target | Tag suffix | Contents |
@@ -16,17 +20,26 @@ make aeh-trial IMAGE_REPOSITORY=quay.io/example/agent-eval-harness VERSION=v1.0.
 | `agent-eval-harness` | `runner` | Complete evaluation CLI with included scanners, storage/model clients, and unchanged AEH. |
 | `aeh-trial` | `trial` | Claude Code, native AEH verifier, and stdio mock MCP executable. |
 
-Resulting tags use `<repository>:<version>-<suffix>`. Push the images you need
+Resulting tags use `<repository>:<version>-<suffix>`. `make push-agent-eval-harness`
+pushes the CLI image; `make push-aeh-trial` pushes the trial image. Push the images you need
 and configure consumers with immutable digests. The local CLI selects the trial
 image with `--trial-image`. For local Podman/Docker scanning, set
 `--security-image` and `--quality-image` to your published evaluation image;
 both flags can use the same reference. No scanner image is selected implicitly.
 Deployed Konflux image choices are owned by the shared task.
 
-Release `v1.0.2-runner` contains CLI `0.4.1`, Harbor `0.25.0`, sequential batches,
-and explicit TLS configuration. `v1.0.2-trial` restores the opt-in Python TLS
-hook for upstream judges. Both images are required when enabling the internal
-endpoint bypass. Skill loading, fixtures, and evaluation definitions are unchanged.
+Release `v1.0.5-runner` adds explicit score breakdowns, absolute treatment reward
+gates, and Compass publishing through the existing opt-in TLS verification bypass.
+It uses the existing `v1.0.2-trial` image.
+
+Release `v1.0.4-runner` contains CLI `0.5.0`, including PostgreSQL evidence schema
+v2, plugin summaries, aspect-level scores with component drill-down, and uploaded
+report references. It retains Harbor `0.25.0`, sequential batches, and explicit
+TLS configuration. Use it with the existing `v1.0.2-trial`, which includes the
+opt-in Python TLS hook for upstream judges. PostgreSQL publication requires a
+fresh schema v2 database; see
+[persistence](persistence.md). Skill loading, fixtures, and evaluation definitions
+are unchanged.
 
 ## Dependency ownership
 

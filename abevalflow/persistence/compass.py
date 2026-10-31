@@ -17,7 +17,7 @@ from abevalflow.scorecard import Scorecard
 logger = logging.getLogger(__name__)
 
 
-def _maybe_push_fact(gate_result: GateResult, policy: GatePolicy) -> FactPushResult | None:
+def _maybe_push_fact(gate_result: GateResult, policy: GatePolicy, *, verify_tls: bool = True) -> FactPushResult | None:
     """Push gate fact to Compass if configured.
 
     Args:
@@ -41,7 +41,7 @@ def _maybe_push_fact(gate_result: GateResult, policy: GatePolicy) -> FactPushRes
         intended_fact_ref = f"{policy.push_facts.fact_ref_prefix}{gate_result.gate_name}"
 
     try:
-        result = push_gate_fact_from_config(gate_result, policy.push_facts)
+        result = push_gate_fact_from_config(gate_result, policy.push_facts, verify_tls=verify_tls)
         if result.success:
             logger.info("Pushed fact for gate %s to Compass", gate_result.gate_name)
         else:
@@ -65,18 +65,22 @@ def _maybe_push_fact(gate_result: GateResult, policy: GatePolicy) -> FactPushRes
         )
 
 
-def publish_scorecard(scorecard: Scorecard) -> bool:
+def publish_scorecard(scorecard: Scorecard, *, verify_tls: bool = True) -> bool:
     """Publish enabled gate and certification facts without changing the evaluation verdict."""
     from abevalflow.compass_facts import validate_push_facts_config
 
     validate_push_facts_config(scorecard.policy.push_facts, scorecard.policy.get_gates_with_push_fact())
     if scorecard.policy.push_facts is None:
         return True
+    if not verify_tls:
+        logger.warning("Compass publication: TLS certificate and hostname verification disabled by runtime option")
     scorecard.fact_push_results = [
-        result for gate in scorecard.gates if (result := _maybe_push_fact(gate, scorecard.policy)) is not None
+        result
+        for gate in scorecard.gates
+        if (result := _maybe_push_fact(gate, scorecard.policy, verify_tls=verify_tls)) is not None
     ]
     if scorecard.certification:
         scorecard.certification_fact_push_results = push_certification_facts(
-            scorecard.certification, scorecard.policy.push_facts
+            scorecard.certification, scorecard.policy.push_facts, verify_tls=verify_tls
         )
     return all(r.success for r in [*scorecard.fact_push_results, *scorecard.certification_fact_push_results])

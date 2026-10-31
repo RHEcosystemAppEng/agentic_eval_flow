@@ -46,6 +46,52 @@ pairwise LLM judge. When case annotations exist, its prompt must reference
 numeric judge `score_range` explicitly; aggregation uses each judge's range
 when normalizing scores. Pairwise A/B/tie verdicts remain categorical.
 
+## Writing judges and deterministic checks
+
+An AEH judge with `type: check` is an inline **Python** snippet. It receives an
+`outputs` mapping containing captured artifacts and tool calls, plus an
+`arguments` mapping for any judge-specific configuration. Return a two-item
+tuple: `(passed: bool, explanation: str)`. Keep checks focused on observable
+contracts such as required report sections, exact tool arguments, call counts,
+and approval boundaries. Use `type: llm` when correctness needs interpretation
+of prose or evidence rather than an exact mechanical rule.
+
+For example, this check verifies a report file and stable headings:
+
+```yaml
+judges:
+  - name: report_completeness
+    type: check
+    check: |
+      files = outputs.get("files") or {}
+      report = files.get("output/result.md", "")
+      required = ["## Findings", "## Evidence", "## Limitations"]
+      missing = [heading for heading in required if heading not in report]
+      return not missing, "missing headings: " + (", ".join(missing) if missing else "none")
+```
+
+Use the same headings in the case prompt, check, and any output template.
+Annotations are grader-only ground truth; use them to describe expected tool
+calls, evidence, and outcomes. The agent should receive the task in
+`input.yaml`, not the answer key. Tool fixtures live under that case's
+`mock-mcps/<server>/fixture.json`; declare the expected call sequence in the
+annotations and check actual calls against it when order or arguments matter.
+
+For numeric LLM judges, state the score anchors in the prompt and set
+`feedback_type: float` with `score_range: [0, 1]`. A `reward` block can combine
+normalized judge values using named weights; the weights should sum to 1.0 and
+each judge should measure a distinct part of quality. Set hard workflow
+requirements as checks with `min_pass_rate: 1.0`, rather than letting a strong
+prose score hide an unauthorized or missing tool call. Keep the pairwise judge
+separate: it compares treatment and control, while weighted reward measures
+the treatment's own case quality.
+
+Validate a submission from the `agentic_eval_flow` repository:
+
+```sh
+abeval validate submission submissions/<pack>/<skill>
+```
+
 ## MCP fixtures
 
 Put shared schemas at

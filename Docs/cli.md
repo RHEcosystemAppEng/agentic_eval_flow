@@ -134,7 +134,7 @@ abeval run ./pack/skills/my-skill --scanner-runtime podman \
 | `--agent-api-key` | `ABEVAL_AGENT_API_KEY` | Local orchestration credential passed to AEH; does not create a workload Secret. | Optional. |
 | `--judge-base-url` | `ABEVAL_JUDGE_BASE_URL` | Suite-level judge endpoint, including pairwise comparison. | Optional. |
 | `--judge-api-key` | `ABEVAL_JUDGE_API_KEY` | Local suite-level judge credential. | Optional. |
-| `--[no-]insecure-ssl` | `ABEVAL_INSECURE_SSL` | `false`; opt in to the legacy TLS bypass for evaluation HTTP clients and the database route. Kubernetes API TLS stays verified; S3 has its own flag. | Optional. |
+| `--[no-]insecure-ssl` | `ABEVAL_INSECURE_SSL` | `false`; opt in to the legacy TLS bypass for evaluation HTTP clients, Compass publishing, and the database route. Kubernetes API TLS stays verified; S3 has its own flag. | Optional. |
 
 Review, trial execution, and evaluation judging are separate model operations.
 Tier 2 agents and judges need their provider credentials; the endpoint/key flags

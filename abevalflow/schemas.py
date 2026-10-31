@@ -108,6 +108,15 @@ class GatePolicyItem(BaseModel):
         default=None,
         description="Score threshold for pass/fail (gate-specific default if None)",
     )
+    minimum_reward: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Minimum absolute treatment reward required to pass a pairwise evaluation. "
+            "The evaluation threshold remains the separate treatment win-rate threshold."
+        ),
+    )
     weight: float = Field(
         default=1.0,
         ge=0.0,
@@ -383,7 +392,8 @@ class SubmissionMetadata(BaseModel):
         return v
 
     plugin_name: str | None = Field(
-        default=None, pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_.-]*$",
+        default=None,
+        pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_.-]*$",
         description="Owning catalog plugin; inferred from <plugin>/skills/<skill> when omitted",
     )
     description: str | None = Field(default=None, description="Brief description of the submission")
