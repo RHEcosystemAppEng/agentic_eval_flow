@@ -478,13 +478,10 @@ spec:
 
     # ======================================================================
     # PHASE 4: ANALYZE (statistical analysis and report generation)
-    # Note: For MCPChecker, evaluate phase produces the final report directly
+    # MCPChecker skips A/B statistics. The scorecard step still runs and
+    # pushes Compass facts when metadata.yaml gate_policy requests it.
     # ======================================================================
     - name: analyze
-      when:
-        - input: $(params.eval-engine)
-          operator: notin
-          values: ["mcpchecker"]
       runAfter: ["evaluate"]
       taskRef:
         name: analyze-and-check-degradation
