@@ -403,12 +403,100 @@ spec:
             - name: name
               value: generate-compass-facts
             - name: bundle
-              value: quay.io/ecosystem-appeng/abevalflow-task-generate-compass-facts:0.1
+              value: quay.io/ecosystem-appeng/konflux-skill-evaluation/generate-compass-facts:0.1.0@sha256:dde06ba723b8e4ad156ef4fd1ecbe8d1370d241f6464c96c66bbc4c93f41158c
             - name: kind
               value: task
         params:
           - name: mcp-eval-image
             value: $(params.MCP_EVAL_IMAGE)
+        workspaces:
+          - name: source
+            workspace: shared-workspace
+
+      # ================================================================
+      # Stage 9b: Debug - Print facts and reports directory contents
+      # ================================================================
+      - name: debug-print-facts-reports
+        runAfter: [generate-compass-facts]
+        taskSpec:
+          workspaces:
+            - name: source
+          steps:
+            - name: print-directory-tree
+              image: $(params.MCP_EVAL_IMAGE)
+              script: |
+                #!/bin/bash
+                set -e
+
+                WORKSPACE_PATH="$(workspaces.source.path)"
+                FACTS_DIR="${WORKSPACE_PATH}/facts"
+                REPORTS_DIR="${WORKSPACE_PATH}/reports"
+
+                echo "========================================="
+                echo "Workspace path: ${WORKSPACE_PATH}"
+                echo "========================================="
+
+                echo ""
+                echo "--- Listing workspace root ---"
+                ls -la "${WORKSPACE_PATH}" || echo "Failed to list workspace"
+
+                echo ""
+                echo "========================================="
+                echo "Directory listings for facts and reports:"
+                echo "========================================="
+
+                if [ -d "${FACTS_DIR}" ]; then
+                  echo ""
+                  echo "--- ls -la facts/ ---"
+                  ls -la "${FACTS_DIR}"
+                  echo ""
+                  echo "--- facts/ directory tree ---"
+                  find "${FACTS_DIR}" -type f -o -type d | sort
+                else
+                  echo "facts/ directory not found at ${FACTS_DIR}"
+                fi
+
+                if [ -d "${REPORTS_DIR}" ]; then
+                  echo ""
+                  echo "--- ls -la reports/ ---"
+                  ls -la "${REPORTS_DIR}"
+                  echo ""
+                  echo "--- reports/ directory tree ---"
+                  find "${REPORTS_DIR}" -type f -o -type d | sort
+                else
+                  echo "reports/ directory not found at ${REPORTS_DIR}"
+                fi
+
+                echo ""
+                echo "========================================="
+                echo "File contents:"
+                echo "========================================="
+
+                if [ -d "${FACTS_DIR}" ]; then
+                  echo ""
+                  echo "--- Contents of files in facts/ ---"
+                  for file in $(find "${FACTS_DIR}" -type f | sort); do
+                    echo ""
+                    echo "=== $file ==="
+                    cat "$file"
+                    echo ""
+                  done
+                fi
+
+                if [ -d "${REPORTS_DIR}" ]; then
+                  echo ""
+                  echo "--- Contents of files in reports/ ---"
+                  for file in $(find "${REPORTS_DIR}" -type f | sort); do
+                    echo ""
+                    echo "=== $file ==="
+                    cat "$file"
+                    echo ""
+                  done
+                fi
+
+                echo "========================================="
+                echo "Debug output complete"
+                echo "========================================="
         workspaces:
           - name: source
             workspace: shared-workspace
@@ -424,7 +512,7 @@ spec:
             - name: name
               value: publish-to-compass
             - name: bundle
-              value: quay.io/ecosystem-appeng/abevalflow-task-publish-to-compass:0.1
+              value: quay.io/ecosystem-appeng/konflux-skill-evaluation/publish-to-compass:0.1.0@sha256:82862579230447a5619286f8f3bb393407f8bc40cd1d4564751aca4946bf7eb8
             - name: kind
               value: task
         params:
