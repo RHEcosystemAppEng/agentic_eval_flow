@@ -1,5 +1,6 @@
 # M365-only ground truth for seeded tbx-demo2 mailbox/calendar.
 # Source: .tmp/forge-real/ground-truth.json (Graph seed).
+requires_published_brief: true
 expected_top_of_mind:
   - "Watson Orchestrate GA go/no-go — decision by 11:00"
   - "Contoso escalation — renewals at risk (exec response by EOD)"
