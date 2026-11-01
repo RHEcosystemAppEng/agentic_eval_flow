@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
@@ -62,9 +62,9 @@ requires-dist = [
     { name = "minio", specifier = ">=7.0" },
     { name = "mlflow", marker = "extra == 'observability'", specifier = ">=2.10" },
     { name = "openai", specifier = ">=1.0" },
-    { name = "opentelemetry-api", marker = "extra == 'observability'", specifier = ">=1.20" },
-    { name = "opentelemetry-exporter-otlp-proto-grpc", marker = "extra == 'observability'", specifier = ">=1.20" },
-    { name = "opentelemetry-sdk", marker = "extra == 'observability'", specifier = ">=1.20" },
+    { name = "opentelemetry-api", marker = "extra == 'observability'", specifier = ">=1.45.1" },
+    { name = "opentelemetry-exporter-otlp-proto-grpc", marker = "extra == 'observability'", specifier = ">=1.45.1" },
+    { name = "opentelemetry-sdk", marker = "extra == 'observability'", specifier = ">=1.45.1" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.1" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
@@ -1219,7 +1219,7 @@ name = "gunicorn"
 version = "26.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "packaging" },
+    { name = "packaging", marker = "sys_platform != 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/6d/b7/a4a3f632f823e432ce6bc65f62961b7980c898c77f075a2f7118cb3846fe/gunicorn-26.0.0.tar.gz", hash = "sha256:ca9346f85e3a4aeeb64d491045c16b9a35647abd37ea15efe53080eb8b090baf", size = 727286, upload-time = "2026-05-05T06:38:25.529Z" }
 wheels = [
