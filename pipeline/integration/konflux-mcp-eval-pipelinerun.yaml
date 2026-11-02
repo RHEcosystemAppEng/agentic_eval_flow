@@ -147,7 +147,7 @@ spec:
             - name: name
               value: parse-snapshot
             - name: bundle
-              value: quay.io/ecosystem-appeng/abevalflow-task-parse-snapshot:0.1
+              value: quay.io/ecosystem-appeng/konflux-skill-evaluation/parse-snapshot:latest
             - name: kind
               value: task
         params:
@@ -191,7 +191,7 @@ spec:
             - name: name
               value: mcp-static-eval
             - name: bundle
-              value: quay.io/ecosystem-appeng/abevalflow-task-mcp-static-eval:0.1
+              value: quay.io/ecosystem-appeng/konflux-skill-evaluation/mcp-static-eval:latest
             - name: kind
               value: task
         params:
@@ -216,7 +216,7 @@ spec:
             - name: name
               value: create-namespace
             - name: bundle
-              value: quay.io/ecosystem-appeng/abevalflow-task-create-namespace:0.1
+              value: quay.io/ecosystem-appeng/konflux-skill-evaluation/create-namespace:latest
             - name: kind
               value: task
         params:
@@ -239,7 +239,7 @@ spec:
             - name: name
               value: deploy-mcp
             - name: bundle
-              value: quay.io/ecosystem-appeng/abevalflow-task-deploy-mcp:0.1
+              value: quay.io/ecosystem-appeng/konflux-skill-evaluation/deploy-mcp:latest
             - name: kind
               value: task
         params:
@@ -280,7 +280,7 @@ spec:
             - name: name
               value: wait-ready
             - name: bundle
-              value: quay.io/ecosystem-appeng/abevalflow-task-wait-ready:0.1
+              value: quay.io/ecosystem-appeng/konflux-skill-evaluation/wait-ready:latest
             - name: kind
               value: task
         params:
@@ -303,7 +303,7 @@ spec:
             - name: name
               value: mcp-conformance-eval
             - name: bundle
-              value: quay.io/ecosystem-appeng/abevalflow-task-mcp-conformance-eval:0.1
+              value: quay.io/ecosystem-appeng/konflux-skill-evaluation/mcp-conformance-eval:latest
             - name: kind
               value: task
         params:
@@ -336,7 +336,7 @@ spec:
             - name: name
               value: check-label
             - name: bundle
-              value: quay.io/ecosystem-appeng/abevalflow-task-check-label:0.1
+              value: quay.io/ecosystem-appeng/konflux-skill-evaluation/check-pr-label:latest
             - name: kind
               value: task
         params:
@@ -362,7 +362,7 @@ spec:
             - name: name
               value: mcp-behavioral-eval
             - name: bundle
-              value: quay.io/ecosystem-appeng/abevalflow-task-mcp-behavioral-eval:0.1
+              value: quay.io/ecosystem-appeng/konflux-skill-evaluation/mcp-behavioral-eval:latest
             - name: kind
               value: task
         params:
@@ -403,7 +403,7 @@ spec:
             - name: name
               value: generate-compass-facts
             - name: bundle
-              value: quay.io/ecosystem-appeng/konflux-skill-evaluation/generate-compass-facts:0.1.0@sha256:dde06ba723b8e4ad156ef4fd1ecbe8d1370d241f6464c96c66bbc4c93f41158c
+              value: quay.io/ecosystem-appeng/konflux-skill-evaluation/generate-compass-facts:latest
             - name: kind
               value: task
         params:
@@ -512,7 +512,7 @@ spec:
             - name: name
               value: publish-to-compass
             - name: bundle
-              value: quay.io/ecosystem-appeng/konflux-skill-evaluation/publish-to-compass:0.1.0@sha256:82862579230447a5619286f8f3bb393407f8bc40cd1d4564751aca4946bf7eb8
+              value: quay.io/ecosystem-appeng/konflux-skill-evaluation/publish-to-compass:latest
             - name: kind
               value: task
         params:
@@ -539,7 +539,7 @@ spec:
             - name: name
               value: teardown-namespace
             - name: bundle
-              value: quay.io/ecosystem-appeng/abevalflow-task-teardown-namespace:0.1
+              value: quay.io/ecosystem-appeng/konflux-skill-evaluation/teardown-namespace:latest
             - name: kind
               value: task
         params:
