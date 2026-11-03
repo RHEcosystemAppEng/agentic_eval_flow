@@ -231,7 +231,9 @@ Reports are produced independently of publication and retained after failures.
 | `run.json` | Versioned configuration, source identity, step outcomes, artifact paths, publication results |
 | `reports/scorecard.json`, `scorecard.md` | Gate results and policy recommendation |
 | `reports/certification.json` | Certification levels and checks |
-| `reports/report.json`, `report.md` | AEH results when evaluation ran |
+| `reports/report.html` | Skill-level report with 0–100 category scores, scanner findings, and case details |
+| `reports/score-overview.svg`, `reports/evidence.html` | Score graphic and browsable report evidence index |
+| `reports/report.json`, `report.md` | Machine-readable and Markdown AEH results when evaluation ran |
 | Scanner JSON/SARIF and logs | Static evidence, including failed scans |
 | `reports/_ai_review.json` | Submission review and usage metrics when requested |
 

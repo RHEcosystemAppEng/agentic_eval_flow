@@ -26,7 +26,9 @@ The run directory contains `run.json` and a `reports/` directory:
 | `run.json` | Configuration without credentials, source identity, step results, artifact paths, and publication outcomes. |
 | `scorecard.json`, `scorecard.md` | Gate results and policy recommendation. |
 | `certification.json` | Certification levels and individual checks. |
-| `report.json`, `report.md` | Normalized AEH results when evaluation ran. |
+| `report.html` | High-level skill report with category scores, findings, and case-level evaluation detail. |
+| `score-overview.svg`, `evidence.html` | Score graphic and browsable index of the run's report artifacts. |
+| `report.json`, `report.md` | Normalized machine-readable and Markdown AEH results when evaluation ran. |
 | Scanner JSON/SARIF and logs | Available static evidence and scanner errors. |
 | `_ai_review.json`, `skill-review.json` | Selected advisory reviews. |
 

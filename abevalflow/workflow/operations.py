@@ -408,6 +408,21 @@ class Operations:
         ]
         summary += [f"| {s.name} | {s.status} | {s.verdict} | {s.reason.replace('|', '/')} |" for s in result.steps]
         (self.reports / "scorecard.md").write_text("\n".join(summary) + "\n")
+        from abevalflow.reporting.html import render_evidence_index, render_skill_report
+
+        html_report, score_image = render_skill_report(
+            self.reports,
+            result,
+            scorecard.model_dump(mode="json"),
+        )
+        evidence_index = render_evidence_index(self.reports)
         return StepResult(
-            name="report", artifacts=[str(self.reports / "scorecard.json"), str(self.reports / "scorecard.md")]
+            name="report",
+            artifacts=[
+                str(self.reports / "scorecard.json"),
+                str(self.reports / "scorecard.md"),
+                str(html_report),
+                str(score_image),
+                str(evidence_index),
+            ],
         )
