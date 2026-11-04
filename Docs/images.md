@@ -11,8 +11,8 @@ make agent-eval-harness
 make push-agent-eval-harness
 
 # Build and push both images when both runtimes need changes.
-make images IMAGE_REPOSITORY=quay.io/example/agent-eval-harness VERSION=v1.0.5
-make push IMAGE_REPOSITORY=quay.io/example/agent-eval-harness VERSION=v1.0.5
+make images IMAGE_REPOSITORY=quay.io/example/agent-eval-harness VERSION=v1.0.6
+make push IMAGE_REPOSITORY=quay.io/example/agent-eval-harness VERSION=v1.0.6
 ```
 
 | Build target | Tag suffix | Contents |
@@ -27,6 +27,9 @@ image with `--trial-image`. For local Podman/Docker scanning, set
 `--security-image` and `--quality-image` to your published evaluation image;
 both flags can use the same reference. No scanner image is selected implicitly.
 Deployed Konflux image choices are owned by the shared task.
+
+Release `v1.0.6-runner` contains CLI `0.5.1` with the consolidated HTML report.
+It uses the existing `v1.0.2-trial` image.
 
 Release `v1.0.5-runner` adds explicit score breakdowns, absolute treatment reward
 gates, and Compass publishing through the existing opt-in TLS verification bypass.
