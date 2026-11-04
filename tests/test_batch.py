@@ -63,11 +63,20 @@ def test_sequential_batch_preserves_full_source_and_publishes_once_per_skill(cat
     summary = summarize(directory, ["pack/demo", "pack/other"], "abc123", {1}, {"s3"})
     assert summary["results"]["tier1"]["result"] == "SUCCESS"
     assert summary["items"][1]["tier2"]["result"] == "SKIPPED"
+    assert summary["results"]["tier2"]["result"] == "SKIPPED"
     package_batch(directory)
     with tarfile.open(directory / "reports.tar.gz") as archive:
         names = archive.getnames()
         assert "batch.json" in names and "runs/0000/reports/scorecard.json" in names
         assert not any("/source/" in name for name in names)
+
+
+def test_skipped_tier_is_preserved_in_tekton_results(catalog, tmp_path):
+    directory, _ = run_batch(["pack/demo"], batch_options(catalog, tmp_path), {})
+    results = tmp_path / "tekton-results"
+    assert emit_results(directory, ["pack/demo"], "abc123", {1}, set(), results) == 0
+    assert json.loads((results / "TEST_OUTPUT_TIER_B").read_text())["result"] == "SKIPPED"
+    assert json.loads((results / "TEST_OUTPUT").read_text())["result"] == "SUCCESS"
 
 
 def test_missing_skill_is_recorded_and_later_skill_still_runs(catalog, tmp_path):

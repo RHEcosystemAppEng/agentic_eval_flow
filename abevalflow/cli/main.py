@@ -135,6 +135,9 @@ def parser() -> argparse.ArgumentParser:
     validate.add_argument("--output", type=Path, help="Optional JSON report path")
     package = subcommands.add_parser("batch-package", help="Archive existing batch reports for OCI attachment")
     package.add_argument("--batch-dir", type=Path, required=True)
+    package.add_argument("--component-manifest", type=Path)
+    package.add_argument("--image-url", default="")
+    package.add_argument("--image-digest", default="")
     export = subcommands.add_parser(
         "batch-results", help="Validate batch evidence, emit Konflux results, and apply gates"
     )
@@ -229,8 +232,10 @@ def main(argv: list[str] | None = None) -> int:
             emit({"batch_id": result.batch_id, "batch_dir": str(directory), "exit_code": result.exit_code})
             return result.exit_code
         if args.command == "batch-package":
-            from abevalflow.results.konflux import package_batch
+            from abevalflow.results.konflux import component_evidence, package_batch
 
+            if args.component_manifest:
+                component_evidence(args.batch_dir, args.component_manifest, args.image_url, args.image_digest)
             package_batch(args.batch_dir)
             return 0
         if args.command == "batch-results":

@@ -11,7 +11,7 @@ from pathlib import Path
 
 from abevalflow.config.runtime import ConfigurationError, RuntimeConfig
 
-EXCLUDED = {".git", ".venv", "__pycache__", ".pytest_cache", ".ruff_cache", ".abeval", "node_modules"}
+EXCLUDED = {".git", ".venv", "__pycache__", ".pytest_cache", ".ruff_cache", ".abeval", ".konflux", "node_modules"}
 
 
 def staged_source_root(config: RuntimeConfig) -> Path:

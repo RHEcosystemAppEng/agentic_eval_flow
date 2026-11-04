@@ -1,5 +1,44 @@
 # Konflux integration
 
+## Per-plugin release candidates (CLI 0.6.1)
+
+Tier selection is owned by the Konflux build: normal PRs use Tier 1, and
+post-merge `auto` selects both tiers when the exact merged MR has `evaluate`.
+The CLI accepts only the resolved tiers and records those in component evidence.
+An unrequested tier is emitted as `SKIPPED`, including the batch aggregate and
+Tekton result. Skipped tiers are non-failing for result emission; managed EC
+and release policies independently require the evidence appropriate to a market.
+
+The `per-plugin-componnent` integration uses one Konflux Component per plugin.
+Its trusted preparation task generates `.konflux/package/manifest.json` and the
+complete skill inventory. Pass that inventory to `abeval batch`; a release
+candidate must not evaluate only changed skills.
+
+Before attaching the archive, invoke:
+
+```sh
+abeval batch-package --batch-dir /workspace/batch \
+  --component-manifest /source/.konflux/package/manifest.json \
+  --image-url "$IMAGE_URL" --image-digest "$IMAGE_DIGEST"
+```
+
+This validates the batch against the package inventory and source commit, binds
+every run to its built image, and includes `component-evaluation.json` in the
+report archive. Generated `.konflux` build outputs are excluded from isolated
+evaluation staging. Internal file links in plugin content are materialized by
+the trusted packager before image construction.
+
+`batch-results` emits standard `TEST_OUTPUT` and `IMAGES_PROCESSED` in addition
+to the existing tier/publication results. `PLUGIN_EVALUATION` contains compact
+identity, coverage, and a SHA-256 digest of the component evidence. Chains signs
+these task results and the report artifact reference. Detailed failed checks
+remain failed even when authored policies mark them advisory; managed EC
+release policy determines whether they qualify for a market.
+
+Standalone and legacy batches keep their existing verdict behavior. PostgreSQL
+schema v2 is unchanged. Release orchestration and registry operations remain
+outside the CLI; see `plugin-pipeline/konflux/README.md` in the sibling repository.
+
 Use the installed `abeval` CLI from a task or runner image. The
 [CLI reference](cli.md) lists flags, environment variables, defaults, and exit
 codes. Submission files define cases, models, judges, and policy.

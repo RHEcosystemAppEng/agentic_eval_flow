@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import tarfile
@@ -10,6 +11,12 @@ from pathlib import Path
 
 from abevalflow.results.run import RunResult, write_json
 from abevalflow.workflow.batch import BatchResult, validate_skills
+
+
+def image_repository(value: str) -> str:
+    """Ignore an optional tag when identifying immutable image subjects."""
+    prefix, separator, name = value.rpartition("/")
+    return prefix + separator + name.split(":", 1)[0]
 
 
 def outcome(state: str, note: str, successes=0, failures=0, warnings=0) -> dict:
@@ -65,6 +72,8 @@ def project_run(run: RunResult, skill: str, tiers: set[int], persist: set[str]) 
 
 def aggregate(values: list[dict], label: str) -> dict:
     selected = [v for v in values if v["result"] != "SKIPPED"]
+    if values and not selected:
+        return outcome("SKIPPED", f"{label}: not requested")
     errors = sum(v["result"] == "ERROR" for v in selected)
     failed = sum(v["result"] == "FAILURE" for v in selected)
     state = "ERROR" if errors else "FAILURE" if failed else "SUCCESS"
@@ -139,6 +148,8 @@ def package_batch(directory: Path) -> None:
     batch = BatchResult.model_validate_json((directory / "batch.json").read_text())
     with tarfile.open(directory / "reports.tar.gz", "w:gz") as archive:
         archive.add(directory / "batch.json", arcname="batch.json")
+        if (directory / "component-evaluation.json").is_file():
+            archive.add(directory / "component-evaluation.json", arcname="component-evaluation.json")
         for item in batch.items:
             run = (directory / item.run_dir).resolve()
             if not run.is_relative_to(directory.resolve() / "runs"):
@@ -146,6 +157,78 @@ def package_batch(directory: Path) -> None:
             for name in ("run.json", "reports"):
                 if (run / name).exists():
                     archive.add(run / name, arcname=f"{item.run_dir}/{name}")
+
+
+def component_evidence(directory: Path, manifest_file: Path, image_url: str, image_digest: str) -> dict:
+    """Bind a complete plugin evaluation to a built image before archiving it.
+
+    This records observations, including failures. Managed release policy decides
+    which tiers and individual checks are mandatory; authored blocking flags do
+    not turn failed observations into successful release evidence.
+    """
+    manifest = json.loads(manifest_file.read_text())
+    plugin = manifest["plugin_id"]
+    skills = manifest["skills"]
+    revision = manifest["source_revision"]
+    if (
+        manifest.get("schema_version") != "1.0"
+        or not re.fullmatch(r"[a-z0-9][a-z0-9-]*", plugin)
+        or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", revision)
+        or not skills
+        or any(not skill.startswith(plugin + "/") for skill in skills)
+        or not image_url
+        or "@" in image_url
+        or not re.fullmatch(r"sha256:[0-9a-f]{64}", image_digest)
+    ):
+        raise ValueError("Invalid component identity")
+    validate_skills(skills)
+    batch = BatchResult.model_validate_json((directory / "batch.json").read_text())
+    summary = summarize(directory, skills, revision, set(batch.tiers), set(batch.persist))
+    evaluations = []
+    image_ref = f"{image_url}@{image_digest}"
+    for item in batch.items:
+        run_dir = (directory / item.run_dir).resolve()
+        if not run_dir.is_relative_to(directory.resolve() / "runs") or item.status != "completed":
+            raise ValueError("Incomplete component evaluation")
+        run = RunResult.model_validate_json((run_dir / "run.json").read_text())
+        if run.config.get("built_image_ref") != image_ref or run.source_revision != revision:
+            raise ValueError("Evaluation does not match the built component")
+        if len({step.name for step in run.steps}) != len(run.steps):
+            raise ValueError("Duplicate evaluation steps")
+        report_file = run_dir / "reports/report.json"
+        report = json.loads(report_file.read_text()) if report_file.is_file() else {}
+        treatment = report.get("summary", {}).get("treatment", {})
+        evaluations.append(
+            {
+                "skill_id": item.skill_id,
+                "run_id": run.run_id,
+                "evaluator_version": run.evaluator_version,
+                "completed_at": run.completed_at.isoformat() if run.completed_at else None,
+                "metrics": {
+                    "mean_reward": report.get("mean_reward", treatment.get("mean_reward")),
+                    "n_trials": treatment.get("n_trials", report.get("n_trials")),
+                    "n_errors": treatment.get("n_errors", report.get("n_errors")),
+                },
+                "checks": [
+                    {"name": step.name, "tier": step.tier, "status": step.status, "verdict": step.verdict}
+                    for step in run.steps
+                ],
+            }
+        )
+    evidence = {
+        "schema_version": "1.0",
+        "plugin_id": plugin,
+        "source_revision": revision,
+        "image_ref": f"{image_repository(image_url)}@{image_digest}",
+        "payload_digest": manifest["payload_digest"],
+        "skills": skills,
+        "tiers": list(batch.tiers),
+        "completed_at": batch.completed_at.isoformat(),
+        "evaluations": evaluations,
+        "results": summary["results"],
+    }
+    write_json(directory / "component-evaluation.json", evidence)
+    return evidence
 
 
 def emit_results(
@@ -187,12 +270,49 @@ def emit_results(
             summary["results"]["publication"] = outcome("ERROR", "OCI evidence attachment failed", failures=1)
     write_json(directory / "summary.json", summary)
     for name, key in [
+        ("TEST_OUTPUT", "tier1"),
         ("TEST_OUTPUT_TIER_A", "tier1"),
         ("TEST_OUTPUT_TIER_B", "tier2"),
         ("TEST_OUTPUT_PUBLICATION", "publication"),
     ]:
         write_json(results_dir / name, summary["results"][key])
+    write_json(
+        results_dir / "IMAGES_PROCESSED",
+        {
+            "image": {
+                "pullspec": image_url,
+                "digests": [image_digest] if image_url and image_digest else [],
+            }
+        },
+    )
+    evidence_file = directory / "component-evaluation.json"
+    attested_summary = {}
+    if evidence_file.is_file():
+        evidence = json.loads(evidence_file.read_text())
+        if (
+            evidence["image_ref"] != f"{image_repository(image_url)}@{image_digest}"
+            or evidence["source_revision"] != revision
+        ):
+            raise ValueError("Component evidence identity does not match results")
+        attested_summary = {
+            key: evidence[key]
+            for key in (
+                "schema_version",
+                "plugin_id",
+                "source_revision",
+                "image_ref",
+                "payload_digest",
+                "tiers",
+                "completed_at",
+            )
+        }
+        attested_summary.update(
+            skill_count=len(evidence["skills"]),
+            evidence_digest="sha256:" + hashlib.sha256(evidence_file.read_bytes()).hexdigest(),
+        )
+    write_json(results_dir / "PLUGIN_EVALUATION", attested_summary)
     write_json(results_dir / "skill-reports-ARTIFACT_OUTPUTS", artifact)
     return int(
-        fail_on_non_success and any(summary["results"][key]["result"] != "SUCCESS" for key in ("tier1", "publication"))
+        fail_on_non_success
+        and any(summary["results"][key]["result"] not in {"SUCCESS", "SKIPPED"} for key in ("tier1", "publication"))
     )
