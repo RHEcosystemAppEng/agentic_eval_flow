@@ -126,7 +126,7 @@ spec:
       # === Compass SoundCheck publishing ===
       - name: COMPASS_DRY_RUN
         type: string
-        default: "true"
+        default: "false"
         description: >-
           Set to "false" to publish facts to Compass. Default is dry-run.
 
