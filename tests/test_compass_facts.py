@@ -98,6 +98,7 @@ class TestBuildFactPayload:
         )
 
         assert "facts" in payload
+        assert payload["cache"] is True
         assert len(payload["facts"]) == 1
 
         fact = payload["facts"][0]

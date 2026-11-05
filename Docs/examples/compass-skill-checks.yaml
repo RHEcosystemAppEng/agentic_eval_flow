@@ -1,0 +1,76 @@
+# The ai-skill-quality track already references these six check IDs.
+# These definitions align its rules with the explicit facts published by abeval.
+# Apply each check using PUT /api/soundcheck/checks/{id}; preserve unrelated metadata.
+checks:
+  - id: valid-skill-structure
+    name: Valid Skill Structure
+    ownerEntityRef: group:redhat/ai5-marketplace
+    description: The skill structure validator completed successfully.
+    filter: [{kind: [airesource], spec.type: [skill]}]
+    pathResolver: jsonpath
+    rule:
+      all:
+        - {factRef: 'ai5-marketplace:default/valid-skill-structure', path: '$.available', operator: equal, value: true}
+        - {factRef: 'ai5-marketplace:default/valid-skill-structure', path: '$.value', operator: equal, value: true}
+    passedMessage: '{{ entity.metadata.name }} has a valid skill structure.'
+    failedMessage: '{{ entity.metadata.name }} has invalid or unavailable skill structure evidence.'
+  - id: basic-security-validation
+    name: Basic Security Validation
+    ownerEntityRef: group:redhat/ai5-marketplace
+    description: Security scan score from latest_skill_scorecards.security_scan_score_100 is at least 60.
+    filter: [{kind: [airesource], spec.type: [skill]}]
+    pathResolver: jsonpath
+    rule:
+      all:
+        - {factRef: 'ai5-marketplace:default/basic-security-validation', path: '$.available', operator: equal, value: true}
+        - {factRef: 'ai5-marketplace:default/basic-security-validation', path: '$.value', operator: greaterThanInclusive, value: 60}
+    passedMessage: '{{ entity.metadata.name }} has a security scan score of at least 60/100.'
+    failedMessage: '{{ entity.metadata.name }} has a security scan score below 60/100 or unavailable evidence.'
+  - id: content-quality-review
+    name: Content Quality Review
+    ownerEntityRef: group:redhat/ai5-marketplace
+    description: Content scan score from latest_skill_scorecards.quality_scan_score_100 is at least 60.
+    filter: [{kind: [airesource], spec.type: [skill]}]
+    pathResolver: jsonpath
+    rule:
+      all:
+        - {factRef: 'ai5-marketplace:default/content-quality-review', path: '$.available', operator: equal, value: true}
+        - {factRef: 'ai5-marketplace:default/content-quality-review', path: '$.value', operator: greaterThanInclusive, value: 60}
+    passedMessage: '{{ entity.metadata.name }} has a content quality scan score of at least 60/100.'
+    failedMessage: '{{ entity.metadata.name }} has a content quality scan score below 60/100 or unavailable evidence.'
+  - id: advanced-security-validation
+    name: Advanced Security Validation
+    ownerEntityRef: group:redhat/ai5-marketplace
+    description: The same security scan score as basic validation, with a higher bar of 90.
+    filter: [{kind: [airesource], spec.type: [skill]}]
+    pathResolver: jsonpath
+    rule:
+      all:
+        - {factRef: 'ai5-marketplace:default/advanced-security-validation', path: '$.available', operator: equal, value: true}
+        - {factRef: 'ai5-marketplace:default/advanced-security-validation', path: '$.value', operator: greaterThanInclusive, value: 90}
+    passedMessage: '{{ entity.metadata.name }} has a security scan score of at least 90/100.'
+    failedMessage: '{{ entity.metadata.name }} has a security scan score below 90/100 or unavailable evidence.'
+  - id: instruction-quality
+    name: Instruction Quality
+    ownerEntityRef: group:redhat/ai5-marketplace
+    description: Instruction quality uses the quality scan score with a threshold of 70; no separate instruction evaluator is run.
+    filter: [{kind: [airesource], spec.type: [skill]}]
+    pathResolver: jsonpath
+    rule:
+      all:
+        - {factRef: 'ai5-marketplace:default/instruction-quality', path: '$.available', operator: equal, value: true}
+        - {factRef: 'ai5-marketplace:default/instruction-quality', path: '$.value', operator: greaterThanInclusive, value: 70}
+    passedMessage: '{{ entity.metadata.name }} has a quality scan score of at least 70/100 for instruction quality.'
+    failedMessage: '{{ entity.metadata.name }} has a quality scan score below 70/100 for instruction quality or unavailable evidence.'
+  - id: enterprise-behavioral-evaluation
+    name: Enterprise Behavioral Evaluation
+    ownerEntityRef: group:redhat/ai5-marketplace
+    description: Treatment behavior score from latest_skill_scorecards.behavior_score_100 is at least 50; this is not the pairwise win rate.
+    filter: [{kind: [airesource], spec.type: [skill]}]
+    pathResolver: jsonpath
+    rule:
+      all:
+        - {factRef: 'ai5-marketplace:default/enterprise-behavioral-evaluation', path: '$.available', operator: equal, value: true}
+        - {factRef: 'ai5-marketplace:default/enterprise-behavioral-evaluation', path: '$.value', operator: greaterThanInclusive, value: 50}
+    passedMessage: '{{ entity.metadata.name }} has a treatment behavior score of at least 50/100.'
+    failedMessage: '{{ entity.metadata.name }} has a treatment behavior score below 50/100 or unavailable evidence.'

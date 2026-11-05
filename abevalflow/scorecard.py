@@ -82,6 +82,11 @@ class Scorecard(BaseModel):
         description="Results of pushing certification facts to Compass",
     )
 
+    skill_fact_push_results: list[CertificationFactPushResult] = Field(
+        default_factory=list,
+        description="Publication outcomes for the six Compass AI Skill Validation facts",
+    )
+
     @computed_field
     @property
     def highest_certification(self) -> CertificationLevel:

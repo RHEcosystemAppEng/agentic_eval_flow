@@ -50,6 +50,7 @@ def publish(config: RuntimeConfig, result: RunResult) -> list[StepResult]:
                 details = publish_s3(config, result)
             elif destination == "compass":
                 from abevalflow.persistence.compass import publish_scorecard
+                from abevalflow.report import AnalysisResult
                 from abevalflow.scorecard import Scorecard
 
                 path = config.output / "reports/scorecard.json"
@@ -60,7 +61,9 @@ def publish(config: RuntimeConfig, result: RunResult) -> list[StepResult]:
                     scorecard.policy.push_facts = config.metadata.gate_policy.push_facts.model_copy(deep=True)
                 if config.compass_token:
                     scorecard.policy.push_facts.bearer_token = config.compass_token.get_secret_value()
-                success = publish_scorecard(scorecard, verify_tls=not config.insecure_ssl)
+                report_path = config.output / "reports/report.json"
+                report = AnalysisResult.model_validate_json(report_path.read_text()) if report_path.is_file() else None
+                success = publish_scorecard(scorecard, verify_tls=not config.insecure_ssl, result=result, report=report)
                 scorecard.policy.push_facts.bearer_token = "${COMPASS_API_TOKEN}"
                 write_json(path, scorecard.model_dump(mode="json"))
                 if not success:

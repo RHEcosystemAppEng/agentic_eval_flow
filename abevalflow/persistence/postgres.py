@@ -36,6 +36,7 @@ from abevalflow.observability.context import MetricsContext
 from abevalflow.report import AnalysisResult
 from abevalflow.results.run import RunResult, StepResult
 from abevalflow.scorecard import Scorecard
+from abevalflow.scorecard_values import check_score
 
 TOOLS = {"security": "cisco", "quality": "skillmd-quality", "submission-review": "llm-review", "evaluate": "aeh"}
 
@@ -116,7 +117,6 @@ def _checks(config: RuntimeConfig, result: RunResult, scorecard: Scorecard | Non
                     else "quality"
                 )
             )
-            unavailable = step.status != "completed" or (gate and gate.details.get("scoring_unavailable"))
             scoring_details = details.get("scoring") or {}
             score_method = (
                 scoring_details.get("method", "severity_penalty_v1")
@@ -141,7 +141,7 @@ def _checks(config: RuntimeConfig, result: RunResult, scorecard: Scorecard | Non
                 status=step.status,
                 verdict=step.verdict,
                 blocking=step.blocking,
-                score=None if unavailable else gate.score if gate else _number(step.details.get("overall_score")),
+                score=check_score(step, gate),
                 score_method=score_method,
                 passed=gate.passed if gate else None,
                 evaluated_at=gate.evaluated_at if gate else None,

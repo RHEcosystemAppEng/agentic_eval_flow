@@ -99,6 +99,7 @@ def _build_fact_payload(
         Dict ready to be JSON-serialized and POSTed to Facts API
     """
     return {
+        "cache": True,
         "facts": [
             {
                 "factRef": fact_ref,
@@ -285,7 +286,7 @@ def validate_push_facts_config(
     if not gates_with_push_fact:
         logger.warning(
             "push_facts.endpoint is configured (%s) but no gates have push_fact=True. "
-            "No facts will be pushed. Add push_fact: true to gate configurations.",
+            "No gate facts will be pushed. Certification and skill facts are configured independently.",
             push_facts_config.endpoint,
         )
 
@@ -490,7 +491,9 @@ def _push_raw_fact(
         CertificationFactPushResult with success status
     """
     try:
-        data = json.dumps(payload).encode("utf-8")
+        # Retain pushed values for fact inspection and subsequent check execution.
+        # Without explicit caching, a successful POST need not make facts retrievable.
+        data = json.dumps({**payload, "cache": True}).encode("utf-8")
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json",
@@ -563,6 +566,7 @@ def push_certification_facts(
     push_facts_config: PushFactsConfig,
     *,
     verify_tls: bool = True,
+    include_structure: bool = True,
 ) -> list[CertificationFactPushResult]:
     """Push certification levels, summary, and skill structure check to Compass.
 
@@ -583,6 +587,8 @@ def push_certification_facts(
     Args:
         certification_result: Complete certification result (with hierarchy enforced)
         push_facts_config: Configuration with endpoint and credentials
+        include_structure: Publish the legacy standalone structure fact. The
+            workflow disables this when publishing all six explicit skill facts.
 
     Returns:
         List of push results for each fact
@@ -644,7 +650,7 @@ def push_certification_facts(
         ),
         None,
     )
-    if structure_check is not None:
+    if include_structure and structure_check is not None:
         fact_name = "valid-skill-structure"
         fact_ref = f"{push_facts_config.fact_ref_prefix}{fact_name}"
         payload = {

@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from abevalflow.results.run import RunResult, write_json
+from abevalflow.skill_facts import build_skill_values, compact_skill_scores
 from abevalflow.workflow.batch import BatchResult, validate_skills
 
 
@@ -17,6 +18,12 @@ def image_repository(value: str) -> str:
     """Ignore an optional tag when identifying immutable image subjects."""
     prefix, separator, name = value.rpartition("/")
     return prefix + separator + name.split(":", 1)[0]
+
+
+def write_task_result(path: Path, value: dict) -> None:
+    """Use compact JSON for bounded task results, retaining the existing contracts."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(value, separators=(",", ":"), allow_nan=False) + "\n")
 
 
 def outcome(state: str, note: str, successes=0, failures=0, warnings=0) -> dict:
@@ -197,6 +204,12 @@ def component_evidence(directory: Path, manifest_file: Path, image_url: str, ima
             raise ValueError("Duplicate evaluation steps")
         report_file = run_dir / "reports/report.json"
         report = json.loads(report_file.read_text()) if report_file.is_file() else {}
+        from abevalflow.report import AnalysisResult
+        from abevalflow.scorecard import Scorecard
+
+        card_file = run_dir / "reports/scorecard.json"
+        card = Scorecard.model_validate_json(card_file.read_text()) if card_file.is_file() else None
+        analysis = AnalysisResult.model_validate(report) if report else None
         treatment = report.get("summary", {}).get("treatment", {})
         evaluations.append(
             {
@@ -204,6 +217,7 @@ def component_evidence(directory: Path, manifest_file: Path, image_url: str, ima
                 "run_id": run.run_id,
                 "evaluator_version": run.evaluator_version,
                 "completed_at": run.completed_at.isoformat() if run.completed_at else None,
+                "skill_facts": build_skill_values(card, run, analysis),
                 "metrics": {
                     "mean_reward": report.get("mean_reward", treatment.get("mean_reward")),
                     "n_trials": treatment.get("n_trials", report.get("n_trials")),
@@ -216,7 +230,7 @@ def component_evidence(directory: Path, manifest_file: Path, image_url: str, ima
             }
         )
     evidence = {
-        "schema_version": "1.0",
+        "schema_version": "2.0",
         "plugin_id": plugin,
         "source_revision": revision,
         "image_ref": f"{image_repository(image_url)}@{image_digest}",
@@ -226,6 +240,7 @@ def component_evidence(directory: Path, manifest_file: Path, image_url: str, ima
         "completed_at": batch.completed_at.isoformat(),
         "evaluations": evaluations,
         "results": summary["results"],
+        **compact_skill_scores(evaluations),
     }
     write_json(directory / "component-evaluation.json", evidence)
     return evidence
@@ -275,8 +290,8 @@ def emit_results(
         ("TEST_OUTPUT_TIER_B", "tier2"),
         ("TEST_OUTPUT_PUBLICATION", "publication"),
     ]:
-        write_json(results_dir / name, summary["results"][key])
-    write_json(
+        write_task_result(results_dir / name, summary["results"][key])
+    write_task_result(
         results_dir / "IMAGES_PROCESSED",
         {
             "image": {
@@ -309,9 +324,22 @@ def emit_results(
         attested_summary.update(
             skill_count=len(evidence["skills"]),
             evidence_digest="sha256:" + hashlib.sha256(evidence_file.read_bytes()).hexdigest(),
+            **compact_skill_scores(evidence["evaluations"]),
         )
-    write_json(results_dir / "PLUGIN_EVALUATION", attested_summary)
-    write_json(results_dir / "skill-reports-ARTIFACT_OUTPUTS", artifact)
+    # Keep this bounded result compact; Chains signs its values and archive hash.
+    encoded = json.dumps(attested_summary, separators=(",", ":"), allow_nan=False)
+    if len(encoded.encode()) > 3000:
+        raise ValueError("Component score evidence exceeds the bounded Tekton result size")
+    results_dir.mkdir(parents=True, exist_ok=True)
+    (results_dir / "PLUGIN_EVALUATION").write_text(encoded + "\n")
+    write_task_result(results_dir / "skill-reports-ARTIFACT_OUTPUTS", artifact)
+    # The portable termination-message transport shares 4096 bytes per task.
+    # Reserve room for the wrapper's batch-manifest result and entrypoint metadata.
+    transport = [
+        {"key": path.name, "value": path.read_text(), "type": 1} for path in results_dir.iterdir() if path.is_file()
+    ]
+    if len(json.dumps(transport, separators=(",", ":")).encode()) > 3600:
+        raise ValueError("Component scores exceed the portable Tekton task-result budget; no scores were omitted")
     return int(
         fail_on_non_success
         and any(summary["results"][key]["result"] not in {"SUCCESS", "SKIPPED"} for key in ("tier1", "publication"))

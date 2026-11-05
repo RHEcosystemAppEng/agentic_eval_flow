@@ -201,11 +201,55 @@ objects still requires the bucket's existing authentication mechanism.
 
 ## Compass facts
 
-Gate policy selects fact identities and enabled facts. When certification
-includes `valid_skill_structure`, Compass also receives a standalone
-`<fact_ref_prefix>valid-skill-structure` fact with that check's own result,
-independent of its certification level's overall status. Certification push
-outcomes are recorded in `scorecard.json`.
+With `persist=compass` and `gate_policy.push_facts` configured, the workflow
+publishes six explicit skill facts in addition to the existing enabled gate
+facts and certification level/summary facts. Each reference is
+`<fact_ref_prefix><check-id>`. For the RH SRE deployment the prefix is
+`ai5-marketplace:default/`; the entity reference comes from submission metadata.
+
+| Check ID | `data.value` source | Type | Suggested Compass rule |
+|---|---|---|---|
+| `valid-skill-structure` | Dedicated structure validation outcome | Boolean | `true` |
+| `basic-security-validation` | `security_scan_score_100` | Number, 0–100 | `>= 60` |
+| `content-quality-review` | `quality_scan_score_100` | Number, 0–100 | `>= 60` |
+| `advanced-security-validation` | Same `security_scan_score_100` | Number, 0–100 | `>= 90` |
+| `instruction-quality` | Same `quality_scan_score_100` | Number, 0–100 | `>= 70` |
+| `enterprise-behavioral-evaluation` | `behavior_score_100` | Number, 0–100 | `>= 50` |
+
+These values use the same evidence and one-decimal rounding as the
+`latest_skill_scorecards` database view; publishing does not query the database
+and also works with Compass as the only persistence destination. Behavior uses
+`report.summary.treatment.mean_reward * 100`, including pairwise runs, rather
+than the evaluation gate's potentially different pairwise win rate. Instruction
+quality has no separate evaluator today; its fact names the quality scan as its
+source and Compass applies its own threshold. Scanner scores are independent of
+the scanner gate's warning/blocking verdict.
+
+Fact submissions explicitly set `cache: true` so Compass retains the values for
+Fact Explorer and later check execution. A successful uncached submission can
+trigger a check without leaving a retrievable fact for a subsequent execution.
+
+Every fact includes `available`, `source`, `value_type`, `run_id`,
+`source_revision`, and `evaluated_at`. Missing numeric evidence publishes
+`value: null, available: false`, replacing stale scores; it is never converted
+to a passing zero or silently omitted. Structure always publishes a boolean:
+`false` for a failed or unavailable validation, with `available: false` when it
+did not complete. Structure retains its earlier diagnostic fields, including
+`passed`, for existing consumers.
+
+The existing `ai-skill-quality` track keeps its six check IDs. Update each
+check's fact rule to read `$.value`, require `$.available == true`, and apply
+the boolean or numeric comparison shown above. Ready-to-apply definitions are
+in [compass-skill-checks.yaml](examples/compass-skill-checks.yaml). Thresholds
+belong to Compass check rules, not the publisher. Adjust them there without
+changing evaluation scores. Changing check rules affects every entity using
+those checks; entities need facts from the updated evaluator on their next run.
+
+Gate, certification, and skill fact publication outcomes are recorded separately
+in `scorecard.json` as `fact_push_results`, `certification_fact_push_results`,
+and `skill_fact_push_results`. Any attempted fact publication failure fails the
+selected publication destination when persistence is required. These Compass
+thresholds are separate from the evaluator's internal certification policy.
 
 Compass verifies TLS certificates and hostnames by default using Python's trust
 store (including `SSL_CERT_FILE`). For environments that explicitly opt out,
