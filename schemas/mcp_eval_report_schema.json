@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "phase-summary",
+  "title": "Phase Summary",
+  "description": "Schema for MCP evaluation phase summary files consumed by the fact generator.",
+  "type": "object",
+  "required": ["phase", "passed", "checks"],
+  "properties": {
+    "phase": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$",
+      "description": "Phase name (e.g. static-eval, conformance-eval, behavioral-eval)."
+    },
+    "passed": {
+      "type": "boolean",
+      "description": "Overall phase pass/fail."
+    },
+    "checks": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/check" },
+      "description": "Individual check results."
+    }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "check": {
+      "type": "object",
+      "required": ["check", "passed"],
+      "properties": {
+        "check": {
+          "type": "string",
+          "description": "Check identifier."
+        },
+        "passed": {
+          "type": "boolean",
+          "description": "Whether the check passed."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pass", "fail", "not_evaluated"],
+          "description": "Three-state status. Defaults to pass/fail based on passed if omitted."
+        },
+        "score": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "description": "Normalized score (0.0–1.0)."
+        },
+        "message": {
+          "type": "string",
+          "description": "Human-readable result message."
+        },
+        "source": {
+          "type": "string",
+          "description": "Origin of the check result (e.g. pipeline, probe, compass, mcpchecker)."
+        },
+        "findings": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of findings."
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}

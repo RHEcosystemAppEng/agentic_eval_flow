@@ -1,0 +1,215 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: publish-to-compass
+  labels:
+    app.kubernetes.io/name: abevalflow
+    app.kubernetes.io/component: konflux
+spec:
+  description: >-
+    Publish pre-built fact payload JSON files to Compass SoundCheck.
+    Generic task — knows nothing about evaluation phases or summary
+    schemas. Takes a directory of fact JSON files, creates a ConfigMap
+    on the target cluster, and runs a Job that POSTs each to the
+    Compass Facts API using credentials from a target-cluster Secret.
+    Dry-run by default.
+  params:
+    - name: mcp-eval-image
+      type: string
+      default: "quay.io/ecosystem-appeng/abevalflow-mcp-eval:0.1"
+      description: Image for the publish Job container.
+    - name: facts-dir
+      type: string
+      default: "facts"
+      description: Workspace-relative directory containing fact payload JSON files.
+    - name: namespace-name
+      type: string
+      description: Ephemeral namespace on the target cluster.
+    - name: compass-secret
+      type: string
+      default: "mcp-eval-compass"
+      description: >-
+        Name of the Secret on the target cluster containing Compass
+        credentials. Keys: api-key, compass-url, entity-ref.
+    - name: secrets-namespace
+      type: string
+      default: "default"
+      description: >-
+        Namespace on the target cluster where the Compass secret is
+        stored. Defaults to the default namespace.
+    - name: configmap-name
+      type: string
+      default: "compass-facts"
+      description: ConfigMap name for fact files.
+    - name: dry-run
+      type: string
+      default: "true"
+      description: >-
+        Set to "false" to actually publish. Default is dry-run.
+    - name: job-timeout
+      type: string
+      default: "120"
+      description: Timeout in seconds for the publish Job.
+    - name: job-template
+      type: string
+      default: "/opt/templates/mcp-compass-publish-job.yaml"
+      description: Path to the Kubernetes Job template.
+  workspaces:
+    - name: source
+      description: Workspace containing the facts directory.
+    - name: target-kubeconfig
+      description: >-
+        Kubeconfig for the target cluster. Must contain a file named
+        "kubeconfig".
+  results:
+    - name: publish-status
+      description: "dry-run | published | failed | skipped"
+  steps:
+    - name: ensure-secret
+      image: registry.redhat.io/openshift4/ose-cli:latest
+      env:
+        - name: KUBECONFIG
+          value: $(workspaces.target-kubeconfig.path)/kubeconfig
+        - name: NAMESPACE
+          value: $(params.namespace-name)
+        - name: COMPASS_SECRET
+          value: $(params.compass-secret)
+        - name: SECRETS_NAMESPACE
+          value: $(params.secrets-namespace)
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        # Check if secret already exists in ephemeral namespace
+        if oc get secret "$COMPASS_SECRET" -n "$NAMESPACE" > /dev/null 2>&1; then
+          echo "Secret '$COMPASS_SECRET' already present in $NAMESPACE"
+          exit 0
+        fi
+
+        # Copy Compass secret from secrets namespace
+        if oc get secret "$COMPASS_SECRET" -n "$SECRETS_NAMESPACE" -o yaml \
+          | sed '/^\s*namespace:/d; /^\s*uid:/d; /^\s*resourceVersion:/d; /^\s*creationTimestamp:/d' \
+          | oc apply -n "$NAMESPACE" -f - 2>/dev/null; then
+          echo "Copied Compass secret '$COMPASS_SECRET' from $SECRETS_NAMESPACE into $NAMESPACE"
+        else
+          echo "WARNING: Could not copy Compass secret '$COMPASS_SECRET' from $SECRETS_NAMESPACE namespace"
+        fi
+
+    - name: prepare-job
+      image: $(params.mcp-eval-image)
+      imagePullPolicy: Always
+      env:
+        - name: NAMESPACE
+          value: $(params.namespace-name)
+        - name: JOB_NAME
+          value: compass-publish
+        - name: IMAGE
+          value: $(params.mcp-eval-image)
+        - name: JOB_TIMEOUT
+          value: $(params.job-timeout)
+        - name: COMPASS_SECRET
+          value: $(params.compass-secret)
+        - name: CONFIGMAP_NAME
+          value: $(params.configmap-name)
+        - name: DRY_RUN
+          value: $(params.dry-run)
+        - name: JOB_TEMPLATE
+          value: $(params.job-template)
+        - name: FACTS_DIR
+          value: $(params.facts-dir)
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        FACTS_DIR="$(workspaces.source.path)/$FACTS_DIR"
+
+        if [ ! -d "$FACTS_DIR" ] || [ -z "$(ls "$FACTS_DIR"/*.json 2>/dev/null)" ]; then
+          echo "No fact files found in $FACTS_DIR; skipping publish"
+          echo -n "skipped" > "$(results.publish-status.path)"
+          exit 0
+        fi
+
+        # Generate Job manifest from template
+        envsubst \
+          '${JOB_NAME} ${NAMESPACE} ${JOB_TIMEOUT} ${IMAGE} ${CONFIGMAP_NAME} ${COMPASS_SECRET} ${DRY_RUN}' \
+          < "$JOB_TEMPLATE" \
+          > "$(workspaces.source.path)/compass-publish-job.yaml"
+
+        echo "Generated Job manifest:"
+        cat "$(workspaces.source.path)/compass-publish-job.yaml"
+
+    - name: run-publish-job
+      image: registry.redhat.io/openshift4/ose-cli:latest
+      env:
+        - name: KUBECONFIG
+          value: $(workspaces.target-kubeconfig.path)/kubeconfig
+        - name: NAMESPACE
+          value: $(params.namespace-name)
+        - name: JOB_NAME
+          value: compass-publish
+        - name: JOB_TIMEOUT
+          value: $(params.job-timeout)
+        - name: CONFIGMAP_NAME
+          value: $(params.configmap-name)
+        - name: DRY_RUN
+          value: $(params.dry-run)
+        - name: FACTS_DIR
+          value: $(params.facts-dir)
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        FACTS_DIR="$(workspaces.source.path)/$FACTS_DIR"
+
+        # Check if prepare step skipped (no fact files)
+        if [ -f "$(results.publish-status.path)" ]; then
+          echo "Publish was skipped in prepare step"
+          exit 0
+        fi
+
+        # Create ConfigMap from fact files
+        oc create configmap "$CONFIGMAP_NAME" \
+          --from-file="$FACTS_DIR" \
+          --namespace="$NAMESPACE"
+        echo "Created ConfigMap '$CONFIGMAP_NAME' with $(ls "$FACTS_DIR"/*.json | wc -l) fact file(s)"
+
+        # Apply the Job
+        oc apply -f "$(workspaces.source.path)/compass-publish-job.yaml" --namespace="$NAMESPACE"
+
+        # Wait for completion
+        DEADLINE=$((SECONDS + JOB_TIMEOUT))
+        while true; do
+          COMPLETE=$(oc get job "$JOB_NAME" -n "$NAMESPACE" \
+            -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}' \
+            2>/dev/null || true)
+          FAILED=$(oc get job "$JOB_NAME" -n "$NAMESPACE" \
+            -o jsonpath='{.status.conditions[?(@.type=="Failed")].status}' \
+            2>/dev/null || true)
+
+          if [ "$COMPLETE" = "True" ]; then
+            echo "Publish Job completed"
+            oc logs "job/$JOB_NAME" -n "$NAMESPACE" 2>&1 || true
+            if [ "$DRY_RUN" = "false" ]; then
+              echo -n "published" > "$(results.publish-status.path)"
+            else
+              echo -n "dry-run" > "$(results.publish-status.path)"
+            fi
+            break
+          fi
+          if [ "$FAILED" = "True" ]; then
+            echo "ERROR: Publish Job failed"
+            oc logs "job/$JOB_NAME" -n "$NAMESPACE" 2>&1 || true
+            echo -n "failed" > "$(results.publish-status.path)"
+            exit 1
+          fi
+          if [ "$SECONDS" -ge "$DEADLINE" ]; then
+            echo "ERROR: Publish Job timed out after ${JOB_TIMEOUT}s"
+            oc logs "job/$JOB_NAME" -n "$NAMESPACE" 2>&1 || true
+            echo -n "failed" > "$(results.publish-status.path)"
+            exit 1
+          fi
+          sleep 5
+        done
+
+        oc delete job "$JOB_NAME" -n "$NAMESPACE" --ignore-not-found=true > /dev/null 2>&1 || true
+        oc delete configmap "$CONFIGMAP_NAME" -n "$NAMESPACE" --ignore-not-found=true > /dev/null 2>&1 || true

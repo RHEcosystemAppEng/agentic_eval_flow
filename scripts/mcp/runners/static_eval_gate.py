@@ -1,17 +1,13 @@
 #!/usr/bin/env python3
-"""Run the MCP static evaluation gates over the normalized scan reports.
-
-Reads the three scan JSON files produced by the static evaluation scanners, evaluates
-each gate, and writes results:
-
-- ``<gate>-result.json`` per gate (the full GateResult) → results directory
-- ``static-eval-summary.json`` (overall pass/fail + per-gate summary) → reports directory
-
-Reporting stub: the three-state Evaluation-results-database writer is added by the
-pipeline layer later; static evaluation checks are pass/fail only.
-
+"""Run MCP static evaluation gates over normalized scan reports.
+Reads normalized scan JSON files from results-dir and writes:
+- <gate>-result.json per gate into results-dir
+- static-eval-summary.json into reports-dir
 Usage:
-    python -m scripts.mcp.runners.static_eval_gate --results-dir <dir> --reports-dir <dir> [--mode block|warn]
+    python -m scripts.mcp.runners.static_eval_gate \
+        --results-dir results \
+        --reports-dir reports \
+        --mode block
 """
 
 from __future__ import annotations
@@ -27,7 +23,6 @@ from abevalflow.schemas import GateMode, GatePolicy
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
-
 SUMMARY_FILENAME = "static-eval-summary.json"
 
 
@@ -36,14 +31,14 @@ def main() -> int:
     parser.add_argument(
         "--results-dir",
         type=Path,
-        required=True,
-        help="Directory holding the static evaluation scan JSON files (input)",
+        default=None,
+        help="Directory containing normalized scan JSON files",
     )
     parser.add_argument(
         "--reports-dir",
         type=Path,
         required=True,
-        help="Directory for writing the summary JSON file (output)",
+        help="Directory for the evaluation summary JSON",
     )
     parser.add_argument(
         "--mode",
@@ -52,24 +47,25 @@ def main() -> int:
         help="Gate enforcement mode (default: block)",
     )
     args = parser.parse_args()
-
-    if not args.results_dir.is_dir():
-        logger.error("Not a directory: %s", args.results_dir)
+    # Preserve backward compatibility with the original CLI.
+    results_dir = args.results_dir or args.reports_dir
+    reports_dir = args.reports_dir
+    if not results_dir.is_dir():
+        logger.error("Not a directory: %s", results_dir)
         return 1
-
-    args.reports_dir.mkdir(parents=True, exist_ok=True)
-
+    reports_dir.mkdir(parents=True, exist_ok=True)
     policy = GatePolicy(default_mode=GateMode(args.mode))
-    results = run_static_eval(args.results_dir, policy)
-
+    results = run_static_eval(results_dir, policy)
     summary: list[dict] = []
     for result in results:
         gate_key = result.get_policy_key()
-        (args.results_dir / f"{gate_key}-result.json").write_text(result.model_dump_json(indent=2))
+        # Store detailed gate results alongside scan results.
+        (results_dir / f"{gate_key}-result.json").write_text(result.model_dump_json(indent=2))
         summary.append(
             {
-                "gate": gate_key,
+                "check": gate_key,
                 "passed": result.passed,
+                "status": "pass" if result.passed else "fail",
                 "score": result.score,
                 "findings": len(result.findings),
                 "message": result.message,
@@ -82,17 +78,23 @@ def main() -> int:
             result.score,
             len(result.findings),
         )
-
     overall_passed = all(r.passed for r in results)
-    (args.reports_dir / SUMMARY_FILENAME).write_text(
+    # Write the summary to the reports directory.
+    summary_path = reports_dir / SUMMARY_FILENAME
+    summary_path.write_text(
         json.dumps(
-            {"phase": "static-eval", "passed": overall_passed, "gates": summary},
+            {
+                "phase": "static-eval",
+                "passed": overall_passed,
+                "checks": summary,
+            },
             indent=2,
         )
     )
-
-    logger.info("Static evaluation overall: %s", "PASS" if overall_passed else "FAIL")
-    # Exit non-zero in block mode when any gate failed, so the Tekton step fails.
+    logger.info(
+        "Static evaluation overall: %s",
+        "PASS" if overall_passed else "FAIL",
+    )
     if not overall_passed and args.mode == GateMode.BLOCK.value:
         return 1
     return 0
