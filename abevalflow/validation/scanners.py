@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import sys
 import sysconfig
 from pathlib import Path
 
@@ -13,6 +14,8 @@ from abevalflow.results.run import StepResult
 
 def local_scanner_executable(command: str) -> str:
     """Find bundled scanner entrypoints even when a tool install exposes only abeval."""
+    if command == "python3":
+        return sys.executable
     if command in {"skill-scanner", "harness-eval"}:
         installed = shutil.which(command, path=sysconfig.get_path("scripts"))
         if installed:

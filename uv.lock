@@ -9,7 +9,7 @@ resolution-markers = [
 
 [[package]]
 name = "abevalflow"
-version = "0.7.0"
+version = "0.7.1"
 source = { editable = "." }
 dependencies = [
     { name = "cisco-ai-skill-scanner" },
@@ -71,7 +71,7 @@ requires-dist = [
     { name = "anthropic", extras = ["vertex"], marker = "extra == 'runner'" },
     { name = "cisco-ai-skill-scanner", specifier = "==2.3.1" },
     { name = "harbor", marker = "extra == 'runner'", specifier = "==0.25.0" },
-    { name = "harness-eval", specifier = "==7.9.0" },
+    { name = "harness-eval", specifier = "==8.0.1" },
     { name = "jinja2", marker = "extra == 'runner'", specifier = ">=3.1" },
     { name = "kubernetes", marker = "extra == 'runner'", specifier = ">=32.0.0,<37" },
     { name = "minio", marker = "extra == 'dev'", specifier = ">=7.0" },
@@ -1159,7 +1159,7 @@ wheels = [
 
 [[package]]
 name = "harness-eval"
-version = "7.9.0"
+version = "8.0.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
@@ -1167,9 +1167,9 @@ dependencies = [
     { name = "pyyaml" },
     { name = "scikit-learn" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a6/6b/4a4570c6535bc62e10ea0e5098981652ae17319048b1e35ec0f9545a292c/harness_eval-7.9.0.tar.gz", hash = "sha256:6396d771ff3c6014a55f7f6d8b4dd4ed031aad6e98b7c024a582c08f28da6f2a", size = 289086, upload-time = "2026-08-12T10:52:39.974Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/42/c1/3300fa45b0411182cb90c4b4b3e6dcb969dd50dcda1112d9a5e21c0efa2d/harness_eval-8.0.1.tar.gz", hash = "sha256:5809c6a89b71d145c565ac5059fcf7032e741e0ebaf6a37a7bcfb058de45fd49", size = 422107, upload-time = "2026-10-08T10:02:44.388Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f3/c9/5a34c3841563dda682147bf62cc4fba29f7a729572de04b83f9b0cf3cc3a/harness_eval-7.9.0-py3-none-any.whl", hash = "sha256:b941e0b99ef5dc1946c96fc4097b59bcfa1b85c9850f12b410f82e2439c6f9f0", size = 244674, upload-time = "2026-08-12T10:52:38.669Z" },
+    { url = "https://files.pythonhosted.org/packages/0f/89/92bb2643e437e2489bd533080ca1aeee1351f66b674d5692759a48482d1c/harness_eval-8.0.1-py3-none-any.whl", hash = "sha256:647496b9bac44168392655c3fea8120bf95f04caef5fbbc65f8a61c766d6dba0", size = 310983, upload-time = "2026-10-08T10:02:42.743Z" },
 ]
 
 [[package]]

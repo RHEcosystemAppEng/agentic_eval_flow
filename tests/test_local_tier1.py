@@ -46,7 +46,7 @@ def test_installed_tier1_scanners_keep_tool_permissions_and_write_evidence(catal
 
 def test_bundled_scanners_resolve_from_the_cli_environment(monkeypatch):
     monkeypatch.setenv("PATH", "/does/not/exist")
-    for command in ("skill-scanner", "harness-eval"):
+    for command in ("skill-scanner", "harness-eval", "python3"):
         executable = Path(local_scanner_executable(command))
         assert executable.is_file()
         assert executable.parent == Path(sysconfig.get_path("scripts"))

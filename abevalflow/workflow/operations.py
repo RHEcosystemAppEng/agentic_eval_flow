@@ -83,20 +83,28 @@ class Operations:
         from abevalflow.validation.scanners import execute_scanner, scanner_command
 
         outputs = [self.reports / "skillmd-quality-scan.json", self.reports / "skillmd-security-scan.json"]
+        if self.config.quality_command == "harness-eval":
+            # The v8 engine replaces skill-submission-scan. Keep its report
+            # contract through our adapter and provide the actual plugin root.
+            project_root = self.skill.parents[1] if self.skill.parent.name == "skills" else self.source
+            command = [
+                "python3",
+                "-m",
+                "abevalflow.validation.quality",
+                str(self.skill),
+                "--project-root",
+                str(project_root),
+            ]
+        else:
+            # Preserve the established external-scanner override interface.
+            command = [self.config.quality_command, "skill-submission-scan", str(self.skill)]
+        command += ["--output-quality", str(outputs[0]), "--output-security", str(outputs[1])]
         return execute_scanner(
             "quality",
             scanner_command(
                 self.config,
                 "quality",
-                [
-                    self.config.quality_command,
-                    "skill-submission-scan",
-                    str(self.skill),
-                    "--output-quality",
-                    str(outputs[0]),
-                    "--output-security",
-                    str(outputs[1]),
-                ],
+                command,
             ),
             outputs,
             self.reports / "quality.log",

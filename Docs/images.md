@@ -54,10 +54,13 @@ distribution is installed unchanged.
 The trial image contains upstream AEH's verifier/scoring code, Claude Code, and
 the mock MCP server. Harbor transfers cases and skills into trial pods.
 
-Cisco Skill Scanner `2.3.1` and harness-eval `7.9.0` are pinned application
+Cisco Skill Scanner `2.3.1` and harness-eval `8.0.1` are pinned application
 dependencies. Both are installed unchanged. Cisco natively supports the standard
 space-separated `allowed-tools` declaration. Scanner regression tests exercise
 declared and undeclared tools through a complete local Tier 1 run.
+CLI 0.7.1 supplies an internal quality adapter to preserve the report and security-rule
+contract after upstream removed its submission command. Quality scanner images
+must contain this adapter; see [scanner upgrade compatibility](scanner-upgrade.md).
 
 Both AEH images install the complete AEH release `v1.57.1`, pinned to commit
 `8a15a8b687b5561903827805eaae8b438bde9954`. The local runtime installer uses

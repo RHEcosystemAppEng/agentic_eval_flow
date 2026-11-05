@@ -97,13 +97,15 @@ that capability. Defaults and submission discovery make most flags optional.
 |---|---|---|---|
 | `--scanner-runtime` | `ABEVAL_SCANNER_RUNTIME` | `local`; choices: `local`, `podman`, `docker`. | Optional. |
 | `--security-command` | `ABEVAL_SECURITY_COMMAND` | Included `skill-scanner`; override with an executable path/name. | Optional. |
-| `--quality-command` | `ABEVAL_QUALITY_COMMAND` | Included `harness-eval`; override with an executable path/name. | Optional. |
+| `--quality-command` | `ABEVAL_QUALITY_COMMAND` | Included `harness-eval` through the CLI's compatibility adapter; custom executable overrides keep the legacy submission-scan interface. | Optional. |
 | `--security-image` | `ABEVAL_SECURITY_IMAGE` | No default; image containing `skill-scanner`. | When Tier 1 uses Podman/Docker. |
-| `--quality-image` | `ABEVAL_QUALITY_IMAGE` | No default; image containing `harness-eval`. | When Tier 1 uses Podman/Docker. |
+| `--quality-image` | `ABEVAL_QUALITY_IMAGE` | No default; runner image containing the evaluation CLI and its pinned `harness-eval`. | When Tier 1 uses Podman/Docker. |
 
 Local execution is the default and uses the scanners installed alongside
 `abeval`, including with `uv tool install`; scanner commands do not need to be
 exposed on your shell's PATH. Command overrides select custom executables.
+See [scanner upgrade compatibility](scanner-upgrade.md) for the 8.0.1 rule mapping
+and the retained quality/security report contract.
 
 <details>
 <summary>Optional Podman/Docker scanning</summary>
