@@ -22,6 +22,14 @@ spec:
       type: string
       default: "mcpchecker"
       description: PR/MR label name to check for
+    - name: pr-status-is
+      type: string
+      default: ""
+      description: Optional PR/MR status (open, merged, closed); empty means any status
+    - name: git-token-secret-name
+      type: string
+      default: "git-secret"
+      description: Name of the Secret containing the Git access token
   results:
     - name: has-label
       description: "'true' if target-label appears on the PR/MR, 'false' otherwise"
@@ -35,25 +43,27 @@ spec:
           value: $(params.git-revision)
         - name: TARGET_LABEL
           value: $(params.target-label)
+        - name: PR_STATUS
+          value: $(params.pr-status-is)
         - name: GIT_TOKEN
           valueFrom:
             secretKeyRef:
-              name: git-secret
+              name: $(params.git-token-secret-name)
               key: password
               optional: true
       script: |
         #!/usr/bin/env bash
         set -euo pipefail
-
         microdnf install -y jq --nodocs
-
+        case "$PR_STATUS" in
+          ""|open|merged|closed) ;;
+          *) echo "ERROR: Invalid PR status: $PR_STATUS" >&2; exit 1 ;;
+        esac
         GIT_HOST=$(echo "$GIT_URL" | sed -E 's|https?://([^/]+)/.*|\1|')
         REPO_PATH=$(echo "$GIT_URL" | sed -E 's|https?://[^/]+/||; s|\.git$||; s|/$||')
-
         echo "Checking labels for $REPO_PATH @ $REVISION (host: $GIT_HOST)"
-        echo "Looking for label: $TARGET_LABEL"
-
-        if [ -z "$GIT_TOKEN" ]; then
+        echo "Looking for label: $TARGET_LABEL (status: ${PR_STATUS:-any})"
+        if [ -z "${GIT_TOKEN:-}" ]; then
           echo "WARNING: GIT_TOKEN not available, returning false"
           RESULT="false"
         elif echo "$GIT_HOST" | grep -qi "github"; then
@@ -67,22 +77,25 @@ spec:
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: token $GIT_TOKEN" \
             "${API_BASE}/repos/${REPO_PATH}/commits/${REVISION}/pulls")
-
-          RESULT=$(echo "$RESPONSE" | jq -r --arg targetlabel "$TARGET_LABEL" \
-            '[.[].labels[].name] | if any(. == $targetlabel) then "true" else "false" end')
-
+          RESULT=$(echo "$RESPONSE" | jq -r \
+            --arg label "$TARGET_LABEL" --arg status "$PR_STATUS" '
+            [.[] | select(
+              any(.labels[]?; .name == $label) and
+              ($status == "" or (if .merged_at != null then "merged" else .state end) == $status)
+            )] | length > 0')
         elif echo "$GIT_HOST" | grep -qi "gitlab"; then
-          ENCODED_PATH=$(echo "$REPO_PATH" | jq -Rr @uri)
-
+          ENCODED_PATH=$(echo -n "$REPO_PATH" | jq -sRr @uri)
           RESPONSE=$(curl -sSfk \
             -H "PRIVATE-TOKEN: $GIT_TOKEN" \
             "https://${GIT_HOST}/api/v4/projects/${ENCODED_PATH}/repository/commits/${REVISION}/merge_requests")
-
-          RESULT=$(echo "$RESPONSE" | jq -r --arg targetlabel "$TARGET_LABEL" \
-            '[.[].labels[]] | if any(. == $targetlabel) then "true" else "false" end')
-
+          RESULT=$(echo "$RESPONSE" | jq -r \
+            --arg label "$TARGET_LABEL" --arg status "$PR_STATUS" '
+            [.[] | select(
+              any(.labels[]?; . == $label) and
+              ($status == "" or (if .state == "opened" then "open" else .state end) == $status)
+            )] | length > 0')
         else
-          echo "ERROR: Unsupported Git platform: $GIT_HOST"
+          echo "ERROR: Unsupported Git platform: $GIT_HOST" >&2
           exit 1
         fi
 
