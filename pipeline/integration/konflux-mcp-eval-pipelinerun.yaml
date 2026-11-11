@@ -536,6 +536,36 @@ spec:
           - name: target-kubeconfig
             workspace: target-kubeconfig
 
+      - name: publish-to-db
+        runAfter: [generate-compass-facts]
+        taskRef:
+          resolver: bundles
+          params:
+            - name: name
+              value: publish-to-db
+            - name: bundle
+              value: quay.io/rh-ee-operetz/mcp-publish-to-db-task:0.1.0-test
+            - name: kind
+              value: task
+            - name: secret
+              value: rh-ee-operetz-db-publish-pull-secret
+        params:
+          - name: db-image
+            value: quay.io/rh-ee-operetz/mcp-db-publish:0.1.0-test-cc869475
+          - name: component-name
+            value: $(tasks.parse-snapshot.results.component-name)
+          - name: git-url
+            value: $(tasks.parse-snapshot.results.git-url)
+          - name: commit-sha
+            value: $(tasks.parse-snapshot.results.git-revision)
+          - name: pipeline-run-id
+            value: $(context.pipelineRun.name)
+          - name: database-secret
+            value: mcp-eval-test-db-connection
+        workspaces:
+          - name: source
+            workspace: shared-workspace
+
     # ================================================================
     # Finally: Teardown ephemeral namespace (always runs)
     # ================================================================
