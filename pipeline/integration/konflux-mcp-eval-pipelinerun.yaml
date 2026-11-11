@@ -31,6 +31,14 @@ kind: PipelineRun
 metadata:
   name: abevalflow-mcp-eval
 spec:
+  taskRunSpecs:
+    - pipelineTaskName: check-label
+      podTemplate:
+        env:
+          - name: CONTEXT_PR_NUMBER
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.labels['pac.test.appstudio.openshift.io/pull-request']
   timeouts:
     pipeline: "1h"
     tasks: "45m"
@@ -334,7 +342,7 @@ spec:
             - name: name
               value: check-label
             - name: bundle
-              value: quay.io/ecosystem-appeng/abevalflow-task-check-label:0.1
+              value: quay.io/ecosystem-appeng/konflux-skill-evaluation/check-label:0.2.0@sha256:b8e8679e310a12bcd30e33936344321a52a71b11b52e5c63a94c9db5cc306edb
             - name: kind
               value: task
         params:
