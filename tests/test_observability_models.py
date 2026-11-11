@@ -49,6 +49,27 @@ def test_later_failed_evaluation_replaces_previous_score_and_old_retry_does_not_
     assert latest["commit_sha"] == "c" * 40
     assert rows(url, "SELECT * FROM plugin_results")[0]["error_skills"] == 1
     assert rows(url, "SELECT * FROM latest_skill_judge_scores") == []
+    compass = rows(url, "SELECT * FROM skill_compass_results ORDER BY started_at")
+    assert len(compass) == 2
+    assert bool(compass[0]["is_latest"]) is False
+    assert bool(compass[0]["valid-skill-structure"]) is True
+    assert compass[0]["basic-security-validation"] == 0
+    assert compass[0]["advanced-security-validation"] == 0
+    assert compass[0]["content-quality-review"] == 70
+    assert compass[0]["instruction-quality"] == 70
+    assert compass[0]["enterprise-behavioral-evaluation"] == 90
+    assert bool(compass[1]["is_latest"]) is True
+    assert bool(compass[1]["valid-skill-structure"]) is False
+    assert all(
+        compass[1][column] is None
+        for column in (
+            "basic-security-validation",
+            "advanced-security-validation",
+            "content-quality-review",
+            "instruction-quality",
+            "enterprise-behavioral-evaluation",
+        )
+    )
 
 
 def test_latest_summary_and_subscores_are_separate_signals(pipeline_evidence):

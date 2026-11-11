@@ -112,6 +112,36 @@ VIEWS = {
         LEFT JOIN scan_counts qc ON qc.evaluation_id = e.id AND qc.scan_name = 'quality'
         LEFT JOIN scan_counts sc ON sc.evaluation_id = e.id AND sc.scan_name = 'security'
     """,
+    "skill_compass_results": """
+        WITH ranked_evaluations AS (
+            SELECT e.*, ROW_NUMBER() OVER (
+                PARTITION BY skill_id ORDER BY started_at DESC, run_id DESC
+            ) AS latest_rank
+            FROM skill_evaluations e
+        )
+        SELECT p.name AS plugin_name, s.name AS skill_name, s.id AS skill_id,
+            e.id AS evaluation_id, e.run_id, e.commit_sha, e.started_at, e.completed_at,
+            e.status AS evaluation_status, e.latest_rank = 1 AS is_latest,
+            CASE
+                WHEN structure.status = 'completed' AND structure.verdict = 'pass' THEN TRUE
+                ELSE FALSE
+            END AS "valid-skill-structure",
+            ROUND(CAST(100.0 * security.score AS NUMERIC), 1) AS "basic-security-validation",
+            ROUND(CAST(100.0 * quality.score AS NUMERIC), 1) AS "content-quality-review",
+            ROUND(CAST(100.0 * security.score AS NUMERIC), 1) AS "advanced-security-validation",
+            ROUND(CAST(100.0 * quality.score AS NUMERIC), 1) AS "instruction-quality",
+            ROUND(CAST(100.0 * treatment.mean_reward AS NUMERIC), 1)
+                AS "enterprise-behavioral-evaluation"
+        FROM ranked_evaluations e
+        JOIN skills s ON s.id = e.skill_id
+        JOIN plugins p ON p.id = s.plugin_id
+        LEFT JOIN tier_results t1 ON t1.evaluation_id = e.id AND t1.tier = 1
+        LEFT JOIN check_results structure ON structure.tier_result_id = t1.id AND structure.name = 'structure'
+        LEFT JOIN check_results security ON security.tier_result_id = t1.id AND security.name = 'security'
+        LEFT JOIN check_results quality ON quality.tier_result_id = t1.id AND quality.name = 'quality'
+        LEFT JOIN evaluation_variants treatment
+            ON treatment.evaluation_id = e.id AND treatment.name = 'treatment'
+    """,
     "plugin_results": """
         SELECT p.name AS plugin_name, COUNT(s.id) AS skills_count,
             COUNT(r.evaluation_id) AS evaluated_skills,

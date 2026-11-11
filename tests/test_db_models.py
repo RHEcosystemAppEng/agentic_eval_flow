@@ -25,6 +25,7 @@ def test_initialization_is_idempotent_and_creates_views():
     assert "skill_evaluations" in inspect(engine).get_table_names()
     assert "publication_results" not in inspect(engine).get_table_names()
     assert "plugin_results" in inspect(engine).get_view_names()
+    assert "skill_compass_results" in inspect(engine).get_view_names()
     with Session(engine) as session:
         assert session.scalar(select(SchemaVersion.version)) == 2
 

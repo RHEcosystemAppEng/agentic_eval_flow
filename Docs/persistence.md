@@ -130,6 +130,7 @@ Only skills that have been published to this database are included in its catalo
 | View | Result |
 |---|---|
 | `plugin_results` | Counts of known/evaluated skills, emitted recommendations, errors and findings by severity, using each skill's latest evaluation. |
+| `skill_compass_results` | Historical evaluation rows with an `is_latest` flag and the six values named after their exact Compass check IDs. |
 | `latest_skill_scorecards` | One readable row per evaluated skill: quality/security scan scores, submission review, behavior score, sample sizes, status, and severity counts. |
 | `latest_skill_results` | Detailed one-row-per-skill result: provenance, tier status/verdicts, treatment/control reward, pairwise outcomes, and findings by severity. |
 | `latest_skill_judge_scores` | Latest aggregate judge scores per skill and arm, including tool-emitted details. |
@@ -142,6 +143,14 @@ SELECT * FROM plugin_results WHERE plugin_name = 'rh-sre';
 SELECT * FROM latest_skill_scorecards WHERE plugin_name = 'rh-sre';
 SELECT * FROM latest_skill_results WHERE plugin_name = 'rh-sre';
 SELECT * FROM latest_skill_judge_scores WHERE plugin_name = 'rh-sre';
+
+-- Read the six Compass-facing values for current or historical evaluations.
+SELECT * FROM skill_compass_results
+WHERE plugin_name = 'rh-sre' AND is_latest;
+
+SELECT * FROM skill_compass_results
+WHERE plugin_name = 'rh-sre' AND skill_name = 'cve-impact'
+ORDER BY started_at DESC, run_id DESC;
 
 -- Inspect security and quality findings by check within one evaluation.
 SELECT c.name, c.status, c.score, f.*
@@ -169,6 +178,17 @@ to [0, 1]. Informational findings do not reduce the score. A failed or
 incomplete scan has a null score. The finding counts and the check's `details`
 include the calculation breakdown. These weights are policy values, not a
 claim that severity can be measured objectively.
+
+`skill_compass_results` exposes those values using the exact quoted Compass
+check IDs: `valid-skill-structure`, `basic-security-validation`,
+`content-quality-review`, `advanced-security-validation`,
+`instruction-quality`, and `enterprise-behavioral-evaluation`. Basic and
+advanced security intentionally contain the same scan score; content and
+instruction quality intentionally contain the same quality score. Numeric
+values are on the Compass 0–100 scale and remain null when unavailable.
+Structure matches the published fact value and is false when validation failed
+or did not complete. Use `is_latest` to distinguish the current evaluation from
+history; failed and partial latest evaluations do not inherit older values.
 
 Behavior score is the treatment's absolute mean reward on [0, 1]. For the
 standardized CVE submissions it is the configured weighted mean of
