@@ -95,10 +95,6 @@ spec:
         type: string
         default: "1800"
         description: Timeout in seconds for the mcpchecker Job
-      - name: PASS_THRESHOLD
-        type: string
-        default: "0.7"
-        description: Minimum overall score (0.0–1.0) for a pass recommendation
       - name: LLM_AGENT_SECRET
         type: string
         default: "mcp-eval-llm-agent"
@@ -197,8 +193,6 @@ spec:
         params:
           - name: mcp-eval-image
             value: $(params.MCP_EVAL_IMAGE)
-          - name: mode
-            value: "block"
         workspaces:
           - name: source
             workspace: shared-workspace
@@ -313,8 +307,6 @@ spec:
             value: $(params.SERVICE_NAME)
           - name: service-port
             value: $(params.SERVICE_PORT)
-          - name: mode
-            value: "block"
           - name: timeout
             value: "30"
         workspaces:
@@ -372,8 +364,6 @@ spec:
             value: $(params.SERVICE_PORT)
           - name: job-timeout
             value: $(params.JOB_TIMEOUT)
-          - name: pass-threshold
-            value: $(params.PASS_THRESHOLD)
           - name: llm-agent-secret
             value: $(params.LLM_AGENT_SECRET)
           - name: llm-judge-secret
