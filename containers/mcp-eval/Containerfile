@@ -26,9 +26,9 @@ FROM registry.access.redhat.com/ubi9/python-312:latest
 ARG GITLEAKS_VERSION=8.30.0
 ARG SEMGREP_VERSION=1.179.0
 ARG LICENSEE_VERSION=9.18.0
-ARG PYDANTIC_VERSION=2.13.5
-ARG PYYAML_VERSION=6.0.3
-ARG HTTPX_VERSION=0.28.1
+ARG PYDANTIC_VERSION=2.13
+ARG PYYAML_VERSION=6.0
+ARG HTTPX_VERSION=0.28
 
 USER 0
 
@@ -36,11 +36,11 @@ USER 0
 COPY --from=mcpchecker-runner /usr/local/bin/mcpchecker /usr/local/bin/mcpchecker
 RUN chmod +x /usr/local/bin/mcpchecker
 
-# MCP eval code — only the verified import closure (abevalflow.mcp pulls in
-# gates, schemas, observability; scripts.mcp are the Tekton entry points).
-COPY abevalflow/__init__.py /opt/abevalflow/__init__.py
-COPY abevalflow/schemas.py /opt/abevalflow/schemas.py
-COPY abevalflow/mcp /opt/abevalflow/mcp
+# MCP eval code — abevalflow core (gates, schemas, observability) and
+# scripts.mcp (Tekton entry points, fact generation, evaluation models).
+COPY abevalflow/__init__.py  /opt/abevalflow/__init__.py
+COPY abevalflow/schemas.py  /opt/abevalflow/schemas.py
+COPY abevalflow/mcp         /opt/abevalflow/mcp
 COPY abevalflow/gates /opt/abevalflow/gates
 COPY abevalflow/observability /opt/abevalflow/observability
 COPY scripts/__init__.py /opt/scripts/__init__.py
@@ -52,9 +52,13 @@ COPY abevalflow/report.py            /opt/abevalflow/report.py
 COPY scripts/aggregate_mcpchecker.py /opt/scripts/aggregate_mcpchecker.py
 COPY suites/mcp/default              /opt/suites/mcp/default
 
-# Kubernetes Job templates for conformance and behavioral evaluation
-COPY templates/mcp-conformance-eval-job.yaml /opt/templates/mcp-conformance-eval-job.yaml
-COPY templates/mcp-behavioral-eval-job.yaml  /opt/templates/mcp-behavioral-eval-job.yaml
+# JSON Schemas for summary and fact file validation
+COPY schemas /opt/schemas
+
+# Kubernetes Job templates for conformance, behavioral evaluation, and Compass publishing
+COPY templates/mcp-conformance-eval-job.yaml  /opt/templates/mcp-conformance-eval-job.yaml
+COPY templates/mcp-behavioral-eval-job.yaml   /opt/templates/mcp-behavioral-eval-job.yaml
+COPY templates/mcp-compass-publish-job.yaml   /opt/templates/mcp-compass-publish-job.yaml
 
 ENV PYTHONPATH=/opt
 
@@ -62,15 +66,16 @@ ENV PYTHONPATH=/opt
 # Python deps.
 # licensee's native dep (rugged -> libgit2) needs a build toolchain to compile;
 # install it, build the gem, then drop the toolchain to keep the image lean.
+# Install semgrep first (it has strict deps including jsonschema~=4.25.1), then other packages.
 RUN dnf install -y nodejs npm gettext --nodocs \
  && curl -LsSf \
       "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
       | tar -xz -C /usr/local/bin gitleaks \
+ && pip install --no-cache-dir "semgrep==${SEMGREP_VERSION}" \
  && pip install --no-cache-dir \
-      "semgrep==${SEMGREP_VERSION}" \
-      "pydantic==${PYDANTIC_VERSION}" \
-      "pyyaml==${PYYAML_VERSION}" \
-      "httpx==${HTTPX_VERSION}" \
+      "pydantic>=${PYDANTIC_VERSION}" \
+      "pyyaml>=${PYYAML_VERSION}" \
+      "httpx>=${HTTPX_VERSION}" \
  && dnf install -y ruby ruby-devel gcc gcc-c++ make cmake pkgconf-pkg-config openssl-devel \
  && gem install licensee -v "${LICENSEE_VERSION}" \
  && dnf remove -y ruby-devel gcc gcc-c++ make cmake pkgconf-pkg-config openssl-devel \

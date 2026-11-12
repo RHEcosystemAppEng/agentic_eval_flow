@@ -1,0 +1,108 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ${JOB_NAME}
+  namespace: ${NAMESPACE}
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: ${JOB_TIMEOUT}
+  template:
+    spec:
+      restartPolicy: Never
+      volumes:
+        - name: facts
+          configMap:
+            name: ${CONFIGMAP_NAME}
+      containers:
+        - name: publisher
+          image: ${IMAGE}
+          imagePullPolicy: Always
+          command: ["python3", "-c"]
+          args:
+            - |
+              import json, os, sys, urllib.request, urllib.error
+              from pathlib import Path
+              from scripts.mcp.fact_generator import validate_compass_fact_file
+
+              facts_dir = Path("/mnt/facts")
+              compass_url = os.environ.get("COMPASS_URL", "")
+              api_key = os.environ.get("COMPASS_API_KEY", "")
+              entity_ref = os.environ.get("COMPASS_ENTITY_REF", "")
+              dry_run = os.environ.get("DRY_RUN", "true") != "false"
+
+              files = sorted(facts_dir.glob("*.json"))
+              if not files:
+                  print("ERROR: No fact files found", file=sys.stderr)
+                  sys.exit(1)
+
+              if not dry_run and (not compass_url or not api_key or not entity_ref):
+                  print("ERROR: COMPASS_URL, COMPASS_API_KEY, and COMPASS_ENTITY_REF required for live publish", file=sys.stderr)
+                  sys.exit(1)
+
+              mode = "DRY RUN" if dry_run else "LIVE"
+              failed = 0
+              print(f"=== Compass publish ({mode}): {len(files)} fact(s) ===")
+              for f in files:
+                  try:
+                      fact_data = validate_compass_fact_file(f)
+                  except Exception as e:
+                      print(f"SKIP {f.name}: schema validation failed: {e}")
+                      failed += 1
+                      continue
+
+                  fact_ref = fact_data["factRef"]
+                  payload = {"facts": [{"factRef": fact_ref, "entityRef": entity_ref, "data": fact_data["data"]}]}
+                  data = json.dumps(payload).encode()
+
+                  if dry_run:
+                      print(f"[DRY RUN] Would POST {fact_ref} ({len(data)} bytes)")
+                      continue
+
+                  req = urllib.request.Request(
+                      compass_url, data=data, method="POST",
+                      headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
+                  )
+                  try:
+                      with urllib.request.urlopen(req, timeout=30) as resp:
+                          print(f"OK   {fact_ref} (HTTP {resp.status})")
+                  except urllib.error.HTTPError as e:
+                      print(f"FAIL {fact_ref} (HTTP {e.code}: {e.reason})")
+                      failed += 1
+                  except urllib.error.URLError as e:
+                      print(f"FAIL {fact_ref} ({e.reason})")
+                      failed += 1
+
+              total = len(files)
+              if dry_run:
+                  print(f"Dry run complete: {total} fact(s) would be published")
+              else:
+                  print(f"Published {total - failed}/{total} facts")
+              sys.exit(1 if failed else 0)
+          workingDir: /tmp
+          env:
+            - name: HOME
+              value: /tmp
+            - name: DRY_RUN
+              value: "${DRY_RUN}"
+            - name: COMPASS_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ${COMPASS_SECRET}
+                  key: api-key
+                  optional: true
+            - name: COMPASS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: ${COMPASS_SECRET}
+                  key: compass-url
+                  optional: true
+            - name: COMPASS_ENTITY_REF
+              valueFrom:
+                secretKeyRef:
+                  name: ${COMPASS_SECRET}
+                  key: entity-ref
+                  optional: true
+          volumeMounts:
+            - name: facts
+              mountPath: /mnt/facts
+              readOnly: true

@@ -22,12 +22,12 @@ no network calls. Testable with JSON fixtures.
 | `conformance_eval_gate.py` | Conformance | `ConformanceEvalGate` — reads any `<check>-check.json`, maps three-state to `GateResult` |
 | `__init__.py` | All | Orchestrators: `run_static_eval()`, `run_conformance_eval()`, gate lists |
 
-### `checks/` — conformance probes and Compass-consumed checks
+### `checks/` — conformance probes and legacy Compass mapping
 
 | File | Evaluation Type | What it does |
 |------|-----------------|-------------|
 | `conformance_eval_checks.py` | Conformance | 8 `check_*` functions + `probe_all()` — conformance checks against a running MCP server |
-| `conformance_eval_compass_checks.py` | Conformance | `map_facts()` + `map_results()` — maps Compass facts/results to `CheckOutcome` |
+| `conformance_eval_compass_checks.py` | Legacy utility | Maps historical Compass facts/results; not part of the Phase 2 batch |
 
 ### Root modules
 
@@ -59,7 +59,6 @@ Conformance Evaluation (live — against the running MCP server)
 ┌─────────────────────────────────────────────────────────────────┐
 │ scripts/mcp/probes/                                             │
 │   conformance_eval_probe   ──→ <check>-check.json (per check)  │
-│   conformance_eval_compass_probe ──→ <check>-check.json (facts)│
 └──────────────────────────────────┬──────────────────────────────┘
                                    │ JSON on disk
 ┌──────────────────────────────────▼──────────────────────────────┐
@@ -67,6 +66,10 @@ Conformance Evaluation (live — against the running MCP server)
 │   ConformanceEvalGate (×N)  ──→ GateResult (pass/fail/not_eval) │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+Phase 2 evaluates the eight direct checks in `LIVE_CHECKS`. Tool-name rules
+and OAuth catalog matching are not fetched from Compass or included in the
+Phase 2 report. The existing standalone mapping helpers remain available.
 
 ## Relationship to `scripts/mcp/`
 

@@ -8,9 +8,7 @@ check for the conformance evaluation gates to read.
 Check logic lives in ``abevalflow.mcp.checks.conformance_eval_checks``; this module is the thin
 CLI wrapper that creates the client, invokes the checks, and writes results.
 
-Checks that Compass already collects as real automated facts (tool-name rules,
-OAuth match) are NOT probed here — they are consumed via
-``scripts/mcp/probes/conformance_eval_compass_probe.py`` instead.
+Phase 2 runs only the eight direct checks. Compass results are not fetched.
 
 Usage:
     python -m scripts.mcp.probes.conformance_eval_probe --server-url http://<service>:8080/mcp \

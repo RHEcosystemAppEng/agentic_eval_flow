@@ -1,0 +1,57 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: generate-compass-facts
+  labels:
+    app.kubernetes.io/name: abevalflow
+    app.kubernetes.io/component: konflux
+spec:
+  description: >-
+    Generate Compass SoundCheck fact payloads from evaluation phase
+    summaries. Validates each JSON file in the summary directory
+    against the phase summary schema and writes fact data files to the
+    workspace. The generated files contain factRef and data only —
+    entityRef is injected by the publishing step. No Compass
+    interaction.
+  params:
+    - name: mcp-eval-image
+      type: string
+      default: "quay.io/ecosystem-appeng/abevalflow-mcp-eval:0.1"
+    - name: summary-dir
+      type: string
+      default: "reports"
+      description: Workspace-relative directory containing phase summary JSON files.
+    - name: facts-dir
+      type: string
+      default: "facts"
+      description: Workspace-relative directory to write fact data JSON files.
+  workspaces:
+    - name: source
+      description: Workspace with the summary directory.
+  results:
+    - name: facts-dir
+      description: Workspace-relative path to the generated facts directory.
+  steps:
+    - name: generate-facts
+      image: $(params.mcp-eval-image)
+      imagePullPolicy: Always
+      env:
+        - name: SUMMARY_DIR
+          value: $(params.summary-dir)
+        - name: FACTS_DIR
+          value: $(params.facts-dir)
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        SUMMARY_DIR="$(workspaces.source.path)/$SUMMARY_DIR"
+        FACTS_DIR="$(workspaces.source.path)/$FACTS_DIR"
+
+        echo "=== Generating fact payloads ==="
+        python -m scripts.mcp.runners.generate_compass_facts \
+          --summary-dir "$SUMMARY_DIR" \
+          --output-dir "$FACTS_DIR"
+
+        echo "Generated fact files:"
+        ls -la "$FACTS_DIR"
+        echo -n "$FACTS_DIR" > "$(results.facts-dir.path)"
