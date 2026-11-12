@@ -406,7 +406,7 @@ spec:
           - name: mcp-eval-image
             value: $(params.MCP_EVAL_IMAGE)
           - name: component-name
-            value: $(tasks.parse-snapshot.results.component-name)
+            value: openshift-mcp-server
         workspaces:
           - name: source
             workspace: shared-workspace
