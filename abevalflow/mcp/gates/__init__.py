@@ -64,13 +64,7 @@ LIVE_CHECKS: tuple[str, ...] = (
     "openapi-conformance",
 )
 
-# Checks consumed from existing Compass facts (not re-probed).
-COMPASS_CHECKS: tuple[str, ...] = (
-    "tool-name-rules",
-    "oauth-catalog-match",
-)
-
-CONFORMANCE_EVAL_CHECKS: tuple[str, ...] = LIVE_CHECKS + COMPASS_CHECKS
+CONFORMANCE_EVAL_CHECKS: tuple[str, ...] = LIVE_CHECKS
 
 
 def get_conformance_eval_gates() -> list[ConformanceEvalGate]:
@@ -84,7 +78,6 @@ def run_conformance_eval(reports_dir: Path, policy: GatePolicy) -> list[GateResu
 
 
 __all__ = [
-    "COMPASS_CHECKS",
     "CONFORMANCE_EVAL_CHECKS",
     "ConformanceEvalGate",
     "DEFAULT_ALLOWED_LICENSES",

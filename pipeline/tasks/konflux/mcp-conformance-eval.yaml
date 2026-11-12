@@ -9,9 +9,8 @@ spec:
   description: >-
     MCP conformance evaluation - deterministic contract/conformance (ADR Approach 4).
     Black-box, no LLM. Probes the deployed, running MCP server over Streamable
-    HTTP for protocol/schema/HTTP conformance and operational limits, and
-    consumes the checks Compass already collects as real facts (tool-name rules,
-    OAuth match). Uses the three-state model
+    HTTP for protocol/schema/HTTP conformance and operational limits.
+    Runs eight direct checks using the three-state model
     (pass / fail / not_evaluated): an unreachable server or a check that cannot
     produce a meaningful signal is reported not_evaluated, never failed.
     Runs as a Job on the target cluster so it can reach the MCP server via
@@ -53,15 +52,6 @@ spec:
         Explicit OpenAPI contract URL for the openapi-conformance check. Empty
         probes well-known paths on the server root; a server publishing no
         reachable contract fails the check (ADR baseline requirement).
-    - name: compass-secret
-      type: string
-      default: "mcp-eval-compass"
-      description: >-
-        Name of a Secret on the target cluster (in the default namespace)
-        containing Compass SoundCheck credentials. Keys: api-key,
-        compass-url, entity-ref. Copied into the ephemeral namespace.
-        If empty or the secret does not exist, Compass-consumed checks
-        report not_evaluated.
     - name: job-template
       type: string
       default: "/opt/templates/mcp-conformance-eval-job.yaml"
@@ -98,8 +88,6 @@ spec:
           value: $(params.timeout)
         - name: OPENAPI_URL
           value: $(params.openapi-url)
-        - name: COMPASS_SECRET
-          value: $(params.compass-secret)
         - name: JOB_TEMPLATE
           value: $(params.job-template)
       script: |
@@ -107,7 +95,7 @@ spec:
         set -euo pipefail
 
         envsubst \
-          '${JOB_NAME} ${NAMESPACE} ${JOB_TIMEOUT} ${IMAGE} ${SERVER_URL} ${TIMEOUT} ${OPENAPI_URL} ${COMPASS_SECRET}' \
+          '${JOB_NAME} ${NAMESPACE} ${JOB_TIMEOUT} ${IMAGE} ${SERVER_URL} ${TIMEOUT} ${OPENAPI_URL}' \
           < "$JOB_TEMPLATE" \
           > "$(workspaces.source.path)/conformance-eval-job.yaml"
 
@@ -126,22 +114,9 @@ spec:
           value: conformance-eval-probe
         - name: JOB_TIMEOUT
           value: $(params.job-timeout)
-        - name: COMPASS_SECRET
-          value: $(params.compass-secret)
       script: |
         #!/usr/bin/env bash
         set -euo pipefail
-
-        # Copy Compass secret into ephemeral namespace if it exists
-        if [ -n "$COMPASS_SECRET" ]; then
-          if oc get secret "$COMPASS_SECRET" -n default -o yaml \
-            | sed '/^\s*namespace:/d; /^\s*uid:/d; /^\s*resourceVersion:/d; /^\s*creationTimestamp:/d' \
-            | oc apply -n "$NAMESPACE" -f - 2>/dev/null; then
-            echo "Copied Compass secret '$COMPASS_SECRET' into $NAMESPACE"
-          else
-            echo "WARNING: Could not copy Compass secret '$COMPASS_SECRET'; consumed checks will report not_evaluated."
-          fi
-        fi
 
         # Apply the Job
         oc apply -f "$(workspaces.source.path)/conformance-eval-job.yaml" --namespace="$NAMESPACE"

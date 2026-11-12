@@ -187,11 +187,9 @@ configured namespace, creates a ConfigMap with the fact files, and launches a
 Job that injects `entityRef` and POSTs to Compass. Dry-run is enabled by
 default.
 
-Not-evaluated checks are omitted as individual facts. The two Compass-consumed
-checks (`tool-name-rules`, `oauth-catalog-match`) are included in the phase
-summary but are not re-published individually, avoiding a circular write. The
-pipeline can read those existing results with `GET
-/api/soundcheck/results?entityRef=<url-encoded-ref>&checks=mcp-tool-schema-check&checks=mcp-oauth-scope-match`.
+Not-evaluated checks are omitted as individual facts. Phase 2 contains eight direct checks. It does not fetch
+`tool-name-rules` or `oauth-catalog-match` from Compass or include them in its
+summary. Publishing pipeline-generated facts to Compass remains a separate step.
 
 ### Adding a phase
 
