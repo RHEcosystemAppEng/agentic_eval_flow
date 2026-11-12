@@ -1,7 +1,7 @@
 apiVersion: tekton.dev/v1
 kind: Task
 metadata:
-  name: check-label
+  name: check-pr-label
   labels:
     app.kubernetes.io/name: abevalflow
     app.kubernetes.io/component: konflux
@@ -20,7 +20,6 @@ spec:
       description: Git commit SHA to look up associated PRs/MRs for
     - name: target-label
       type: string
-      default: "mcpchecker"
       description: PR/MR label name to check for
     - name: pr-status-is
       type: string

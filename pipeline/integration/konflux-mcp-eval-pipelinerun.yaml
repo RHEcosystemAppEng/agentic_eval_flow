@@ -32,7 +32,7 @@ metadata:
   name: abevalflow-mcp-eval
 spec:
   taskRunSpecs:
-    - pipelineTaskName: check-label
+    - pipelineTaskName: check-pr-label
       podTemplate:
         env:
           - name: CONTEXT_PR_NUMBER
@@ -326,15 +326,16 @@ spec:
       # ================================================================
       # Stage 7b: Check whether the gating PR label is present
       # ================================================================
-      - name: check-label
+      - name: check-pr-label
         runAfter: [parse-snapshot]
         taskRef:
           resolver: bundles
           params:
             - name: name
-              value: check-label
+              value: check-pr-label
             - name: bundle
-              value: quay.io/ecosystem-appeng/konflux-skill-evaluation/check-label:0.2.0@sha256:b8e8679e310a12bcd30e33936344321a52a71b11b52e5c63a94c9db5cc306edb
+              # TODO: Pin the renamed Task bundle digest after publication.
+              value: quay.io/ecosystem-appeng/konflux-skill-evaluation/check-pr-label:0.1.0
             - name: kind
               value: task
         params:
@@ -349,9 +350,9 @@ spec:
       # Stage 8: MCP Behavioral Evaluation (mcpchecker)
       # ================================================================
       - name: mcp-behavioral-eval
-        runAfter: [wait-ready, check-label]
+        runAfter: [wait-ready, check-pr-label]
         when:
-          - input: "$(tasks.check-label.results.has-label)"
+          - input: "$(tasks.check-pr-label.results.has-label)"
             operator: in
             values: ["true"]
         taskRef:
