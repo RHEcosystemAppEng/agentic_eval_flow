@@ -29,7 +29,7 @@ spec:
   - name: results-dir
   steps:
   - name: native-harbor-pair
-    image: image-registry.openshift-image-registry.svc:5000/ab-eval-flow/harbor-mcp-ci@sha256:e8b281f9b197986e3c86ca7ebc467076eb528ed1699c1fed5b42a4af91325931
+    image: image-registry.openshift-image-registry.svc:5000/ab-eval-flow/harbor-mcp-ci@sha256:89e181105a290cc16d8419e4e65df32bcc9e07f2da280206001b264a54d04e70
     computeResources: &id001
       requests:
         cpu: 100m
@@ -88,7 +88,7 @@ spec:
       mountPath: /opt/ci/config/mcp-mocks
       readOnly: true
   - name: publish-results
-    image: image-registry.openshift-image-registry.svc:5000/ab-eval-flow/harbor-mcp-ci@sha256:e8b281f9b197986e3c86ca7ebc467076eb528ed1699c1fed5b42a4af91325931
+    image: image-registry.openshift-image-registry.svc:5000/ab-eval-flow/harbor-mcp-ci@sha256:89e181105a290cc16d8419e4e65df32bcc9e07f2da280206001b264a54d04e70
     computeResources: *id001
     command:
     - python

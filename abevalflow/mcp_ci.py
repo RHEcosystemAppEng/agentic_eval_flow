@@ -758,6 +758,8 @@ def collect_logs(cluster, pods, root):
                     value = "Container never started; no process log exists. See pod status."
                 else:
                     raise
+            if isinstance(value, bytes):
+                value = value.decode("utf-8", errors="replace")
             parts.append(f"=== {container.name} ===\n{value}")
         log = root / "pod-logs" / f"{pod.metadata.name}.log"
         log.parent.mkdir(parents=True, exist_ok=True)

@@ -743,3 +743,25 @@ def test_committed_archive_reuse_checks_integrity_identity_and_inventory():
         archive.verified_cleanup("uid")
     manifest["objects"] = []
     assert not archive.verified_cleanup("uid")
+
+
+def test_kubernetes_byte_logs_are_preserved_as_text(tmp_path):
+    pod = NS(
+        metadata=NS(name="mock", owner_references=[], uid="pod-uid", labels={}),
+        spec=NS(containers=[NS(name="mock", image=IMAGE)]),
+        status=None,
+    )
+    cluster = NS(
+        namespace="test",
+        core=NS(
+            read_namespaced_pod_log=lambda *a, **k: (
+                b'2026-11-16T12:00:00Z {"event":"tool_call","tool":"check_connection","outcome":"ok"}\n'
+            )
+        ),
+    )
+    ci.collect_logs(cluster, [pod], tmp_path)
+    saved = (tmp_path / "pod-logs/mock.log").read_text()
+    assert saved.splitlines() == [
+        "=== mock ===",
+        '2026-11-16T12:00:00Z {"event":"tool_call","tool":"check_connection","outcome":"ok"}',
+    ]
