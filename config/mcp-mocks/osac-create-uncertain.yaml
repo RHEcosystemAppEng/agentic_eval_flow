@@ -1,4 +1,4 @@
-image: image-registry.openshift-image-registry.svc:5000/ab-eval-flow/osac-tenant-vm-mock@sha256:b5d2414d319f8c57d2b7dd08f33f682e2bcda3f1b25fb0b3b1bede9bb3acbac4
+image: image-registry.openshift-image-registry.svc:5000/ab-eval-flow/osac-tenant-vm-mock@sha256:0dbd7081b1bf7639d7fa1551a8fff74291b4caac8a93e64e73d9df8de9f1c181
 port: 8000
 path: /mcp
 env:

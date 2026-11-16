@@ -1,8 +1,12 @@
 {
   "source": "osac-ai-skills/evals/tenant_vm/mock_server",
-  "sha256": {
+  "note": "Fixture behavior unchanged. Import TypedDict from typing_extensions for Python3.11/Pydantic compatibility; wrapper adds internal binding and sanitized audit stdout.",
+  "original_sha256": {
     "server.py": "e9091e0b7c1fe77eb42626256a2fb378b25197955b54bdf201c8078869fbc5b9",
     "fixtures.py": "71730fc40ada1ab7c12a22580fa0c0cb663fd5766ebf8720910609a169ff12df"
   },
-  "note": "Unchanged source snapshot; container wrapper configures internal-network binding."
+  "sha256": {
+    "server.py": "93c73b6bd9599ae79e34c51273c8260a50b6cb90699453da01bfe260b4e8795d",
+    "fixtures.py": "71730fc40ada1ab7c12a22580fa0c0cb663fd5766ebf8720910609a169ff12df"
+  }
 }

@@ -18,6 +18,8 @@ spec:
     type: string
   - name: harbor-model
     type: string
+  - name: mcp-catalog-configmap
+    type: string
   workspaces:
   - name: source
   results:
@@ -81,6 +83,10 @@ spec:
     - $(params.harbor-agent-image)
     - --model
     - $(params.harbor-model)
+    volumeMounts:
+    - name: trusted-mcp-catalog
+      mountPath: /opt/ci/config/mcp-mocks
+      readOnly: true
   - name: publish-results
     image: image-registry.openshift-image-registry.svc:5000/ab-eval-flow/harbor-mcp-ci@sha256:e8b281f9b197986e3c86ca7ebc467076eb528ed1699c1fed5b42a4af91325931
     computeResources: *id001
@@ -100,3 +106,11 @@ spec:
     - harbor
     - --submission
     - $(params.submission-name)
+    volumeMounts:
+    - name: trusted-mcp-catalog
+      mountPath: /opt/ci/config/mcp-mocks
+      readOnly: true
+  volumes:
+  - name: trusted-mcp-catalog
+    configMap:
+      name: $(params.mcp-catalog-configmap)

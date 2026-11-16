@@ -12,6 +12,8 @@ spec:
     type: string
   - name: submission-name
     type: string
+  - name: mcp-catalog-configmap
+    type: string
   workspaces:
   - name: source
   steps:
@@ -53,3 +55,11 @@ spec:
     - $(params.submission-dir)
     - --submission
     - $(params.submission-name)
+    volumeMounts:
+    - name: trusted-mcp-catalog
+      mountPath: /opt/ci/config/mcp-mocks
+      readOnly: true
+  volumes:
+  - name: trusted-mcp-catalog
+    configMap:
+      name: $(params.mcp-catalog-configmap)

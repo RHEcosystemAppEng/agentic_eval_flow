@@ -31,7 +31,14 @@ original repository reference files; no reference guide/index was generated.
    has no connection to OSAC and logs sanitized structured tool-call outcomes.
 2. Build containers/harbor-agent.Containerfile and harbor-mcp.Containerfile
    against the pinned eval-base. The agent image copies no controller/mock code.
-   Pin both resulting digests in the new Tasks/run template.
+   Pin both resulting digests in the new Tasks/run template. Run `python -m scripts.render_mcp_catalog` to render an immutable,
+   content-addressed catalog ConfigMap from all
+   config/mcp-mocks/*.yaml and pass its name as mcp-catalog-configmap. Apply
+   config/harbor-mcp-catalog.yaml before the run. Only the trusted start/evaluate
+   Tasks mount this catalog read-only; native child Pods never receive it.
+   Both conditions bind the same immutable catalog, preventing mid-pair drift.
+   A new mock needs an image, descriptor/catalog refresh and run parameter,
+   not changes to pipeline code or a controller rebuild.
 3. Install config/mcp-mocks-rbac.yaml (existing tokenless child SA and archive
    worker), then config/harbor-mcp-rbac.yaml. The Harbor controller alone adds
    pods/exec permission. Install the Harbor Tasks, Pipeline, and the updated

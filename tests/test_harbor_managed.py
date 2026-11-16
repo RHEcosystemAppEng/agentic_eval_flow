@@ -143,3 +143,18 @@ def test_harbor_profile_separates_controller_and_child():
     run = yaml.safe_load((root / "pipeline/runs/harbor-mcp-pipelinerun.yaml").read_text())
     overrides = {s["pipelineTaskName"]: s for s in run["spec"]["taskRunSpecs"]}
     assert overrides["evaluate-harbor"]["serviceAccountName"] == "harbor-mcp-lifecycle"
+
+
+def test_catalog_is_immutable_complete_and_content_addressed(tmp_path):
+    import yaml
+
+    from scripts.render_mcp_catalog import render
+
+    for name in ["first", "second"]:
+        (tmp_path / (name + ".yaml")).write_text(yaml.safe_dump({"image": IMAGE}))
+    original = render(tmp_path)
+    assert original["immutable"] is True
+    assert set(original["data"]) == {"first.yaml", "second.yaml"}
+    assert render(tmp_path) == original
+    (tmp_path / "second.yaml").write_text(yaml.safe_dump({"image": IMAGE, "port": 9000}))
+    assert render(tmp_path)["metadata"]["name"] != original["metadata"]["name"]

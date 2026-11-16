@@ -71,6 +71,8 @@ spec:
   - name: harbor-model
     type: string
     default: claude-sonnet
+  - name: mcp-catalog-configmap
+    type: string
   results:
   - name: treatment-mean-reward
     value: $(tasks.evaluate-harbor.results.treatment-mean-reward)
@@ -168,6 +170,8 @@ spec:
       value: $(context.pipelineRun.name)
     - name: submission-name
       value: $(tasks.prepare.results.submission-name)
+    - name: mcp-catalog-configmap
+      value: $(params.mcp-catalog-configmap)
     workspaces:
     - name: source
       workspace: shared-workspace
@@ -192,6 +196,8 @@ spec:
       value: $(params.harbor-case)
     - name: harbor-model
       value: $(params.harbor-model)
+    - name: mcp-catalog-configmap
+      value: $(params.mcp-catalog-configmap)
     workspaces:
     - name: source
       workspace: shared-workspace

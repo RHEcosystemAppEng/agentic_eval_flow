@@ -16,6 +16,8 @@ spec:
     value: main
   - name: harbor-agent-image
     value: image-registry.openshift-image-registry.svc:5000/ab-eval-flow/harbor-mcp-agent@sha256:df7314514385ad2875f8dfa05c24563647a2b6330803bac7ea206e33ecececc2
+  - name: mcp-catalog-configmap
+    value: harbor-mcp-catalog-92531c992f22aa35
   taskRunTemplate:
     serviceAccountName: pipeline
   taskRunSpecs:

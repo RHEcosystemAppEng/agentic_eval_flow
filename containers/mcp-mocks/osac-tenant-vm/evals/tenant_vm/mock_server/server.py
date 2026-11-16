@@ -13,8 +13,8 @@ import threading
 import uuid
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Annotated, Any, Literal, TypedDict
-from typing_extensions import NotRequired
+from typing import Annotated, Any, Literal
+from typing_extensions import NotRequired, TypedDict
 
 from mcp.server import MCPServer
 from mcp.server.context import ServerRequestContext
