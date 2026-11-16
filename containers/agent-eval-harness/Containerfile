@@ -78,6 +78,8 @@ COPY --chown=1001:0 abevalflow /opt/agent-eval-harness/abevalflow
 # - mlflow[genai] + pandas for post-evaluate AEH MLflow logging/traces
 #   (full mlflow — skinny breaks async trace export / AsyncExportQueue).
 #   evaluate.yaml still pip-installs to /tmp as a fallback for older images.
+# - matplotlib>=3.8: mlflow pulls matplotlib<4; pin a Python 3.12-compatible
+#   lower bound so pip does not build ancient sdists (SafeConfigParser removed).
 RUN pip install --no-cache-dir \
     "harbor>=0.13.0" \
     "kubernetes>=32.0.0" \
@@ -86,7 +88,8 @@ RUN pip install --no-cache-dir \
     jinja2 \
     scipy \
     "mlflow[genai]" \
-    pandas
+    pandas \
+    "matplotlib>=3.8"
 
 # Set up environment
 ENV PYTHONPATH=/opt/agent-eval-harness \
