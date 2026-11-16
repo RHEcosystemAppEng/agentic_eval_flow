@@ -1,0 +1,91 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: cleanup-mcp
+spec:
+  description: Archive and verify MCP evidence before releasing resources. A failed
+    archive step stops the release step.
+  params:
+  - name: pipelinerun-name
+    type: string
+  - name: pipeline-run-uid
+    type: string
+  results:
+  - name: cleanup-status
+    description: deleted or none after verified archive and confirmed PVC absence;
+      a failed Task retains evidence.
+  steps:
+  - command:
+    - python
+    - -m
+    - abevalflow.mcp_ci
+    computeResources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+    image: image-registry.openshift-image-registry.svc:5000/ab-eval-flow/mcpchecker-ci@sha256:d74842d2ee9fa8955349ccda7a47d589856c1f1cf81ae0dcc59921524e85bfda
+    name: archive-evidence
+    args:
+    - finish
+    - --uid
+    - $(params.pipeline-run-uid)
+    - --run-name
+    - $(params.pipelinerun-name)
+    - --image
+    - image-registry.openshift-image-registry.svc:5000/ab-eval-flow/mcpchecker-ci@sha256:d74842d2ee9fa8955349ccda7a47d589856c1f1cf81ae0dcc59921524e85bfda
+    env:
+    - name: MINIO_ENDPOINT
+      valueFrom:
+        secretKeyRef:
+          name: minio-credentials
+          key: endpoint-url
+          optional: true
+    - name: MINIO_ACCESS_KEY
+      valueFrom:
+        secretKeyRef:
+          name: minio-credentials
+          key: root-user
+          optional: true
+    - name: MINIO_SECRET_KEY
+      valueFrom:
+        secretKeyRef:
+          name: minio-credentials
+          key: root-password
+          optional: true
+    - name: DATABASE_URL
+      valueFrom:
+        secretKeyRef:
+          name: ab-eval-db-credentials
+          key: database-url
+          optional: true
+    - name: POD_NAMESPACE
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.namespace
+  - command:
+    - python
+    - -m
+    - abevalflow.mcp_ci
+    computeResources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+    image: image-registry.openshift-image-registry.svc:5000/ab-eval-flow/mcpchecker-ci@sha256:d74842d2ee9fa8955349ccda7a47d589856c1f1cf81ae0dcc59921524e85bfda
+    name: release-workspace
+    args:
+    - release
+    - --uid
+    - $(params.pipeline-run-uid)
+    - --run-name
+    - $(params.pipelinerun-name)
+    env:
+    - name: POD_NAMESPACE
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.namespace

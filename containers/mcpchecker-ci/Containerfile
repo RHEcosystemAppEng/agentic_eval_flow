@@ -1,0 +1,11 @@
+ARG RUNNER_IMAGE=image-registry.openshift-image-registry.svc:5000/ab-eval-flow/mcpchecker-runner@sha256:e5bcb09fe39fd02feedcc09d127374c129a7a27ce0e8f28a261b87bcceb2e433
+FROM image-registry.openshift-image-registry.svc:5000/openshift/cli:latest AS cli
+FROM ${RUNNER_IMAGE}
+USER root
+COPY --from=cli /usr/bin/oc /usr/local/bin/oc
+RUN pip install --no-cache-dir kubernetes==35.0.0 minio==7.2.20 mcp==2.3.0 sqlalchemy 'psycopg[binary]' tenacity
+COPY abevalflow /opt/ci/abevalflow
+COPY scripts /opt/ci/scripts
+COPY config/mcp-mocks /opt/ci/config/mcp-mocks
+ENV PYTHONPATH=/opt/ci PYTHONDONTWRITEBYTECODE=1
+USER 1001

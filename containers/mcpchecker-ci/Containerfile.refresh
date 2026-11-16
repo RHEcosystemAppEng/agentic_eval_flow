@@ -1,0 +1,7 @@
+ARG CI_BASE_IMAGE
+FROM ${CI_BASE_IMAGE}
+USER root
+COPY abevalflow /opt/ci/abevalflow
+COPY scripts /opt/ci/scripts
+COPY config/mcp-mocks /opt/ci/config/mcp-mocks
+USER 1001

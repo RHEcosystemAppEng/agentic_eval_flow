@@ -1,0 +1,55 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: start-mcp
+spec:
+  params:
+  - name: pipeline-run-uid
+    type: string
+  - name: pipeline-run-id
+    type: string
+  - name: submission-dir
+    type: string
+  - name: submission-name
+    type: string
+  workspaces:
+  - name: source
+  steps:
+  - name: provision
+    image: image-registry.openshift-image-registry.svc:5000/ab-eval-flow/mcpchecker-ci@sha256:d74842d2ee9fa8955349ccda7a47d589856c1f1cf81ae0dcc59921524e85bfda
+    env:
+    - name: POD_NAME
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.name
+    - name: POD_NAMESPACE
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.namespace
+    - name: POD_UID
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.uid
+    computeResources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+    command:
+    - python
+    - -m
+    - abevalflow.mcp_ci
+    args:
+    - setup
+    - --workspace
+    - $(workspaces.source.path)
+    - --uid
+    - $(params.pipeline-run-uid)
+    - --run-name
+    - $(params.pipeline-run-id)
+    - --submission-dir
+    - $(params.submission-dir)
+    - --submission
+    - $(params.submission-name)
