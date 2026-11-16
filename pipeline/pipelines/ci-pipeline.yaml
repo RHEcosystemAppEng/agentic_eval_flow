@@ -126,10 +126,10 @@ spec:
     # MCPChecker params
     - name: mcpchecker-agent-model
       type: string
-      default: "openai:claude-sonnet"
+      default: "google:gemini-2.5-flash"
     - name: mcpchecker-judge-model
       type: string
-      default: "openai:claude-sonnet"
+      default: "openai:gpt-4o"
     - name: mcpchecker-task-timeout
       type: string
       default: "10m"
@@ -427,192 +427,121 @@ spec:
     # ======================================================================
     # PHASE 3: EVALUATE (dispatches to harbor/ase/mcpchecker)
     # ======================================================================
-    - name: evaluate-general
-      runAfter:
-      - red-team
-      - test
-      timeout: 3h
+    - name: evaluate
+      runAfter: ["red-team", "test"]
+      timeout: "3h"
       taskRef:
         name: evaluate
       params:
-      - name: eval-engine
-        value: $(params.eval-engine)
-      - name: submission-dir
-        value: $(params.submission-dir)
-      - name: submission-name
-        value: $(tasks.prepare.results.submission-name)
-      - name: commit-sha
-        value: $(params.revision)
-      - name: pipeline-run-id
-        value: $(context.pipelineRun.name)
-      - name: pipeline-repo-url
-        value: $(params.pipeline-repo-url)
-      - name: pipeline-repo-revision
-        value: $(params.pipeline-repo-revision)
-      - name: eval-mode
-        value: $(params.eval-mode)
-      - name: registry-url
-        value: $(params.registry-url)
-      - name: registry-namespace
-        value: $(params.registry-namespace)
-      - name: base-image
-        value: $(params.base-image)
-      - name: llm-model
-        value: $(params.llm-model)
-      - name: llm-api-base
-        value: $(params.llm-api-base)
-      - name: llm-api-key
-        value: $(params.llm-api-key)
-      - name: llm-agent-wrapper
-        value: $(params.llm-agent-wrapper)
-      - name: ase-iterations
-        value: $(params.ase-iterations)
-      - name: ase-concurrency
-        value: $(params.ase-concurrency)
-      - name: ase-judge-model
-        value: $(params.ase-judge-model)
-      - name: uplift-threshold
-        value: $(params.uplift-threshold)
-      - name: mcp-credentials-secret
-        value: $(tasks.prepare.results.mcp-credentials-secret)
-      - name: mcpchecker-agent-model
-        value: $(params.mcpchecker-agent-model)
-      - name: mcpchecker-judge-model
-        value: $(params.mcpchecker-judge-model)
-      - name: mcpchecker-task-timeout
-        value: $(params.mcpchecker-task-timeout)
-      - name: agent-endpoint
-        value: $(params.agent-endpoint)
-      - name: agent-timeout
-        value: $(params.agent-timeout)
-      - name: agent-image
-        value: $(params.agent-image)
-      - name: agent-tag
-        value: $(params.agent-tag)
-      - name: agent-namespace
-        value: $(params.agent-namespace)
-      - name: agent-release-name
-        value: $(params.agent-release-name)
-      - name: agent-chart-url
-        value: $(params.agent-chart-url)
-      - name: aeh-model-override
-        value: $(params.aeh-model-override)
-      - name: aeh-judge-model-override
-        value: $(params.aeh-judge-model-override)
-      - name: aeh-mode
-        value: $(params.aeh-mode)
-      - name: aeh-control-config
-        value: $(params.aeh-control-config)
-      - name: aeh-treatment-config
-        value: $(params.aeh-treatment-config)
-      - name: aeh-image
-        value: $(params.aeh-image)
-      - name: aeh-runner
-        value: $(params.aeh-runner)
-      - name: aeh-openshell-image
-        value: $(params.aeh-openshell-image)
-      - name: agent-eval-harness-repo-url
-        value: https://github.com/GuyZivRH/agent-eval-harness.git
-      - name: agent-eval-harness-repo-revision
-        value: $(params.agent-eval-harness-repo-revision)
-      - name: openshell-gateway-endpoint
-        value: $(params.openshell-gateway-endpoint)
-      - name: openshell-sandbox-image
-        value: $(params.openshell-sandbox-image)
-      - name: openshell-cli-version
-        value: $(params.openshell-cli-version)
-      - name: openshell-provider
-        value: $(params.openshell-provider)
-      - name: openshell-mtls-secret
-        value: $(params.openshell-mtls-secret)
-      - name: openshell-credentials-secret
-        value: $(params.openshell-credentials-secret)
-      - name: enable-mlflow
-        value: $(params.enable-mlflow)
-      - name: mlflow-tracking-uri
-        value: $(params.mlflow-tracking-uri)
-      - name: enable-aeh-regression-check
-        value: $(params.enable-aeh-regression-check)
-      - name: aeh-baseline-run-id
-        value: $(params.aeh-baseline-run-id)
-      - name: pipeline-run-uid
-        value: $(context.pipelineRun.uid)
+        - name: eval-engine
+          value: $(params.eval-engine)
+        - name: submission-dir
+          value: $(params.submission-dir)
+        - name: submission-name
+          value: $(tasks.prepare.results.submission-name)
+        - name: commit-sha
+          value: $(params.revision)
+        - name: pipeline-run-id
+          value: $(context.pipelineRun.name)
+        - name: pipeline-repo-url
+          value: $(params.pipeline-repo-url)
+        - name: pipeline-repo-revision
+          value: $(params.pipeline-repo-revision)
+        # Harbor params
+        - name: eval-mode
+          value: $(params.eval-mode)
+        - name: registry-url
+          value: $(params.registry-url)
+        - name: registry-namespace
+          value: $(params.registry-namespace)
+        - name: base-image
+          value: $(params.base-image)
+        # LLM params
+        - name: llm-model
+          value: $(params.llm-model)
+        - name: llm-api-base
+          value: $(params.llm-api-base)
+        - name: llm-api-key
+          value: $(params.llm-api-key)
+        - name: llm-agent-wrapper
+          value: $(params.llm-agent-wrapper)
+        # ASE params
+        - name: ase-iterations
+          value: $(params.ase-iterations)
+        - name: ase-concurrency
+          value: $(params.ase-concurrency)
+        - name: ase-judge-model
+          value: $(params.ase-judge-model)
+        - name: uplift-threshold
+          value: $(params.uplift-threshold)
+        # MCPChecker params
+        - name: mcp-credentials-secret
+          value: $(tasks.prepare.results.mcp-credentials-secret)
+        - name: mcpchecker-agent-model
+          value: $(params.mcpchecker-agent-model)
+        - name: mcpchecker-judge-model
+          value: $(params.mcpchecker-judge-model)
+        - name: mcpchecker-task-timeout
+          value: $(params.mcpchecker-task-timeout)
+        # A2A params
+        - name: agent-endpoint
+          value: $(params.agent-endpoint)
+        - name: agent-timeout
+          value: $(params.agent-timeout)
+        - name: agent-image
+          value: $(params.agent-image)
+        - name: agent-tag
+          value: $(params.agent-tag)
+        - name: agent-namespace
+          value: $(params.agent-namespace)
+        - name: agent-release-name
+          value: $(params.agent-release-name)
+        - name: agent-chart-url
+          value: $(params.agent-chart-url)
+        # AEH params
+        - name: aeh-model-override
+          value: $(params.aeh-model-override)
+        - name: aeh-judge-model-override
+          value: $(params.aeh-judge-model-override)
+        - name: aeh-mode
+          value: $(params.aeh-mode)
+        - name: aeh-control-config
+          value: $(params.aeh-control-config)
+        - name: aeh-treatment-config
+          value: $(params.aeh-treatment-config)
+        - name: aeh-image
+          value: $(params.aeh-image)
+        - name: aeh-runner
+          value: $(params.aeh-runner)
+        - name: aeh-openshell-image
+          value: $(params.aeh-openshell-image)
+        - name: agent-eval-harness-repo-url
+          value: "https://github.com/GuyZivRH/agent-eval-harness.git"
+        - name: agent-eval-harness-repo-revision
+          value: $(params.agent-eval-harness-repo-revision)
+        - name: openshell-gateway-endpoint
+          value: $(params.openshell-gateway-endpoint)
+        - name: openshell-sandbox-image
+          value: $(params.openshell-sandbox-image)
+        - name: openshell-cli-version
+          value: $(params.openshell-cli-version)
+        - name: openshell-provider
+          value: $(params.openshell-provider)
+        - name: openshell-mtls-secret
+          value: $(params.openshell-mtls-secret)
+        - name: openshell-credentials-secret
+          value: $(params.openshell-credentials-secret)
+        - name: enable-mlflow
+          value: $(params.enable-mlflow)
+        - name: mlflow-tracking-uri
+          value: $(params.mlflow-tracking-uri)
+        - name: enable-aeh-regression-check
+          value: $(params.enable-aeh-regression-check)
+        - name: aeh-baseline-run-id
+          value: $(params.aeh-baseline-run-id)
       workspaces:
-      - name: source
-        workspace: shared-workspace
-      when:
-      - input: $(params.eval-engine)
-        operator: notin
-        values:
-        - mcpchecker
-    - name: start-mcp
-      runAfter:
-      - red-team
-      - test
-      when: &id001
-      - input: $(params.eval-engine)
-        operator: in
-        values:
-        - mcpchecker
-      taskRef:
-        name: start-mcp
-      params:
-      - &id003
-        name: submission-dir
-        value: $(params.submission-dir)
-      - &id004
-        name: pipeline-run-uid
-        value: $(context.pipelineRun.uid)
-      - &id005
-        name: pipeline-run-id
-        value: $(context.pipelineRun.name)
-      - &id006
-        name: submission-name
-        value: $(tasks.prepare.results.submission-name)
-      workspaces:
-      - name: source
-        workspace: shared-workspace
-    - name: evaluate-mcpchecker
-      runAfter:
-      - start-mcp
-      timeout: 3h
-      when: *id001
-      taskRef:
-        name: evaluate-mcpchecker
-      params:
-      - *id003
-      - *id004
-      - *id005
-      - *id006
-      - name: mcp-credentials-secret
-        value: $(tasks.prepare.results.mcp-credentials-secret)
-      - name: mcpchecker-agent-model
-        value: $(params.mcpchecker-agent-model)
-      - name: mcpchecker-judge-model
-        value: $(params.mcpchecker-judge-model)
-      - name: mcpchecker-task-timeout
-        value: $(params.mcpchecker-task-timeout)
-      workspaces:
-      - name: source
-        workspace: shared-workspace
-    - name: evaluate
-      runAfter:
-      - evaluate-general
-      - evaluate-mcpchecker
-      taskRef:
-        name: evaluation-results
-      params:
-      - name: submission-name
-        value: $(tasks.prepare.results.submission-name)
-      - name: pipeline-run-uid
-        value: $(context.pipelineRun.uid)
-      - name: pipeline-run-id
-        value: $(context.pipelineRun.name)
-      - name: eval-engine
-        value: $(params.eval-engine)
-      workspaces:
-      - name: source
-        workspace: shared-workspace
+        - name: source
+          workspace: shared-workspace
 
     # ======================================================================
     # PHASE 4: ANALYZE (statistical analysis and report generation)
@@ -669,8 +598,6 @@ spec:
       params:
         - name: submission-name
           value: $(tasks.prepare.results.submission-name)
-        - name: pipeline-run-uid
-          value: $(context.pipelineRun.uid)
         - name: pipeline-run-id
           value: $(context.pipelineRun.name)
         - name: report-prefix
@@ -711,7 +638,3 @@ spec:
       params:
         - name: pipelinerun-name
           value: $(context.pipelineRun.name)
-        - name: pipeline-run-uid
-          value: $(context.pipelineRun.uid)
-        - name: eval-engine
-          value: $(params.eval-engine)

@@ -54,7 +54,7 @@ def test_resources_isolate_attempts_and_expose_no_controller_credentials():
         policy["spec"]["ingress"][0]["from"][0]["podSelector"]["matchLabels"]["tekton.dev/pipelineRun"]
         == "pipeline-one"
     )
-    assert egress["spec"]["podSelector"]["matchLabels"]["tekton.dev/pipelineTask"] == "evaluate-mcpchecker"
+    assert egress["spec"]["podSelector"]["matchLabels"]["tekton.dev/pipelineTask"] == "evaluate"
     assert all("ipBlock" not in str(rule) for rule in egress["spec"]["egress"])
 
 
@@ -474,16 +474,31 @@ def test_completed_handoff_requires_raw_evidence_before_cleanup(tmp_path):
     assert not cluster.deleted
 
 
-def test_both_pipeline_routes_publish_through_branch_independent_bridge():
-    pipeline = yaml.safe_load((REPO / "pipeline/pipelines/ci-pipeline.yaml").read_text())["spec"]
-    tasks = {task["name"]: task for task in pipeline["tasks"]}
-    assert tasks["evaluate-general"]["when"][0]["operator"] == "notin"
-    assert tasks["evaluate-mcpchecker"]["when"][0]["values"] == ["mcpchecker"]
-    bridge = tasks["evaluate"]
-    assert set(bridge["runAfter"]) == {"evaluate-general", "evaluate-mcpchecker"}
-    assert not any("$(tasks.evaluate-" in str(value) for value in bridge.values())
-    assert tasks["evaluate-general"]["taskRef"]["name"] == "evaluate"
-    assert tasks["evaluate-mcpchecker"]["taskRef"]["name"] == "evaluate-mcpchecker"
+def test_dedicated_profile_has_one_evaluation_and_no_irrelevant_stages():
+    spec = yaml.safe_load((REPO / "pipeline/pipelines/ci-pipeline-mcpchecker.yaml").read_text())["spec"]
+    assert [task["name"] for task in spec["tasks"]] == ["prepare", "test", "start-mcp", "evaluate", "store"]
+    tasks = {task["name"]: task for task in spec["tasks"]}
+    assert tasks["evaluate"]["taskRef"]["name"] == "evaluate-mcpchecker"
+    assert tasks["evaluate"]["runAfter"] == ["start-mcp"]
+    assert tasks["store"]["runAfter"] == ["evaluate"]
+    assert not any("when" in task for task in spec["tasks"])
+    assert "eval-engine" not in {param["name"] for param in spec["params"]}
+    assert all("tasks.evaluate.results." in result["value"] for result in spec["results"])
+    task = yaml.safe_load((REPO / "pipeline/tasks/components/evaluate-mcpchecker.yaml").read_text())["spec"]
+    assert {r["name"] for r in task["results"]} == {r["name"] for r in spec["results"]}
+    assert [step["args"][0] for step in task["steps"]] == ["evaluate", "bridge"]
+    assert len(spec["finally"]) == 1 and spec["finally"][0]["taskRef"]["name"] == "cleanup-mcp"
+
+
+def test_profile_run_selects_lifecycle_and_tokenless_evaluation():
+    run = yaml.safe_load((REPO / "pipeline/runs/mcpchecker-pipelinerun.yaml").read_text())["spec"]
+    assert run["pipelineRef"]["name"] == "abevalflow-pipeline-mcpchecker"
+    overrides = {t["pipelineTaskName"]: t for t in run["taskRunSpecs"]}
+    assert set(overrides) == {"start-mcp", "evaluate", "cleanup"}
+    assert overrides["evaluate"]["serviceAccountName"] == "mcpchecker-evaluator"
+    assert overrides["evaluate"]["podTemplate"]["automountServiceAccountToken"] is False
+    assert overrides["start-mcp"]["serviceAccountName"] == overrides["cleanup"]["serviceAccountName"] == "mcp-lifecycle"
+    assert "volumeClaimTemplate" in run["workspaces"][0]
 
 
 @pytest.mark.parametrize("exit_code", [2, -9])
@@ -531,7 +546,7 @@ def test_stop_producers_before_collecting_final_logs(monkeypatch):
 
 
 def test_untrusted_submission_is_an_argument_never_shell_source(tmp_path):
-    for name in ["start-mcp", "evaluate-mcpchecker", "evaluation-results"]:
+    for name in ["start-mcp", "evaluate-mcpchecker"]:
         task = yaml.safe_load((REPO / f"pipeline/tasks/components/{name}.yaml").read_text())
         step = task["spec"]["steps"][0]
         assert "script" not in step
@@ -564,16 +579,11 @@ def test_unpinned_workspace_is_discovered_by_owner_uid():
     assert ci.workspaces(cluster, "original") == [pvc]
 
 
-def test_webhook_rejects_branch_shell_syntax_before_legacy_prepare():
-    import re
-
-    listener = yaml.safe_load((REPO / "pipeline/triggers/event-listener.yaml").read_text())
-    params = listener["spec"]["triggers"][0]["interceptors"][0]["params"]
-    expression = next(value["value"] for value in params if value["name"] == "filter")
-    pattern = re.search(r"head.ref.matches\('([^']+)'\)", expression)[1]
-    assert re.fullmatch(pattern, "eval/cve-managed-positive")
-    assert not re.fullmatch(pattern, "eval/$(printf${IFS}probe)")
-    assert not re.fullmatch(pattern, "eval/../../outside")
+def test_mcp_profile_is_selected_explicitly_without_changing_webhook():
+    trigger = yaml.safe_load((REPO / "pipeline/triggers/trigger-template.yaml").read_text())
+    assert trigger["spec"]["resourcetemplates"][0]["spec"]["pipelineRef"]["name"] == "abevalflow-pipeline"
+    run = yaml.safe_load((REPO / "pipeline/runs/mcpchecker-pipelinerun.yaml").read_text())
+    assert run["spec"]["pipelineRef"]["name"] == "abevalflow-pipeline-mcpchecker"
 
 
 def test_static_shared_pvc_is_preserved_before_any_label_or_delete(tmp_path, monkeypatch):
@@ -620,8 +630,8 @@ def test_protected_but_not_pinned_run_is_recoverable(monkeypatch):
 
 
 def test_mcp_suite_keeps_existing_three_hour_tekton_deadline():
-    pipeline = yaml.safe_load((REPO / "pipeline/pipelines/ci-pipeline.yaml").read_text())
-    task = next(t for t in pipeline["spec"]["tasks"] if t["name"] == "evaluate-mcpchecker")
+    pipeline = yaml.safe_load((REPO / "pipeline/pipelines/ci-pipeline-mcpchecker.yaml").read_text())
+    task = next(t for t in pipeline["spec"]["tasks"] if t["name"] == "evaluate")
     assert task["timeout"] == "3h"
 
 

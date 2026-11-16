@@ -13,11 +13,47 @@ UID ownership, retained evidence, per-task versus suite timeouts, cancelled/retr
 Pod inventory and interruption between archival and workspace release.
 Review agreement is not deployed verification.
 
-The final source repository test run passed **1,198 tests**, with 10 skipped
+The earlier guarded-runtime repository test run passed **1,198 tests**, with 10 skipped
 and six existing SciPy precision warnings. It used the repository CI selection
 (`tests/`, excluding the separate observability job's `test_mlflow_observer.py`).
 Ruff checks/formatting passed for the CI scope and new fixture, 151 Python files.
 Affected Kubernetes/Tekton resources passed server-side dry-run validation.
+
+## Dedicated profile validation
+
+The current design uses `abevalflow-pipeline-mcpchecker`:
+`prepare -> test -> start-mcp -> evaluate -> store`, with one `cleanup-mcp`
+finally Task. Evaluation and result publishing are two steps in the same Task.
+The generic pipeline, its evaluator/cleanup, webhook manifests, Oracle run and
+maintenance files match upstream; the shared store only adds an optional UID
+input. The log-fetch helper has documented local Python/MinIO prerequisites.
+
+Current runtime: `sha256:d74842d2ee9fa8955349ccda7a47d589856c1f1cf81ae0dcc59921524e85bfda`.
+The native runner source and catalog use evaluator label `evaluate` and a
+14,400-second fixture lifetime. The manual PipelineRun owns timeout settings;
+they are not unsupported Pipeline fields.
+
+The repository CI selection passed **1,199 tests**, with 10 skipped and six
+existing SciPy warnings. Lint/format checks passed for 151 Python files.
+Dedicated Pipeline/Tasks and the manual run passed cluster schema validation.
+Three independent reviewers rechecked the profile/source boundary.
+
+Fresh live CNI tests against label `evaluate` passed DNS/LiteLLM/own MCP access,
+MinIO/Kubernetes/unrelated-client denial and mock egress denial. Evidence was
+verified on upload under `mcp-runs/managed-profile-cni-20261116/`, then those
+resources were removed. This still does not establish two-Service concurrency.
+
+Positive `mcp-profile-positive-p8xtf`, UID
+`4f5dd8e1-96a2-4f7c-900d-93ec06cf793d`, completed evaluation, direct result
+publishing, storage and dedicated cleanup. Pipeline results expose **1.0/pass**
+without skipped red-team/analysis/branch nodes. Negative, external-Secret and
+combined read-back verification for this profile are pending.
+
+## Earlier shared-graph evidence (superseded profile design)
+
+The results below predate the dedicated MCPChecker profile. They establish
+controller/native/storage behavior for those revisions, not validation of the
+new graph. The final profile requires fresh deployed acceptance.
 
 ## Deployed evaluation controls
 
@@ -102,8 +138,9 @@ snapshots, archive corruption and interrupted release routing.
 
 ## Final guarded runtime
 
-Deployed acceptance of the final inventory/release guards is still pending.
-Do not use the preceding runtime's control results as proof of these guards.
+The current profile validation above supersedes the earlier shared graph.
+Complete cancellation preservation is still unverified; the source guards
+block missing final evidence rather than reconstructing lost logs.
 
 ## Remaining deployment gates
 

@@ -168,7 +168,7 @@ def resource_specs(desc, uid, attempt, namespace, run_name):
             ],
         },
     }
-    eval_selector = {**run_selector, "tekton.dev/pipelineTask": "evaluate-mcpchecker"}
+    eval_selector = {**run_selector, "tekton.dev/pipelineTask": "evaluate"}
     evaluator_policy = {
         "apiVersion": "networking.k8s.io/v1",
         "kind": "NetworkPolicy",

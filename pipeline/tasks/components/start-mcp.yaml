@@ -16,7 +16,7 @@ spec:
   - name: source
   steps:
   - name: provision
-    image: image-registry.openshift-image-registry.svc:5000/ab-eval-flow/mcpchecker-ci@sha256:02e170f421ab6f5b3d4a4d301e489a9a817f3b8434593984a7ece46c544bbb99
+    image: image-registry.openshift-image-registry.svc:5000/ab-eval-flow/mcpchecker-ci@sha256:d74842d2ee9fa8955349ccda7a47d589856c1f1cf81ae0dcc59921524e85bfda
     env:
     - name: POD_NAME
       valueFrom:

@@ -28,7 +28,7 @@ spec:
   - name: source
   steps:
   - name: evaluate
-    image: image-registry.openshift-image-registry.svc:5000/ab-eval-flow/mcpchecker-ci@sha256:02e170f421ab6f5b3d4a4d301e489a9a817f3b8434593984a7ece46c544bbb99
+    image: image-registry.openshift-image-registry.svc:5000/ab-eval-flow/mcpchecker-ci@sha256:d74842d2ee9fa8955349ccda7a47d589856c1f1cf81ae0dcc59921524e85bfda
     computeResources:
       requests:
         cpu: 100m
@@ -79,3 +79,33 @@ spec:
     - $(params.mcpchecker-judge-model)
     - --timeout
     - $(params.mcpchecker-task-timeout)
+  - name: publish-results
+    image: image-registry.openshift-image-registry.svc:5000/ab-eval-flow/mcpchecker-ci@sha256:d74842d2ee9fa8955349ccda7a47d589856c1f1cf81ae0dcc59921524e85bfda
+    computeResources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+    command:
+    - python
+    - -m
+    - abevalflow.mcp_ci
+    args:
+    - bridge
+    - --workspace
+    - $(workspaces.source.path)
+    - --uid
+    - $(params.pipeline-run-uid)
+    - --run-name
+    - $(params.pipeline-run-id)
+    - --engine
+    - mcpchecker
+    - --submission
+    - $(params.submission-name)
+  results:
+  - name: treatment-mean-reward
+  - name: control-mean-reward
+  - name: recommendation
+  - name: results-dir

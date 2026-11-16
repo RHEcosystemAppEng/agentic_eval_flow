@@ -62,25 +62,45 @@ untrusted PipelineRun parameter. Install the catalog into that trusted runtime.
 
 ## Cluster installation and execution
 
-Apply `config/mcp-mocks-rbac.yaml`, the three Tasks under
-`pipeline/tasks/components/` (`start-mcp`, `evaluate-mcpchecker`,
-`evaluation-results`), the updated legacy evaluate/store/finalizer Tasks and
-`pipeline/pipelines/ci-pipeline.yaml`. Install
+Use the dedicated `abevalflow-pipeline-mcpchecker` profile, following the
+existing OpenShell profile pattern:
+
+```text
+prepare -> test -> start-mcp -> evaluate -> store
+                                          finally: cleanup
+```
+
+The graph has no red-team, general evaluation branch, analysis or separate
+result-handoff node. The single evaluation Task runs MCPChecker, validates its
+run-specific output and publishes the four results in a second internal step.
+
+Apply `config/mcp-mocks-rbac.yaml`, Tasks `start-mcp` and `evaluate-mcpchecker`
+from `pipeline/tasks/components/`, the shared prepare/test/store Tasks, the dedicated
+`pipeline/tasks/post/cleanup_mcp.yaml` finalizer, and `pipeline/pipelines/ci-pipeline-mcpchecker.yaml`. Install
 `config/storage/mcp_recovery_cronjob.yaml` for orphan recovery. Adapt image
 registry and namespace as part of the trusted deployment.
 
-Use the per-task ServiceAccounts and tokenless Pod templates from
-`pipeline/triggers/trigger-template.yaml` or
-`pipeline/runs/oracle_pipeline_run.yaml` when creating manual runs:
+Use `pipeline/runs/mcpchecker-pipelinerun.yaml`: replace the submission directory
+with an existing MCP submission in the selected repository, pin its revision
+and the pipeline helper revision, then create it in the target namespace.
+Before merge, use the reviewed feature commit for the helper revision. The
+profile fixes the engine to MCPChecker; it has no engine-selection parameter.
+The template includes the required identities:
 
 - `start-mcp` and `cleanup`: `mcp-lifecycle`.
-- `evaluate-mcpchecker` and bridge `evaluate`: `mcpchecker-evaluator`, with
+- `evaluate`: `mcpchecker-evaluator`, with
   `podTemplate.automountServiceAccountToken: false`.
-- Other Tasks retain their existing identity.
+- Preparation, testing and storage retain their existing identity.
 
-Webhook submission branches use `eval/<directory>` with letters, digits, dots,
-underscores and hyphens; shell syntax and additional path segments are rejected
-before the legacy preparation scripts run.
+The general and OpenShell pipeline graphs and their `cleanup-pvc` Task remain
+unchanged; MCP archive/release behavior lives in the separate `cleanup-mcp` Task. The existing
+webhook still selects the general pipeline; automatic profile selection is not
+added. Select this profile explicitly through its PipelineRun template.
+
+Manual PipelineRun authors are trusted operators. The reused preparation Task
+retains its original shell-based parameter handling; this profile does not
+claim to harden arbitrary untrusted direct PipelineRun inputs or the generic
+webhook. New MCP lifecycle/evaluation arguments are passed directly to Python.
 
 MCP runs require a fresh run-owned `volumeClaimTemplate`. Pre-existing/shared
 PVCs are rejected before labeling or deletion. Other engines retain optional DB
@@ -103,10 +123,9 @@ without broader additive allow policies, using a CNI that enforces policy.
 Namespace authors able to create arbitrary Pods/TaskRuns are trusted operators;
 these policies do not make them untrusted tenants.
 
-Both conditional evaluator Tasks publish a run-UID-specific atomic handoff.
-The always-running `evaluate` bridge validates it and publishes the existing
-four Tekton results. It never references skipped-branch results. Non-MCP
-single-variant AEH control values (`N/A`) are preserved.
+The evaluation Task publishes its run-UID-specific atomic result manifest,
+validates that it belongs to this run, then exposes the four Tekton results.
+Storage and Pipeline results refer directly to that one `evaluate` node.
 
 ## Evidence, failure and cleanup
 
@@ -146,7 +165,11 @@ evidence rather than bypassing the archive gate.
 Download logs with `scripts/fetch_run_logs.sh RUN NAMESPACE OUTPUT`. The helper
 supports the new UID layout and historical layouts. For a local client,
 port-forward MinIO and set `MINIO_ENDPOINT=http://127.0.0.1:9000`; it requires
-read access to `minio-credentials` and never prints its contents.
+read access to `minio-credentials` and never prints its contents. Compared with
+the original helper, the local client now needs Python with the `minio` package
+(install the repository dependencies) and access or a port-forward to MinIO;
+it no longer executes inside the MinIO server. Historical archive layouts
+remain readable.
 
 ## Acceptance contract
 
@@ -163,7 +186,7 @@ hashes, and mock resources and workspace PVCs are confirmed absent. A transport
 error, missing output or provider failure fails the smoke.
 
 Unit/contract coverage belongs to this CI implementation. Deployed acceptance
-covers real Tekton skipped branches, CNI isolation, lifecycle/archival boundaries,
+covers the dedicated profile graph, direct Task results, CNI isolation, lifecycle/archival boundaries,
 storage readback, cancellation and recovery. Two concurrent mocks need two free
 Services in quota. Record any unavailable gate as unverified, not passed.
 

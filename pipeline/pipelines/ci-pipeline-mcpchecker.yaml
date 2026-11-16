@@ -1,0 +1,247 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: abevalflow-pipeline-mcpchecker
+  labels:
+    app.kubernetes.io/name: abevalflow
+spec:
+  description: 'MCPChecker profile: prepare, test, optional managed mock, native evaluation,
+    storage and archive-gated cleanup.'
+  params:
+  - name: repo-url
+    type: string
+    description: Git URL of the submissions repository
+  - name: revision
+    type: string
+    description: Git commit SHA or branch to evaluate
+  - name: submission-dir
+    type: string
+    description: Submission directory name under submissions/
+  - name: pipeline-repo-url
+    type: string
+    default: https://github.com/RHEcosystemAppEng/agentic_eval_flow.git
+  - name: pipeline-repo-revision
+    type: string
+    default: main
+  - name: llm-api-key
+    type: string
+    default: mock
+  - name: llm-base-url
+    type: string
+    default: http://litellm.ab-eval-flow.svc:4000/v1
+  - name: llm-generation-model
+    type: string
+    default: claude-sonnet
+  - name: enable-ai-generation
+    type: string
+    default: 'false'
+  - name: enable-test-quality-review
+    type: string
+    default: 'false'
+  - name: agent-type
+    type: string
+    default: api
+  - name: max-generation-retries
+    type: string
+    default: '3'
+  - name: quay-uplift-threshold
+    type: string
+    default: '-1.0'
+  - name: mcpchecker-agent-model
+    type: string
+    default: openai:claude-sonnet
+  - name: mcpchecker-judge-model
+    type: string
+    default: openai:claude-sonnet
+  - name: mcpchecker-task-timeout
+    type: string
+    default: 10m
+  - name: security-scan
+    type: string
+    default: ''
+  - name: quay-repo
+    type: string
+    default: ''
+  - name: quay-ttl-days
+    type: string
+    default: '7'
+  - name: repo-name
+    type: string
+    default: ''
+  - name: pr-number
+    type: string
+    default: ''
+  results:
+  - name: treatment-mean-reward
+    value: $(tasks.evaluate.results.treatment-mean-reward)
+  - name: control-mean-reward
+    value: $(tasks.evaluate.results.control-mean-reward)
+  - name: recommendation
+    value: $(tasks.evaluate.results.recommendation)
+  - name: results-dir
+    value: $(tasks.evaluate.results.results-dir)
+  workspaces:
+  - name: shared-workspace
+    description: Shared PVC for all pipeline artifacts
+  tasks:
+  - name: prepare
+    taskRef:
+      name: prepare
+    params:
+    - name: repo-url
+      value: $(params.repo-url)
+    - name: revision
+      value: $(params.revision)
+    - name: submission-dir
+      value: $(params.submission-dir)
+    - name: eval-engine
+      value: mcpchecker
+    - name: pipeline-repo-url
+      value: $(params.pipeline-repo-url)
+    - name: pipeline-repo-revision
+      value: $(params.pipeline-repo-revision)
+    - name: pipeline-run-name
+      value: $(context.pipelineRun.name)
+    - name: enable-generation
+      value: $(params.enable-ai-generation)
+    - name: llm-base-url
+      value: $(params.llm-base-url)
+    - name: llm-model
+      value: $(params.llm-generation-model)
+    - name: agent-type
+      value: $(params.agent-type)
+    - name: max-generation-retries
+      value: $(params.max-generation-retries)
+    workspaces:
+    - name: source
+      workspace: shared-workspace
+  - name: test
+    runAfter:
+    - prepare
+    taskRef:
+      name: test
+    params:
+    - name: submission-dir
+      value: $(params.submission-dir)
+    - name: submission-name
+      value: $(tasks.prepare.results.submission-name)
+    - name: eval-engine
+      value: mcpchecker
+    - name: report-prefix
+      value: $(tasks.prepare.results.report-prefix)
+    - name: pipeline-run-name
+      value: $(context.pipelineRun.name)
+    - name: pipeline-repo-url
+      value: $(params.pipeline-repo-url)
+    - name: pipeline-repo-revision
+      value: $(params.pipeline-repo-revision)
+    - name: security-scan-mode
+      value: $(params.security-scan)
+    - name: submission-security-scan
+      value: $(tasks.prepare.results.security-scan)
+    - name: submission-skip-quality-review
+      value: $(tasks.prepare.results.skip-quality-review)
+    - name: security-scan-use-llm
+      value: $(tasks.prepare.results.security-scan-use-llm)
+    - name: enable-quality-review
+      value: $(params.enable-test-quality-review)
+    - name: llm-base-url
+      value: $(params.llm-base-url)
+    - name: llm-model
+      value: $(params.llm-generation-model)
+    - name: llm-api-key
+      value: $(params.llm-api-key)
+    workspaces:
+    - name: source
+      workspace: shared-workspace
+  - name: start-mcp
+    runAfter:
+    - test
+    taskRef:
+      name: start-mcp
+    params:
+    - name: submission-dir
+      value: $(params.submission-dir)
+    - name: pipeline-run-uid
+      value: $(context.pipelineRun.uid)
+    - name: pipeline-run-id
+      value: $(context.pipelineRun.name)
+    - name: submission-name
+      value: $(tasks.prepare.results.submission-name)
+    workspaces:
+    - name: source
+      workspace: shared-workspace
+  - name: evaluate
+    runAfter:
+    - start-mcp
+    timeout: 3h
+    taskRef:
+      name: evaluate-mcpchecker
+    params:
+    - name: submission-dir
+      value: $(params.submission-dir)
+    - name: pipeline-run-uid
+      value: $(context.pipelineRun.uid)
+    - name: pipeline-run-id
+      value: $(context.pipelineRun.name)
+    - name: submission-name
+      value: $(tasks.prepare.results.submission-name)
+    - name: mcp-credentials-secret
+      value: $(tasks.prepare.results.mcp-credentials-secret)
+    - name: mcpchecker-agent-model
+      value: $(params.mcpchecker-agent-model)
+    - name: mcpchecker-judge-model
+      value: $(params.mcpchecker-judge-model)
+    - name: mcpchecker-task-timeout
+      value: $(params.mcpchecker-task-timeout)
+    workspaces:
+    - name: source
+      workspace: shared-workspace
+  - name: store
+    runAfter:
+    - evaluate
+    taskRef:
+      name: store
+    params:
+    - name: submission-name
+      value: $(tasks.prepare.results.submission-name)
+    - name: pipeline-run-uid
+      value: $(context.pipelineRun.uid)
+    - name: pipeline-run-id
+      value: $(context.pipelineRun.name)
+    - name: report-prefix
+      value: $(tasks.prepare.results.report-prefix)
+    - name: recommendation
+      value: $(tasks.evaluate.results.recommendation)
+    - name: results-dir
+      value: $(tasks.evaluate.results.results-dir)
+    - name: eval-engine
+      value: mcpchecker
+    - name: commit-sha
+      value: $(params.revision)
+    - name: uplift-threshold
+      value: $(params.quay-uplift-threshold)
+    - name: quay-repo
+      value: $(params.quay-repo)
+    - name: quay-ttl-days
+      value: $(params.quay-ttl-days)
+    - name: repo-name
+      value: $(params.repo-name)
+    - name: pr-number
+      value: $(params.pr-number)
+    - name: pipeline-repo-url
+      value: $(params.pipeline-repo-url)
+    - name: pipeline-repo-revision
+      value: $(params.pipeline-repo-revision)
+    workspaces:
+    - name: source
+      workspace: shared-workspace
+  finally:
+  - name: cleanup
+    taskRef:
+      name: cleanup-mcp
+    params:
+    - name: pipelinerun-name
+      value: $(context.pipelineRun.name)
+    - name: pipeline-run-uid
+      value: $(context.pipelineRun.uid)
