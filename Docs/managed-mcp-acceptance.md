@@ -43,11 +43,47 @@ MinIO/Kubernetes/unrelated-client denial and mock egress denial. Evidence was
 verified on upload under `mcp-runs/managed-profile-cni-20261116/`, then those
 resources were removed. This still does not establish two-Service concurrency.
 
-Positive `mcp-profile-positive-p8xtf`, UID
-`4f5dd8e1-96a2-4f7c-900d-93ec06cf793d`, completed evaluation, direct result
-publishing, storage and dedicated cleanup. Pipeline results expose **1.0/pass**
-without skipped red-team/analysis/branch nodes. Negative, external-Secret and
-combined read-back verification for this profile are pending.
+The final-runtime controls both completed all six Tasks, with no skipped nodes:
+
+- Positive `mcp-profile-positive-p8xtf`, UID
+  `4f5dd8e1-96a2-4f7c-900d-93ec06cf793d`: **1.0/pass**.
+- Deliberate negative `mcp-profile-negative-rxsw2`, UID
+  `6a9f9c97-ad08-4858-b784-5982648b2766`: **0.0/fail**. The actual CVE tool
+  call and answer judge succeeded; the artificial minimum of 10,000 tool calls
+  failed as intended.
+
+Verifier Pod `mcp-profile-verifier-nvbtn` confirmed combined smoke **1.0/pass**:
+31 downloaded artifacts per control matched their recorded bytes and SHA256;
+PostgreSQL contained exactly one run/task per UID; native models, process status,
+mock readiness/audit/image identity and final source SHA matched. It also checked
+all five DAG Tasks in the final evidence inventory, exact six-node run graph,
+cleanup results, resource/PVC absence and removal of run protection. A repeated
+`finish` call after workspace release successfully verified and reused each
+committed archive.
+
+External-Secret run `mcp-profile-external-hsm28`, UID
+`41da8bf2-0ada-4726-ab4b-8e78f612884e`, completed all six Tasks without skips
+at **1.0/pass**. Verifier `mcp-profile-external-verifier-rjzz9` checked 26
+archived objects, PostgreSQL uniqueness, successful native CVE tool/judge
+behavior, resource/PVC absence and that no managed target was created. Its
+separately operated public fixture was removed after verification.
+
+Three fresh independent reviewers then checked code, YAML/deployed configuration,
+and PipelineRun/database/artifact evidence separately. The code reviewer executed
+57 focused tests; the YAML reviewer executed 42 tests and compared deployed specs
+with source. Neither found a blocking defect. The persistence reviewer directly
+queried PostgreSQL and confirmed exactly one run/task per UID, scores 1/0/1,
+zero errors/skips and successful tool/judge checks. Their separately authored
+GET-only MinIO worker `mcp-independent-minio-w4jhl` downloaded and hash-checked
+all 31/31/26 objects and checked native results, inventory and cleanup markers.
+These reviews supplement, rather than replace, the remaining deployment gates.
+
+One nonblocking least-privilege observation remains: mock ingress permits all
+Task Pods carrying the same PipelineRun label, including trusted orchestration,
+while evaluator egress is restricted to `evaluate`. Narrowing ingress to
+`evaluate` and `start-mcp` would match the original two-client policy more
+closely. No cross-run bypass was demonstrated; the current implementation should
+not be described as limiting ingress to exactly those two Tasks.
 
 ## Earlier shared-graph evidence (superseded profile design)
 
