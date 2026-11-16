@@ -939,8 +939,8 @@ spec:
       when:
         - input: "$(params.eval-engine)"
           operator: in
-          values: ["harbor", "both"]
-      image: registry.access.redhat.com/ubi9/python-311:9.6
+          values: ["mcpchecker"]
+      image: image-registry.openshift-image-registry.svc:5000/ab-eval-flow/mcpchecker-runner:latest
       env:
         - name: MCP_URL
           valueFrom:
@@ -1009,7 +1009,7 @@ spec:
       when:
         - input: "$(params.eval-engine)"
           operator: in
-          values: ["harbor", "both"]
+          values: ["mcpchecker"]
       image: registry.access.redhat.com/ubi9/python-311:9.6
       script: |
         #!/bin/bash

@@ -33,7 +33,8 @@ RUN dnf install -y nodejs npm && dnf clean all
 RUN pip install --no-cache-dir pydantic pyyaml
 
 # Verify installations
-RUN mcpchecker --version || echo "mcpchecker installed" && \
+RUN mcpchecker --help > /dev/null && \
+    envsubst --version && \
     python --version && \
     node --version
 
