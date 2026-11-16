@@ -1,6 +1,156 @@
 # Native Harbor managed-MCP acceptance evidence
 
-## Final corrected run with retained logs
+## Latest paired rerun with corrected catalog verification
+
+PipelineRun `harbor-osac-create-jj2rz`, UID
+`d789441a-a4fd-48ce-8daa-409110dabf9b`, uses submission
+`43e6af3ecbe682c8136ee48616f2a2fa1f7fedbe` and the same CI revision, model,
+images, documents and unchanged skill as the preceding pair. Both arms reran
+because the evaluator changed. All 38 local verifier/shell integration tests,
+Ruff checks, formatting and diff checks passed. No PR was opened.
+
+The corrected catalog gate accepts successful pre-create List or Get evidence
+containing the same selected published record. Ten positive/negative fixtures
+cover list acceptance and wrong IDs/names/states, split records, failed reads,
+wrong resource type, post-create reads, malformed and empty results. The answer
+rubric now explicitly assesses unsupported root causes, timing and named default
+scope as well as core VM facts. The reward conjunction remains unchanged.
+
+Stored native results are **control 0.0 / treatment 1.0**:
+
+- Both task-completion checks pass: exactly one create, requested inputs/defaults,
+  expected timeout, and successful current-status reconciliation.
+- Control fails protocol only because it omitted `check_connection`. It makes
+  six MCP calls, including a rejected filter and successful recovery.
+- Treatment passes protocol, spontaneously loads `tenant-vm-create`, and makes
+  five MCP calls: connection, catalog list, create, VM list and VM get.
+- Both stored answer judges pass. Neither agent reads the separate reference
+  library. Treatment's registered skill content and successful Skill call are
+  visible in its native trace; availability is not being substituted for reading.
+- Both native processes exit 0 with zero native exceptions.
+
+**Independent review limits the interpretation of the answer passes.** Treatment
+asserts `tenant-blue` is the caller's selected default; a visible-tenant summary
+does not establish the selected default or VM membership. The judge explicitly
+excuses this unsupported assignment as minor despite the stricter rubric.
+Treatment also recommends polling the VM state until `READY`; the real
+ComputeInstanceState enum has `RUNNING`, while READY belongs to a separate
+condition that the current MCP summary does not expose.
+Independent semantic review therefore fails both answers under the written
+all-material-claims rubric, separately from their stored judge verdicts.
+Control also asserts a causal order for the timeout and an eventual running
+state without sufficient returned evidence. These are reporting and judge
+reliability gaps, not transport failures. Preserve the original scores and judge
+reasons; do not silently rescore them or describe treatment's 1.0 as an
+unqualified independently validated answer. This one pair supports observed
+protocol improvement and successful skill activation, not a general success-rate
+uplift or a fully reliable semantic-accuracy evaluator. No further model runs
+were launched to seek a more favorable result.
+
+All six pipeline Tasks succeeded with zero skips. Independent downloads
+hash-checked 85 root, 28 control and 29 treatment manifest entries (overlapping
+inventories). PostgreSQL has exactly one UID-keyed Harbor run and two trials
+with the stored 0.0/1.0 scores; authorized storage replay preserved the same row
+UUIDs and values without duplicates. The original six Task Pods and Bound PVC
+`pvc-9762350dd9` remain with run protection; console logs are readable. Managed
+mock/native-child Pods, Services and NetworkPolicies are absent. The shared
+recovery sweep remains suspended and inactive. Live child snapshots also
+verified tokenless agent/mock isolation and the pinned image identities. These
+checks prove faithful persistence of the scores, not semantic judge correctness.
+
+Evidence is under
+`ab-eval-reports/mcp-runs/d789441a-a4fd-48ce-8daa-409110dabf9b/`.
+The historical results remain unchanged and retained for comparison. Deletion
+was permitted but has not been performed.
+
+## Corrected task and separated scoring (November 16)
+
+Ordinary pair `harbor-osac-create-nljcx`, UID
+`abde07e0-fc92-45f7-ba7f-b463a697eb20`, used submission
+`64ce3a4db18d087f6224f2cdd2f55115a9b7090d` and CI revision
+`fb9c8a4714e14c2e13ab3a9d383d150bb0d2210c`. The skill bytes and pinned
+runtime/mock images were unchanged. Shared instructions now authorize necessary
+read-only checks in this unattended task, which explicitly requests verified
+current status. The verifier separates task completion, protocol compliance and
+answer accuracy; composite reward remains their conjunction. Local verifier and
+shell integration checks passed all 28 cases before this run.
+
+All six Tasks succeeded, no Tasks were skipped, and both native processes exited
+0 with zero native exceptions. Both agents created once, recovered after the
+intended timeout, read the VM and reported STARTING. Both passed task completion
+and the answer judge, but received composite 0.0 for distinct protocol checks:
+
+- Control omitted `check_connection`; it made six MCP calls, including recovery
+  from a rejected filter, and did not read the reference documents.
+- Treatment spontaneously invoked `Skill("tenant-vm-create")`, successfully
+  loaded its content, then made five MCP calls. It checked the connection,
+  selected the published item from the catalog list, created once, listed VMs
+  and read the exact VM. It did not perform a separate catalog get, which that
+  verifier revision required. Review substantiated that List and Get provide
+  the same projection and the unchanged skill allows inspection from the list;
+  the separate-get requirement was an evaluator error.
+
+This shows task recovery and ordinary skill activation working. The combined
+0.0 scores must not be described as failure to create or verify the VM. One pair
+cannot establish a general skill benefit. The answer judge passed both answers;
+that verdict is not proof of every causal explanation or default-tenant inference
+in the prose.
+
+Independent readback hash-checked 85 root, 29 treatment and 28 control manifest
+entries (overlapping inventories; 146 actual exported objects). PostgreSQL had
+exactly one UID-keyed Harbor run and two trials. Replaying storage preserved
+the same row UUIDs and values without duplicates.
+
+All six Task Pods and PVC `pvc-9051528aa0` remained for console inspection;
+cleanup reported retained, run protection remained, and recovery was suspended.
+Run-scoped mock/native children, Services and NetworkPolicies were absent.
+MinIO evidence is under `ab-eval-reports/mcp-runs/abde07e0-fc92-45f7-ba7f-b463a697eb20/`.
+
+### Explicit skill diagnostic (excluded from benefit comparison)
+
+A separate treatment-only diagnostic at submission revision `64ce3a4` explicitly
+asked to use the skill. Its original score was not recomputed under later
+verifier changes. UID
+`d8ade211-b501-46bd-8d79-4fcd0de91e2c` scored 1.0, with successful correlated
+Skill loading and all three dimensions passing. Its registered skill SHA256 was
+`ee2dcb2c6eb27a2cc7569e2c1cf8a82b39540e2ac95b65a378c5f804939d0f14`.
+Harbor stages skills from `/workspace/skills` into
+`$CLAUDE_CONFIG_DIR/skills`; Claude's config directory is `/logs/agent/sessions`.
+The ordinary pair also archived that exact registered path
+`/logs/agent/sessions/skills/tenant-vm-create/SKILL.md`, matching the source hash,
+and recorded `skillUsage` count 1 plus successful Skill content delivery.
+Control has no tenant skill. There is no database evaluation row for this diagnostic. Independently downloaded
+and hash-checked 98 diagnostic and 29 attempt manifest entries (overlapping
+inventories), including the preserved skill and trace evidence.
+
+Manual upload introduced macOS AppleDouble metadata files, causing the original
+post-processing driver to exit 1 after the successful native trial. Archival was
+recovered without a model rerun by quarantining only magic-verified metadata,
+recording hashes and preserving the original error. The native CLI exit status
+was not separately persisted before that crash and is recorded as unknown;
+saved native output reports no exception. The diagnostic is not a clean ordinary
+CI pair and is not counted in skill-benefit claims.
+
+### Comparison with the previous local MCPChecker experiment
+
+Surviving reviewed decisions record CREATE-UNCERTAIN control 9/9 and treatment
+8/9: Sol 6.1 low 3/3 versus 3/3, Luna 6 high 3/3 versus 2/3, and Terra 6.1 medium
+3/3 versus 3/3. Luna's failed skilled repetition found the VM but omitted timeout
+disclosure. Visible successful skill reads were respectively 3/3, 1/3 and 3/3.
+Sol's MCP calls were 10,10,8 without skills versus 6,6,6 with skills; Terra's were
+10,10,10 versus 6,6,6; Luna's were 15,11,7 versus 10,7,7. The old case therefore
+shows no success-rate uplift, with an indication of fewer calls in skilled runs.
+
+Those local runs used a custom Codex CLI adapter inside MCPChecker, different
+models, and a different skill hash. All six reference-document hashes match,
+but the exact frozen shared prompt and original raw traces no longer exist.
+The local numbers come from surviving scorer and six-reviewer adjudications,
+not a fresh raw-trace audit. Mock server and scoring revisions also differ.
+These results cannot identify a Harbor, Sonnet or skill regression. The latest
+Harbor pair closes the previously observed stop-and-ask recovery gap; remaining
+combined failures concern protocol evaluation, not timeout recovery.
+
+## Earlier corrected run with retained logs
 
 PipelineRun `harbor-osac-create-8ts4m`, UID
 `8323f39d-27d6-4ce4-bfe1-01b988cdb430`, completed all six Tasks successfully
