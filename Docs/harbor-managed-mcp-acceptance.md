@@ -1,5 +1,52 @@
 # Native Harbor managed-MCP acceptance evidence
 
+## Final corrected run with retained logs
+
+PipelineRun `harbor-osac-create-8ts4m`, UID
+`8323f39d-27d6-4ce4-bfe1-01b988cdb430`, completed all six Tasks successfully
+with zero skipped Tasks. It used CI revision
+`9468049e76ccdbbfc4158e96eee42b01dc9623dc` and controller image digest
+`sha256:734aab23853c5e42ca152614f3562b6e22fabc258caa8af8e537d9e6700399a3`.
+All other immutable inputs below remained unchanged. Treatment ran first,
+followed by control, each with a fresh mock and native child.
+
+This run verifies the corrected redaction boundary, complete paired lifecycle,
+live console output, persistence and intentional debug retention together:
+
+- Both native processes exited 0; the strict attempt and final archive validators
+  passed without relaxing their identity or scoring requirements.
+- Harbor CLI output and flushed start/exit/archive milestones appeared during
+  execution. Every archived process-log line was found in terminal console logs.
+  Full agent tool events remain in the native trace artifacts.
+- All six Task Pods and exact PVC `pvc-6812ff51d3` remained after completion.
+  The PVC was Bound with no deletion timestamp. Cleanup reported `retained`,
+  and workspace release was explicitly skipped. The run protection finalizer
+  remained, and recovery was suspended with no active sweeper. The PVC's
+  matching PipelineRun owner reference remained/reappeared under Tekton; this
+  evidence does not claim that the retained PVC is detached from its parent.
+- Managed mock/native child Pods, Services and NetworkPolicies were absent
+  after verified per-attempt archival.
+- Independently downloaded and hash/size-checked 83 root, 28 treatment and
+  27 control archive objects. These inventories overlap, not distinct-file totals.
+- PostgreSQL contained exactly one UID-keyed run and two trials. Authorized
+  storage replay preserved the same row UUIDs and values with no duplicates.
+- MinIO evidence is under
+  `ab-eval-reports/mcp-runs/8323f39d-27d6-4ce4-bfe1-01b988cdb430/`.
+
+The evaluation result is still **control 0.0 / treatment 0.0**, recommendation
+`fail`. Both native traces contain exactly catalog list, catalog get and one
+create call returning the intended timeout; neither performed a post-create
+VM read or `check_connection`. Neither read docs or invoked Read/Skill. The
+treatment advertised `tenant-vm-create`, while control did not. Thus the
+integration and skill exposure work, but skill uptake and benefit were not
+demonstrated. A successful pipeline here means trustworthy execution and
+persistence of a valid failed evaluation, not a passing tenant task.
+
+Three independent reviewers checked the final live configuration/retention,
+actual trace/evidence bytes, and archive/database persistence. The earlier
+failed runs below remain failed; none was retroactively rescored. No PR has
+been opened. Debug resources remain intentionally retained.
+
 ## Completed integration smoke
 
 PipelineRun `harbor-osac-create-wshwp` completed all six Tasks successfully with
@@ -105,18 +152,18 @@ same Pod UIDs with intact keys, confirming the cause. The fix limits additional
 username masking to process/console text, preserves prior token/password/DB URL
 masking for proof documents, and leaves the identity validator unchanged. A
 regression test and an in-memory replay of the actual snapshots passed; neither
-changed the failed archive. A fresh complete pair with this fix remains pending.
+changed the failed archive. The corrected complete run is recorded above.
 No PR has been opened.
 
 ## Scope and remaining limits
 
-This is one Sonnet case/pair with a mock, not real OSAC or a multi-case skill
-benchmark. Concurrency remains deferred under the namespace Service quota.
+This covers one Sonnet case with integration pairs against a mock, not real
+OSAC or a multi-case skill benchmark. Concurrency remains deferred under the namespace Service quota.
 Cancellation has the previously accepted evidence limitation. Durable per-run
 retention exemption is not implemented: resuming the shared recovery sweep can
 release retained completed runs, so inspection and deliberate release must
-precede resumption. Production OSAC MCP and skill source were not changed. Generic Harbor and AEH
-agent paths remain unchanged. MCPChecker shares lifecycle/recovery helpers, and
+precede resumption. Production OSAC MCP and skill source were not changed.
+Generic Harbor and AEH agent paths remain unchanged. MCPChecker shares lifecycle/recovery helpers, and
 its orphan recovery is temporarily paused as described above.
 
 ## Local checks
@@ -127,4 +174,4 @@ run locally because its optional dependencies are unavailable. Scoped and full
 repository Ruff lint/format checks passed. The new retention wiring also passed
 server-side Tekton admission. Three reviewers independently checked the source
 and the earlier completed pair. Live visibility and retention were verified on
-the failed infrastructure path above; a full retained pair remains pending.
+the failed infrastructure path and the final complete retained pair above.
