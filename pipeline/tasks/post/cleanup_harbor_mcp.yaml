@@ -26,7 +26,7 @@ spec:
       limits:
         cpu: 500m
         memory: 512Mi
-    image: image-registry.openshift-image-registry.svc:5000/ab-eval-flow/harbor-mcp-ci@sha256:89e181105a290cc16d8419e4e65df32bcc9e07f2da280206001b264a54d04e70
+    image: image-registry.openshift-image-registry.svc:5000/ab-eval-flow/harbor-mcp-ci@sha256:42d7b35ae0f9066008df8fea659302030ffc91608499afe1b6786b89ce9aa1e2
     name: archive-evidence
     args:
     - finish
@@ -35,7 +35,7 @@ spec:
     - --run-name
     - $(params.pipelinerun-name)
     - --image
-    - image-registry.openshift-image-registry.svc:5000/ab-eval-flow/harbor-mcp-ci@sha256:89e181105a290cc16d8419e4e65df32bcc9e07f2da280206001b264a54d04e70
+    - image-registry.openshift-image-registry.svc:5000/ab-eval-flow/harbor-mcp-ci@sha256:42d7b35ae0f9066008df8fea659302030ffc91608499afe1b6786b89ce9aa1e2
     env:
     - name: MINIO_ENDPOINT
       valueFrom:
@@ -76,7 +76,7 @@ spec:
       limits:
         cpu: 500m
         memory: 512Mi
-    image: image-registry.openshift-image-registry.svc:5000/ab-eval-flow/harbor-mcp-ci@sha256:89e181105a290cc16d8419e4e65df32bcc9e07f2da280206001b264a54d04e70
+    image: image-registry.openshift-image-registry.svc:5000/ab-eval-flow/harbor-mcp-ci@sha256:42d7b35ae0f9066008df8fea659302030ffc91608499afe1b6786b89ce9aa1e2
     name: release-workspace
     args:
     - release

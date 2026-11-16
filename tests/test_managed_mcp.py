@@ -765,3 +765,24 @@ def test_kubernetes_byte_logs_are_preserved_as_text(tmp_path):
         "=== mock ===",
         '2026-11-16T12:00:00Z {"event":"tool_call","tool":"check_connection","outcome":"ok"}',
     ]
+
+
+def test_kubernetes_raw_response_bypasses_lossy_string_deserialization(tmp_path):
+    from unittest.mock import Mock
+
+    raw = b'2026-11-16T12:00:00Z {"event":"tool_call","tool":"check_connection","outcome":"ok"}\n'
+    response = NS(data=raw, close=Mock(), release_conn=Mock())
+
+    def read(*args, **kwargs):
+        assert kwargs["_preload_content"] is False
+        return response
+
+    pod = NS(
+        metadata=NS(name="mock", owner_references=[], uid="pod-uid", labels={}),
+        spec=NS(containers=[NS(name="mock", image=IMAGE)]),
+        status=None,
+    )
+    ci.collect_logs(NS(namespace="test", core=NS(read_namespaced_pod_log=read)), [pod], tmp_path)
+    assert (tmp_path / "pod-logs/mock.log").read_text() == "=== mock ===\n" + raw.decode()
+    response.close.assert_called_once()
+    response.release_conn.assert_called_once()

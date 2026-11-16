@@ -733,9 +733,21 @@ def collect_logs(cluster, pods, root):
         parts = []
         for container in pod.spec.containers:
             try:
-                value = cluster.core.read_namespaced_pod_log(
-                    pod.metadata.name, cluster.namespace, container=container.name, timestamps=True
+                response = cluster.core.read_namespaced_pod_log(
+                    pod.metadata.name,
+                    cluster.namespace,
+                    container=container.name,
+                    timestamps=True,
+                    _preload_content=False,
                 )
+                if hasattr(response, "data"):
+                    try:
+                        value = response.data
+                    finally:
+                        response.close()
+                        response.release_conn()
+                else:
+                    value = response
             except ApiException as exc:
                 status = getattr(pod, "status", None)
                 states = getattr(status, "container_statuses", None) or []
