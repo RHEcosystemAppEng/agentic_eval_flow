@@ -178,11 +178,20 @@ The current profile validation above supersedes the earlier shared graph.
 Complete cancellation preservation is still unverified; the source guards
 block missing final evidence rather than reconstructing lost logs.
 
+## Accepted cancellation limitation
+
+On 2026-11-16 the user accepted the current delete-on-cancel behavior and possible
+loss of cancelled Task Pod logs for now. Keep `keep-pod-on-cancel=false`; complete
+cancellation-log preservation is deferred rather than a release gate. No cluster
+setting or source guard was changed. If cancellation loses required evidence,
+the existing archive guard still reports failure and retains the remaining mock
+resources/workspace; accepting log loss does not certify an incomplete archive
+or introduce automatic deletion of those protected resources.
+
 ## Remaining deployment gates
 
-- Full cancellation/timeout log preservation requires a cluster-approved
-  retention mechanism and another live test with an exact known log marker.
-  Missing evidence must remain a visible failure, never an accepted archive.
+- Full timeout log preservation remains unverified; it needs a live test with
+  an exact known log marker and, if necessary, a retention mechanism.
 - Two concurrent managed Services could not run: namespace quota is 10 and
   nine Services belong to existing shared applications. The current identity
   cannot raise ResourceQuota. Shared Services were not deleted. Unit identity

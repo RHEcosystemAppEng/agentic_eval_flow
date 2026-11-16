@@ -147,9 +147,11 @@ No `mc` binary or `oc exec` inside MinIO is needed.
 The workspace and mock have no PipelineRun owner reference. An archive-protection
 finalizer prevents normal PipelineRun pruning before archival. Do not force
 remove that protection or use foreground cascading deletion as a cleanup method.
-For cancellation, the cluster must retain cancelled TaskRun Pods (Tekton
-`feature-flags.keep-pod-on-cancel=true`) or supply final snapshots before Pod
-deletion. This is a cluster administrator setting with cluster-wide impact.
+The current deployment keeps delete-on-cancel behavior
+(`feature-flags.keep-pod-on-cancel=false`). Possible loss of cancelled Task Pod
+logs is an accepted limitation for now. Complete cancellation evidence would
+require retaining those Pods or supplying final snapshots before deletion;
+changing the retention flag has cluster-wide impact and is deferred.
 Timeout retention is version dependent and must be verified separately.
 The finalizer checks the run-owned TaskRun inventory, including retry Pod names;
 missing final logs or stopped-Pod identity block cleanup. Enabling retention
