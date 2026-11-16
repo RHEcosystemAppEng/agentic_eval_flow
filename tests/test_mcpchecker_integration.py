@@ -247,6 +247,49 @@ class TestMCPCheckerAggregation:
         result = aggregate_mcpchecker_results(output_file, "test", None)
         assert result.recommendation == "fail"
 
+    @pytest.mark.parametrize(
+        ("task_passed", "assertions_passed", "tool_assertion_passed", "expected_score"),
+        [
+            (True, True, True, 1.0),
+            (True, False, False, 0.0),
+            (True, False, True, 0.0),
+            (False, True, True, 0.0),
+            (True, None, False, 0.0),
+            (True, True, False, 0.0),
+        ],
+    )
+    def test_native_judge_and_assertion_verdicts(
+        self, tmp_path, task_passed, assertions_passed, tool_assertion_passed, expected_score
+    ):
+        """Replay the live CVE smoke schema: judge success alone cannot pass a case."""
+        fixture = Path(__file__).parent / "fixtures/mcpchecker/assertion-failure.json"
+        output = json.loads(fixture.read_text())
+        task = output["results"][0]
+        task["taskPassed"] = task_passed
+        if assertions_passed is None:
+            task.pop("allAssertionsPassed")
+        else:
+            task["allAssertionsPassed"] = assertions_passed
+        task["assertionResults"]["minToolCalls"]["passed"] = tool_assertion_passed
+        task["verifyOutput"]["Steps"][0]["success"] = task_passed
+        output_path = tmp_path / "native-output.json"
+        output_path.write_text(json.dumps(output))
+
+        report = aggregate_mcpchecker_results(output_path, "native-smoke")
+
+        assert report.total_tasks == 1
+        assert report.overall_score == expected_score
+        assert report.recommendation == ("pass" if expected_score else "fail")
+        parsed = report.tasks[0]
+        assert parsed.tool_calls == 1
+        assert parsed.tool_call_records[0].tool_name == "get_cve_by_id"
+        assert parsed.tool_call_records[0].arguments == {"cve_id": "CVE-2016-10739"}
+        assert parsed.assertion_results["minToolCalls"]["passed"] is tool_assertion_passed
+        assert parsed.llm_judge_results[0].check_type == "llmJudge"
+        assert parsed.llm_judge_results[0].passed is task_passed
+        if not tool_assertion_passed:
+            assert parsed.assertion_results["minToolCalls"]["reason"] == "Too few tool calls: expected >= 10000, got 1"
+
 
 class TestMCPCheckerResultModel:
     """Tests for MCPCheckerResult Pydantic model."""

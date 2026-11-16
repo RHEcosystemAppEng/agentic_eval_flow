@@ -1,0 +1,33 @@
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: minio
+  namespace: ab-eval-flow
+---
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: minio-source
+  namespace: ab-eval-flow
+spec:
+  runPolicy: Serial
+  source:
+    type: Binary
+    binary: {}
+  strategy:
+    type: Docker
+    dockerStrategy:
+      dockerfilePath: Containerfile
+  output:
+    to:
+      kind: ImageStreamTag
+      name: minio:RELEASE.2025-09-07T16-13-09Z
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 3Gi
+  successfulBuildsHistoryLimit: 2
+  failedBuildsHistoryLimit: 2

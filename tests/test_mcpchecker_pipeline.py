@@ -79,7 +79,8 @@ def execution(tmp_path: Path) -> tuple[Path, dict[str, str]]:
         "sys.exit(int(os.environ.get('CHECKER_EXIT', '0')))",
     )
     for name in ("python", "python3"):
-        (bindir / name).symlink_to(sys.executable)
+        # Keep the active virtual environment when launching the real scripts.
+        executable(name, "import os, sys\nos.execv(sys.executable, [sys.executable, *sys.argv[1:]])")
     env = {
         **os.environ,
         "PATH": f"{bindir}{os.pathsep}{os.environ['PATH']}",
@@ -163,3 +164,61 @@ def test_invalid_checker_output_does_not_produce_a_passing_report(execution: tup
     assert result.returncode != 0
     assert not (workspace / "reports/probe/report.json").exists()
     assert not (workspace / "_eval_tmp/recommendation").exists()
+
+
+@pytest.mark.parametrize("task_path", ["pipeline/tasks/post/store.yaml", "pipeline/tasks/konflux/store.yaml"])
+@pytest.mark.parametrize("passed", [True, False])
+def test_store_task_persists_mcpchecker_reports(execution, task_path, passed):
+    """Execute each real storage script against SQLite, including an idempotent retry."""
+    from sqlalchemy import create_engine, select
+    from sqlalchemy.orm import Session
+
+    from abevalflow.db.models import MCPCheckerRun, MCPCheckerTask
+    from scripts.aggregate_mcpchecker import aggregate_mcpchecker_results
+
+    workspace, env = execution
+    fixture = REPO / "tests/fixtures/mcpchecker/assertion-failure.json"
+    raw = json.loads(fixture.read_text())
+    raw["results"][0]["allAssertionsPassed"] = passed
+    raw["results"][0]["assertionResults"]["minToolCalls"]["passed"] = passed
+    raw_path = workspace / "raw.json"
+    raw_path.write_text(json.dumps(raw))
+    report = aggregate_mcpchecker_results(raw_path, "probe", pipeline_run_id="unit-test-run")
+    report_dir = workspace / "reports/probe"
+    report_dir.mkdir(parents=True)
+    (report_dir / "mcpchecker-report.json").write_text(report.model_dump_json())
+    bindir = Path(env["PATH"].split(os.pathsep)[0])
+    git = bindir / "git"
+    git.write_text("#!/bin/sh\nexit 0\n")
+    git.chmod(0o755)
+    env["DATABASE_URL"] = f"sqlite:///{workspace / 'results.db'}"
+    env["MLFLOW_TRACKING_URI"] = ""
+    step = next(
+        step
+        for step in yaml.safe_load((REPO / task_path).read_text())["spec"]["steps"]
+        if step["name"] == "store-to-db"
+    )
+    script = step["script"]
+    for old, new in {
+        "$(workspaces.source.path)": str(workspace),
+        "$(params.eval-engine)": "mcpchecker",
+        "$(params.pipeline-repo-revision)": "test-revision",
+        "$(params.pipeline-repo-url)": "https://fixture.invalid/repo.git",
+        "$(params.submission-name)": "probe",
+        "$(params.pipeline-run-id)": "unit-test-run",
+    }.items():
+        script = script.replace(old, new)
+    assert not re.search(r"\$\((params|workspaces|results)\.", script)
+    for _ in range(2):
+        result = subprocess.run(["bash", "-c", script], cwd=workspace, env=env, capture_output=True, text=True)
+        assert result.returncode == 0, result.stdout + result.stderr
+
+    with Session(create_engine(env["DATABASE_URL"])) as session:
+        runs = session.scalars(select(MCPCheckerRun)).all()
+        tasks = session.scalars(select(MCPCheckerTask)).all()
+        assert len(runs) == len(tasks) == 1
+        assert runs[0].pipeline_run_id == "unit-test-run"
+        assert runs[0].overall_score == float(passed)
+        assert tasks[0].status == ("passed" if passed else "failed")
+        assert tasks[0].tool_calls == 1
+        assert tasks[0].details_json["assertion_results"]["minToolCalls"]["passed"] is passed
