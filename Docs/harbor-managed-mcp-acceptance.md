@@ -88,8 +88,25 @@ with no active sweeper. Native child/mock resources still archive and delete
 between conditions. Harbor CLI output now also streams to the Task console;
 full native conversations remain separate artifacts.
 
-Live verification of the new retention and console-streaming behavior is pending
-a fresh run with its rebuilt pinned controller. No PR has been opened.
+Run `harbor-osac-create-wdhrf`, UID `d2f9c91d-d032-468a-8027-5a403d0d4f7e`,
+used CI `c85ab19` and controller digest
+`sha256:707c428694651d2b278d576fc60deb7aeae755827866a36f6fb4395489e2a266`.
+It demonstrated live Harbor CLI output/milestones and retained terminal logs,
+but failed after treatment in strict attempt identity validation. Control and
+store did not run; PostgreSQL correctly has no evaluation row for this attempt.
+Its finalizer archived 54 root objects and reported `cleanup-status=retained`.
+All five created Task Pods and exact PVC `pvc-fc0fa061bc` remained, with run
+protection present and recovery suspended. This is debug-retention evidence on
+a failed infrastructure path, not a completed pair.
+
+The failure came from newly added broad storage-username redaction corrupting
+Kubernetes label keys in attempt snapshots. The root finalizer recollected the
+same Pod UIDs with intact keys, confirming the cause. The fix limits additional
+username masking to process/console text, preserves prior token/password/DB URL
+masking for proof documents, and leaves the identity validator unchanged. A
+regression test and an in-memory replay of the actual snapshots passed; neither
+changed the failed archive. A fresh complete pair with this fix remains pending.
+No PR has been opened.
 
 ## Scope and remaining limits
 
@@ -105,8 +122,9 @@ its orphan recovery is temporarily paused as described above.
 ## Local checks
 
 The final console/retention source passed the repository CI test selection:
-1,218 passed, 10 skipped. The separate optional MLflow observer suite was not
+1,219 passed, 10 skipped. The separate optional MLflow observer suite was not
 run locally because its optional dependencies are unavailable. Scoped and full
 repository Ruff lint/format checks passed. The new retention wiring also passed
 server-side Tekton admission. Three reviewers independently checked the source
-and the earlier completed pair; live visibility verification remains pending.
+and the earlier completed pair. Live visibility and retention were verified on
+the failed infrastructure path above; a full retained pair remains pending.

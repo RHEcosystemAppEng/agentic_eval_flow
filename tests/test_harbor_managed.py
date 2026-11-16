@@ -196,3 +196,23 @@ def test_console_stream_preserves_redacted_output_and_failure_status(tmp_path, m
     ]
     assert run_logged(command, log) == 7
     assert log.read_text() == capsys.readouterr().out == "[REDACTED]\n[REDACTED]\n"
+
+
+def test_evidence_redaction_preserves_structural_storage_username_overlap(tmp_path, monkeypatch):
+    from scripts.run_harbor_mcp import redact_tree
+
+    monkeypatch.setenv("MINIO_ACCESS_KEY", "abevalflow")
+    monkeypatch.setenv("MINIO_SECRET_KEY", "test-only-private-storage-password")
+    snapshot = tmp_path / "producer.json"
+    snapshot.write_text(
+        json.dumps(
+            {
+                "labels": {"abevalflow.io/mcp-run": "run-uid"},
+                "error": "test-only-private-storage-password",
+            }
+        )
+    )
+    redact_tree(tmp_path)
+    saved = json.loads(snapshot.read_text())
+    assert saved["labels"] == {"abevalflow.io/mcp-run": "run-uid"}
+    assert saved["error"] == "[REDACTED]"

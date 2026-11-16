@@ -40,8 +40,13 @@ from scripts.generate_eval_config import build_variant_config, set_task_docker_i
 TEXT_SUFFIXES = {".json", ".jsonl", ".log", ".txt", ".md", ".yaml", ".yml"}
 
 
-def redact_text(text):
-    for key in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "MINIO_ACCESS_KEY", "MINIO_SECRET_KEY", "DATABASE_URL"):
+def redact_text(text, *, include_access_key=False):
+    keys = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "MINIO_SECRET_KEY", "DATABASE_URL"]
+    # A storage username can overlap structural evidence keys (e.g. label domains).
+    # Mask it only in process/console text, never across identity proof documents.
+    if include_access_key:
+        keys.append("MINIO_ACCESS_KEY")
+    for key in keys:
         secret = os.environ.get(key)
         if secret and len(secret) > 4:
             text = text.replace(secret, "[REDACTED]")
@@ -61,7 +66,7 @@ def run_logged(command, log_file):
             command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace"
         ) as process:
             for line in process.stdout:
-                safe = redact_text(line)
+                safe = redact_text(line, include_access_key=True)
                 log.write(safe)
                 log.flush()
                 print(safe, end="", flush=True)

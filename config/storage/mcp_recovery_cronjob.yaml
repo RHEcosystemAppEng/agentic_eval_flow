@@ -14,14 +14,14 @@ spec:
           restartPolicy: Never
           containers:
           - name: recover
-            image: image-registry.openshift-image-registry.svc:5000/ab-eval-flow/harbor-mcp-ci@sha256:707c428694651d2b278d576fc60deb7aeae755827866a36f6fb4395489e2a266
+            image: image-registry.openshift-image-registry.svc:5000/ab-eval-flow/harbor-mcp-ci@sha256:734aab23853c5e42ca152614f3562b6e22fabc258caa8af8e537d9e6700399a3
             command:
             - python
             - -m
             - abevalflow.mcp_ci
             - sweep
             - --image
-            - image-registry.openshift-image-registry.svc:5000/ab-eval-flow/harbor-mcp-ci@sha256:707c428694651d2b278d576fc60deb7aeae755827866a36f6fb4395489e2a266
+            - image-registry.openshift-image-registry.svc:5000/ab-eval-flow/harbor-mcp-ci@sha256:734aab23853c5e42ca152614f3562b6e22fabc258caa8af8e537d9e6700399a3
             resources:
               requests:
                 cpu: 50m
