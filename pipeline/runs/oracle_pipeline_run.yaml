@@ -7,29 +7,43 @@ spec:
   pipelineRef:
     name: abevalflow-pipeline
   params:
-    - name: repo-url
-      value: "https://github.com/RHEcosystemAppEng/skill-submissions.git"
-    - name: revision
-      value: "4d3efc82ed9063407875ee50ddecdbcb9d0d4388"
-    - name: submission-dir
-      value: "sample-skill-ai"
-    - name: pipeline-repo-url
-      value: "https://github.com/RHEcosystemAppEng/agentic_eval_flow.git"
-    - name: pipeline-repo-revision
-      value: "APPENG-4909/ai-assisted-eval"
-    - name: enable-ai-generation
-      value: "true"
-    - name: agent-type
-      value: "oracle"
-    - name: repo-name
-      value: "RHEcosystemAppEng/skill-submissions"
-    - name: pr-number
-      value: "2"
+  - name: repo-url
+    value: https://github.com/RHEcosystemAppEng/skill-submissions.git
+  - name: revision
+    value: 4d3efc82ed9063407875ee50ddecdbcb9d0d4388
+  - name: submission-dir
+    value: sample-skill-ai
+  - name: pipeline-repo-url
+    value: https://github.com/RHEcosystemAppEng/agentic_eval_flow.git
+  - name: pipeline-repo-revision
+    value: APPENG-4909/ai-assisted-eval
+  - name: enable-ai-generation
+    value: 'true'
+  - name: agent-type
+    value: oracle
+  - name: repo-name
+    value: RHEcosystemAppEng/skill-submissions
+  - name: pr-number
+    value: '2'
   workspaces:
-    - name: shared-workspace
-      volumeClaimTemplate:
-        spec:
-          accessModes: ["ReadWriteOnce"]
-          resources:
-            requests:
-              storage: 5Gi
+  - name: shared-workspace
+    volumeClaimTemplate:
+      spec:
+        accessModes:
+        - ReadWriteOnce
+        resources:
+          requests:
+            storage: 5Gi
+  taskRunSpecs:
+  - pipelineTaskName: start-mcp
+    serviceAccountName: mcp-lifecycle
+  - pipelineTaskName: evaluate-mcpchecker
+    serviceAccountName: mcpchecker-evaluator
+    podTemplate:
+      automountServiceAccountToken: false
+  - pipelineTaskName: evaluate
+    serviceAccountName: mcpchecker-evaluator
+    podTemplate:
+      automountServiceAccountToken: false
+  - pipelineTaskName: cleanup
+    serviceAccountName: mcp-lifecycle

@@ -20,6 +20,9 @@ spec:
         cpu: 100m
         memory: 256Mi
   params:
+    - name: pipeline-run-uid
+      type: string
+      default: legacy
     - name: eval-engine
       type: string
       description: Evaluation engine (harbor, ase, mcpchecker, a2a, aeh, aeh_openshell_openclaw, both)
@@ -269,6 +272,7 @@ spec:
         #!/usr/bin/env bash
         set -euo pipefail
         echo "=== EVALUATE PHASE: Setup ==="
+        rm -f "$(workspaces.source.path)/_mcp_runs/$(params.pipeline-run-uid)/result.json"
         echo "Eval engine: $(params.eval-engine)"
         echo "Submission: $(params.submission-name)"
         
@@ -2596,6 +2600,17 @@ spec:
         echo "Control reward: $C_REWARD"
         echo "Recommendation: $REC"
         echo "Results: $(cat "$(results.results-dir.path)")"
+        python - <<'HANDOFF'
+        import json, os
+        from pathlib import Path
+        root = Path("$(workspaces.source.path)/_mcp_runs/$(params.pipeline-run-uid)")
+        root.mkdir(parents=True, exist_ok=True)
+        values = {name: (Path("/tekton/results") / name).read_text() for name in
+                  ["treatment-mean-reward", "control-mean-reward", "recommendation", "results-dir"]}
+        temp = root / "result.pending"
+        temp.write_text(json.dumps({"uid": "$(params.pipeline-run-uid)", "engine": "$(params.eval-engine)", "results": values}))
+        temp.replace(root / "result.json")
+        HANDOFF
 
     # Step 17: Cleanup A2A agent deployment (always runs)
     - name: a2a-cleanup

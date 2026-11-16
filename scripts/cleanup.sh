@@ -38,11 +38,27 @@ done
 
 # Delete old PipelineRuns (keep the N most recent by count)
 log "Pruning PipelineRuns, keeping most recent ${PIPELINERUN_KEEP_COUNT}..."
-if command -v tkn &>/dev/null; then
-  tkn pipelinerun delete -n "${NAMESPACE}" \
-    --keep="${PIPELINERUN_KEEP_COUNT}" \
-    --force 2>/dev/null || true
-fi
+# A retained evidence PVC is the durable archive gate. Never garbage collect
+# its PipelineRun/TaskRuns (and therefore Pod logs) before recovery completes.
+runs_file=$(mktemp)
+claims_file=$(mktemp)
+trap 'rm -f "$runs_file" "$claims_file"' EXIT
+oc get pipelineruns -n "${NAMESPACE}" -o json > "$runs_file"
+oc get pvc -n "${NAMESPACE}" -l abevalflow.io/mcp-run -o json > "$claims_file"
+for run in $(python3 - "$runs_file" "$claims_file" "$PIPELINERUN_KEEP_COUNT" <<'PYTHON'
+import json, sys
+runs = json.load(open(sys.argv[1]))["items"]
+claims = json.load(open(sys.argv[2]))["items"]
+protected = {c["metadata"]["labels"]["abevalflow.io/mcp-run"] for c in claims}
+completed = sorted((r for r in runs if r.get("status", {}).get("completionTime")),
+                   key=lambda r: r["metadata"]["creationTimestamp"], reverse=True)
+for run in completed[int(sys.argv[3]):]:
+    if run["metadata"]["uid"] not in protected:
+        print(run["metadata"]["name"])
+PYTHON
+); do
+  oc delete pipelinerun "$run" -n "${NAMESPACE}"
+done
 
 # Prune internal registry images for deleted submissions
 log "Pruning unused image streams..."

@@ -5,6 +5,8 @@ Automated Tekton-orchestrated pipeline on OpenShift for evaluating AI artifacts:
 - **Skills** -- Measures skill efficacy by comparing agent performance with and without skills (A/B "gap" testing)
 - **MCP Servers** -- Validates MCP server implementations via task-based verification
 - **Agents** -- Evaluates full agent behavior using Harbor (general agents) or A2A protocol (A2A-compliant agents)
+For opt-in CI-managed mock targets, see [managed MCP mocks](docs/managed-mcp-mocks.md).
+
 
 Produces statistical reports with pass rates, uplift metrics, significance tests, and a unified scorecard.
 

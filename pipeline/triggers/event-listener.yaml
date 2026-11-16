@@ -16,7 +16,7 @@ spec:
                 header.match('X-GitHub-Event', 'pull_request') &&
                 body.action in ['opened', 'synchronize', 'reopened'] &&
                 body.pull_request.base.ref == 'main' &&
-                body.pull_request.head.ref.startsWith('eval/')
+                body.pull_request.head.ref.matches('^eval/[A-Za-z0-9][A-Za-z0-9_.-]*$')
             - name: "overlays"
               value:
                 - key: submission_directory

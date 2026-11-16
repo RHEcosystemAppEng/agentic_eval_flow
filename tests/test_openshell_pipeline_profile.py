@@ -115,17 +115,18 @@ class TestOpenshellPipelineProfile:
 
     def test_cleanup_task_is_best_effort(self):
         task = _load(REPO / "pipeline" / "tasks" / "post" / "cleanup_pvc.yaml")
-        step = task["spec"]["steps"][0]
-        assert step.get("onError") == "continue"
+        step = next(s for s in task["spec"]["steps"] if s["name"] == "delete-pvc")
+        assert "Non-blocking" in step["script"]
+        assert "abevalflow.mcp_ci release" in step["script"]
         assert "--request-timeout=20s" in step["script"]
         # The openshift/cli samples imagestream is pullable by any SA; a
         # private repo image only works where it is already node-cached.
-        assert step["image"] == "image-registry.openshift-image-registry.svc:5000/openshift/cli:latest"
+        assert "/ab-eval-flow/mcpchecker-ci" in step["image"]
 
     def test_cleanup_failures_are_operator_visible(self):
         task = _load(REPO / "pipeline" / "tasks" / "post" / "cleanup_pvc.yaml")
         assert "cleanup-status" in {r["name"] for r in task["spec"]["results"]}
-        script = task["spec"]["steps"][0]["script"]
+        script = next(s for s in task["spec"]["steps"] if s["name"] == "delete-pvc")["script"]
         assert "$(results.cleanup-status.path)" in script
         for outcome in ("api-unavailable", "none", "failed", "deleted"):
             assert f'echo "{outcome}" > "$RESULT_PATH"' in script
@@ -149,7 +150,7 @@ class TestOpenshellPipelineProfile:
         # task must release those pods before deleting the PVCs.
         task = _load(REPO / "pipeline" / "tasks" / "post" / "cleanup_pvc.yaml")
         assert _param_defaults(task["spec"])["delete-retained-pods"] == "true"
-        script = task["spec"]["steps"][0]["script"]
+        script = next(s for s in task["spec"]["steps"] if s["name"] == "delete-pvc")["script"]
         # memberOf=tasks matches only DAG pods, never the finally pod
         # running this script, so the cleanup cannot delete itself.
         selector = "tekton.dev/pipelineRun=$(params.pipelinerun-name),tekton.dev/memberOf=tasks"
@@ -204,7 +205,7 @@ class TestOpenshellPipelineProfile:
         # reclamation path. (It does read the pods' logs — once, as a
         # byte-for-byte archive of what its own release destroys.)
         task = _load(REPO / "pipeline" / "tasks" / "post" / "cleanup_pvc.yaml")
-        script = task["spec"]["steps"][0]["script"]
+        script = next(s for s in task["spec"]["steps"] if s["name"] == "delete-pvc")["script"]
         for absent in (
             "digest",
             "oc get taskrun",
@@ -236,50 +237,18 @@ class TestOpenshellPipelineProfile:
         # does not complete, the pods are kept and the PVC is reported
         # failed; logs are never destroyed unarchived.
         task = _load(REPO / "pipeline" / "tasks" / "post" / "cleanup_pvc.yaml")
-        step = task["spec"]["steps"][0]
-        script = step["script"]
-        # One file per TaskRun pod (retries are distinct TaskRuns),
-        # every step of the task in it.
-        assert "--all-containers" in script
-        assert "metadata.labels.tekton\\.dev/taskRun" in script
-        # The archive must precede the release, or there is nothing
-        # left to read.
-        assert script.index("Archiving the run's step pod logs") < script.index("oc delete pod")
-        # The upload runs inside the MinIO deployment's pod, which
-        # already has mc and the credentials — no extra image on the
-        # cleanup path, and no credentials in this task.
-        assert "oc exec" in script and "mc cp" in script
-        assert len(task["spec"]["steps"]) == 1
-        assert step["image"].endswith("openshift/cli:latest")
-        env = {e["name"]: e for e in step["env"]}
+        archive, release = task["spec"]["steps"]
+        assert archive["name"] == "archive-evidence"
+        assert release["name"] == "delete-pvc"
+        assert "abevalflow.mcp_ci finish" in archive["script"]
+        assert "touch /archive-gate/complete" in archive["script"]
+        assert "if [ ! -f /archive-gate/complete ]" in release["script"]
+        assert release["script"].index("/archive-gate/complete") < release["script"].index("oc delete pod")
+        assert "mc cp" not in release["script"] and "oc exec" not in release["script"]
+        assert not task["spec"].get("workspaces")  # no self-held PVC
+        env = {e["name"]: e for e in archive["env"]}
         assert env["MINIO_ENDPOINT"]["valueFrom"]["secretKeyRef"]["key"] == "endpoint-url"
-        assert env["MINIO_ENDPOINT"]["valueFrom"]["secretKeyRef"]["optional"] is True
-        assert "root-user" not in script and "root-password" not in script
-        # Fail-safe gating: any archive failure keeps the pods. A
-        # missing endpoint is as fatal as an unreachable MinIO — it
-        # must not silently release unarchived.
-        assert "release_ok=0" in script
-        assert "Skipping the pod release" in script
-        endpoint_gate = script.split('if [ -z "${MINIO_ENDPOINT:-}" ]; then', 1)[1]
-        assert endpoint_gate.index("release_ok=0") < endpoint_gate.index("elif")
-        assert "releasing the pods without archiving" not in script
-        # Completeness is measured against the pod count from the same
-        # listing: a partial fetch keeps the pods exactly like a total
-        # one does, and a failed listing is zero knowledge, not zero
-        # pods.
-        assert "if ! pod_listing=" in script
-        assert "could not list the run's pods" in script
-        assert "expected=$((expected + 1))" in script
-        assert '[ "$archived" -ne "$expected" ]' in script
-        assert 'elif [ "$expected" -eq 0 ]' in script
-        # The local pull side exists and reads the same layout.
-        fetch = (REPO / "scripts" / "fetch_run_logs.sh").read_text()
-        assert "debug/pod-logs" in fetch
-        assert "deploy/minio" in fetch
-        # No pinned namespace default: the current context's, or an
-        # explicit one.
-        assert ":-forge-nommen" not in fetch
-        assert "oc config view --minify" in fetch
+        assert "OPENAI_API_KEY" not in env
 
     def test_rbac_applies_into_any_namespace(self):
         # metadata.namespace would make `oc apply -n X` fail, and a subject

@@ -1,0 +1,81 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: evaluate-mcpchecker
+spec:
+  params:
+  - name: pipeline-run-uid
+    type: string
+  - name: pipeline-run-id
+    type: string
+  - name: submission-dir
+    type: string
+  - name: submission-name
+    type: string
+  - name: mcp-credentials-secret
+    type: string
+    default: mcp-credentials-placeholder
+  - name: mcpchecker-agent-model
+    type: string
+    default: openai:claude-sonnet
+  - name: mcpchecker-judge-model
+    type: string
+    default: openai:claude-sonnet
+  - name: mcpchecker-task-timeout
+    type: string
+    default: 10m
+  workspaces:
+  - name: source
+  steps:
+  - name: evaluate
+    image: image-registry.openshift-image-registry.svc:5000/ab-eval-flow/mcpchecker-ci@sha256:02e170f421ab6f5b3d4a4d301e489a9a817f3b8434593984a7ece46c544bbb99
+    computeResources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: '1'
+        memory: 1Gi
+    env:
+    - name: MCP_URL
+      valueFrom:
+        secretKeyRef:
+          name: $(params.mcp-credentials-secret)
+          key: MCP_URL
+          optional: true
+    - name: MCP_BEARER_TOKEN
+      valueFrom:
+        secretKeyRef:
+          name: $(params.mcp-credentials-secret)
+          key: MCP_BEARER_TOKEN
+          optional: true
+    - name: OPENAI_API_KEY
+      valueFrom:
+        secretKeyRef:
+          name: llm-credentials
+          key: api-key
+          optional: true
+    - name: LITELLM_PROXY_URL
+      value: http://litellm.ab-eval-flow.svc:4000/v1
+    command:
+    - python
+    - -m
+    - abevalflow.mcp_ci
+    args:
+    - evaluate
+    - --workspace
+    - $(workspaces.source.path)
+    - --uid
+    - $(params.pipeline-run-uid)
+    - --run-name
+    - $(params.pipeline-run-id)
+    - --submission-dir
+    - $(params.submission-dir)
+    - --submission
+    - $(params.submission-name)
+    - --agent-model
+    - $(params.mcpchecker-agent-model)
+    - --judge-model
+    - $(params.mcpchecker-judge-model)
+    - --timeout
+    - $(params.mcpchecker-task-timeout)
