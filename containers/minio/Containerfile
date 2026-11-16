@@ -1,0 +1,14 @@
+FROM golang:1.24.2-alpine AS builder
+RUN apk add --no-cache git
+WORKDIR /src
+RUN git init . && git remote add origin https://github.com/minio/minio.git && git fetch --depth 1 origin 07c3a429bfed433e49018cb0f78a52145d4bedeb && git checkout --detach FETCH_HEAD
+ENV CGO_ENABLED=0 GOMAXPROCS=2 GOMEMLIMIT=1500MiB
+RUN go build -p 2 -tags kqueue -trimpath -ldflags="-s -w -X github.com/minio/minio/cmd.Version=2025-09-07T16:13:09Z -X github.com/minio/minio/cmd.ReleaseTag=RELEASE.2025-09-07T16-13-09Z -X github.com/minio/minio/cmd.CommitID=07c3a429bfed433e49018cb0f78a52145d4bedeb" -o /minio .
+FROM registry.access.redhat.com/ubi9/ubi-minimal:9.6
+COPY --from=builder /minio /usr/bin/minio
+COPY --from=builder /src/LICENSE /licenses/LICENSE
+RUN mkdir -p /data && chown 1001:0 /data && chmod g+rwx /data
+USER 1001
+EXPOSE 9000 9001
+ENTRYPOINT ["/usr/bin/minio"]
+CMD ["server", "/data", "--console-address", ":9001"]

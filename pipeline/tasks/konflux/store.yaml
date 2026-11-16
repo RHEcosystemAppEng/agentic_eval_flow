@@ -101,12 +101,6 @@ spec:
         #!/usr/bin/env bash
         set -euo pipefail
 
-        EVAL_ENGINE="$(params.eval-engine)"
-        if [ "$EVAL_ENGINE" = "mcpchecker" ]; then
-          echo "Skipping DB store for eval-engine=$EVAL_ENGINE"
-          exit 0
-        fi
-
         if [ -z "${DATABASE_URL:-}" ]; then
           echo "DATABASE_URL not configured, skipping DB store"
           exit 0
