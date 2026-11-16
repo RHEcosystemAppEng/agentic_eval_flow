@@ -73,6 +73,11 @@ spec:
     default: claude-sonnet
   - name: mcp-catalog-configmap
     type: string
+  - name: retain-debug-workspace
+    type: string
+    default: 'true'
+    description: Keep Tekton Task Pods and workspace after archival for console debugging.
+      Disable only when ready to release evidence.
   results:
   - name: treatment-mean-reward
     value: $(tasks.evaluate-harbor.results.treatment-mean-reward)
@@ -223,3 +228,5 @@ spec:
       value: $(context.pipelineRun.name)
     - name: pipeline-run-uid
       value: $(context.pipelineRun.uid)
+    - name: retain-debug-workspace
+      value: $(params.retain-debug-workspace)

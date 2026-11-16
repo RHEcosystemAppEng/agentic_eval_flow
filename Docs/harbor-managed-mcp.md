@@ -85,3 +85,29 @@ concurrent-run acceptance is deferred because the current Service quota has one
 free slot. Passing source tests is not deployed acceptance; record the actual
 PipelineRun UID, rewards, DB read-back, downloaded checksums and resource absence
 in the acceptance evidence before claiming the integration works.
+
+## Temporary debug retention
+
+The Harbor profile now defaults `retain-debug-workspace` to `true`: the finalizer
+still uploads and verifies evidence, then retains Tekton Task Pods and the PVC so
+the OpenShift console can display logs. Its result is `cleanup-status=retained`.
+The shared recovery CronJob is temporarily suspended during this investigation;
+resume it only after inspecting and deliberately releasing retained runs. This
+also pauses orphan recovery for MCPChecker runs.
+
+Fresh mock and native child resources are still archived and removed between
+conditions to stay within the Service quota. Their logs remain in the attempt
+archives; this flag preserves the pipeline's Task logs and workspace. Set the
+flag to `false` to restore normal workspace cleanup. It cannot restore Pods
+already deleted by previous runs.
+
+Harbor CLI output is streamed, with credential values redacted, to the
+`evaluate-harbor` Task console and saved to `harbor-process.log`. Flushed
+milestones identify condition start, native process exit and archival/reward.
+The detailed agent conversation and tool events remain in native trajectory
+artifacts; they are not automatically printed by the Harbor CLI.
+
+In retained mode, the root archive's `cleanup.json` confirms deletion of managed
+mock resources only. It does not claim workspace or Task Pod deletion. Use the
+Tekton `cleanup-status=retained` result and actual cluster resource state when
+checking workspace retention.

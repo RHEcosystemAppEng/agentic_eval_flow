@@ -40,17 +40,32 @@ from scripts.generate_eval_config import build_variant_config, set_task_docker_i
 TEXT_SUFFIXES = {".json", ".jsonl", ".log", ".txt", ".md", ".yaml", ".yml"}
 
 
+def redact_text(text):
+    for key in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "MINIO_ACCESS_KEY", "MINIO_SECRET_KEY", "DATABASE_URL"):
+        secret = os.environ.get(key)
+        if secret and len(secret) > 4:
+            text = text.replace(secret, "[REDACTED]")
+    return text
+
+
 def redact_tree(root):
-    secrets = [
-        os.environ.get(key) for key in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "MINIO_SECRET_KEY", "DATABASE_URL")
-    ]
     for path in Path(root).rglob("*"):
         if path.is_file() and not path.is_symlink() and path.suffix in TEXT_SUFFIXES:
-            text = path.read_text()
-            for secret in secrets:
-                if secret and len(secret) > 4:
-                    text = text.replace(secret, "[REDACTED]")
-            path.write_text(text)
+            path.write_text(redact_text(path.read_text()))
+
+
+def run_logged(command, log_file):
+    """Preserve Harbor output and expose the same redacted lines in Task logs."""
+    with Path(log_file).open("w") as log:
+        with subprocess.Popen(
+            command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace"
+        ) as process:
+            for line in process.stdout:
+                safe = redact_text(line)
+                log.write(safe)
+                log.flush()
+                print(safe, end="", flush=True)
+            return process.wait()
 
 
 def prepare_task(source, dest, variant):
@@ -197,7 +212,12 @@ def run(workspace, uid, run_name, submission_dir, case, image, model="claude-son
     )
     cluster = Cluster(os.environ["POD_NAMESPACE"])
     attempts = []
+    print(
+        json.dumps({"event": "harbor_pair_started", "uid": uid, "case": case, "model": model, "order": order}),
+        flush=True,
+    )
     for index, variant in enumerate(order):
+        print(json.dumps({"event": "harbor_attempt_started", "variant": variant}), flush=True)
         if index == 0:
             target = json.loads((root / "target.json").read_text())
         else:
@@ -229,13 +249,11 @@ def run(workspace, uid, run_name, submission_dir, case, image, model="claude-son
         config_file.write_text(yaml.safe_dump(config))
         (out / variant).mkdir(parents=True)
         log_file = out / variant / "harbor-process.log"
-        with log_file.open("w") as log:
-            process = subprocess.run(
-                ["harbor", "run", "-c", str(config_file), "-y"], stdout=log, stderr=subprocess.STDOUT, check=False
-            )
+        exit_code = run_logged(["harbor", "run", "-c", str(config_file), "-y"], log_file)
+        print(json.dumps({"event": "harbor_process_exited", "variant": variant, "exit_code": exit_code}), flush=True)
         redact_tree(out / variant)
         trials = parse_variant_trials(out / variant)
-        if process.returncode or len(trials) != 1 or trials[0].reward is None:
+        if exit_code or len(trials) != 1 or trials[0].reward is None:
             raise RuntimeError(f"Harbor {variant} execution incomplete; inspect preserved logs")
         raw_trials = [
             json.loads(p.read_text())
@@ -251,11 +269,14 @@ def run(workspace, uid, run_name, submission_dir, case, image, model="claude-son
         if len(trajectories) != 1:
             raise RuntimeError("Harbor did not preserve exactly one native agent trajectory")
         archive_prefix = archive_attempt(cluster, workspace, uid, run_name, target, out / variant, variant)
+        print(
+            json.dumps({"event": "harbor_attempt_archived", "variant": variant, "reward": trials[0].reward}), flush=True
+        )
         attempts.append(
             {
                 "variant": variant,
                 "reward": trials[0].reward,
-                "process_exit_code": process.returncode,
+                "process_exit_code": exit_code,
                 "archive_prefix": archive_prefix,
                 "mock_name": target["name"],
             }

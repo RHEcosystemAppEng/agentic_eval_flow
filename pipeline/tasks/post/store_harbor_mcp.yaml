@@ -12,7 +12,7 @@ spec:
   - name: source
   steps:
   - name: persist-native-report
-    image: image-registry.openshift-image-registry.svc:5000/ab-eval-flow/harbor-mcp-ci@sha256:42d7b35ae0f9066008df8fea659302030ffc91608499afe1b6786b89ce9aa1e2
+    image: image-registry.openshift-image-registry.svc:5000/ab-eval-flow/harbor-mcp-ci@sha256:707c428694651d2b278d576fc60deb7aeae755827866a36f6fb4395489e2a266
     computeResources:
       requests:
         cpu: 100m

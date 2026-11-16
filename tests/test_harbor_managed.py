@@ -158,3 +158,41 @@ def test_catalog_is_immutable_complete_and_content_addressed(tmp_path):
     assert render(tmp_path) == original
     (tmp_path / "second.yaml").write_text(yaml.safe_dump({"image": IMAGE, "port": 9000}))
     assert render(tmp_path)["metadata"]["name"] != original["metadata"]["name"]
+
+
+def test_debug_retention_keeps_archival_but_gates_workspace_release():
+    import yaml
+
+    root = Path(__file__).resolve().parents[1]
+    pipeline = yaml.safe_load((root / "pipeline/pipelines/ci-pipeline-harbor-mcp.yaml").read_text())["spec"]
+    params = {p["name"]: p for p in pipeline["params"]}
+    assert params["retain-debug-workspace"]["default"] == "true"
+    finalizer = pipeline["finally"][0]
+    assert {p["name"]: p["value"] for p in finalizer["params"]}["retain-debug-workspace"] == (
+        "$(params.retain-debug-workspace)"
+    )
+    task = yaml.safe_load((root / "pipeline/tasks/post/cleanup_harbor_mcp.yaml").read_text())["spec"]
+    steps = {s["name"]: s for s in task["steps"]}
+    assert "when" not in steps["archive-evidence"]
+    assert steps["release-workspace"]["when"][0]["values"] == ["false"]
+    assert steps["report-retained"]["when"][0]["values"] == ["true"]
+    assert "retained" in str(steps["report-retained"]["args"])
+
+
+def test_console_stream_preserves_redacted_output_and_failure_status(tmp_path, monkeypatch, capsys):
+    import sys
+
+    from scripts.run_harbor_mcp import run_logged
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-only-stream-secret")
+    monkeypatch.setenv("MINIO_ACCESS_KEY", "test-only-storage-key")
+    log = tmp_path / "harbor-process.log"
+    command = [
+        sys.executable,
+        "-u",
+        "-c",
+        "import os, sys; print(os.environ['ANTHROPIC_API_KEY']); "
+        "print(os.environ['MINIO_ACCESS_KEY'], file=sys.stderr); sys.exit(7)",
+    ]
+    assert run_logged(command, log) == 7
+    assert log.read_text() == capsys.readouterr().out == "[REDACTED]\n[REDACTED]\n"
