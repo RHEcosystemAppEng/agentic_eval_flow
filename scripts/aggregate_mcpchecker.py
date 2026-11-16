@@ -81,6 +81,16 @@ def extract_task_results(raw_output: dict) -> list[MCPCheckerTaskResult]:
         else:
             status = "error"
 
+        # Native MCPChecker reports task verification separately from assertions.
+        # A correct answer must not hide a failed tool-use requirement.
+        raw_assertions = task_data.get("assertionResults")
+        assertion_results = raw_assertions if isinstance(raw_assertions, dict) else {}
+        assertions_failed = task_data.get("allAssertionsPassed") is False or any(
+            isinstance(result, dict) and result.get("passed") is False for result in assertion_results.values()
+        )
+        if status == "passed" and assertions_failed:
+            status = "failed"
+
         # Handle tool calls (v1alpha2 uses callHistory.ToolCalls, legacy uses toolCalls)
         call_history = task_data.get("callHistory") or {}
         if isinstance(call_history, dict):
@@ -112,9 +122,21 @@ def extract_task_results(raw_output: dict) -> list[MCPCheckerTaskResult]:
         llm_judge_data = (
             task_data.get("llmJudgeResults")
             or task_data.get("verifyResults")
-            or task_data.get("assertionResults")
+            or (raw_assertions if isinstance(raw_assertions, list) else [])
             or []
         )
+
+        # Native v1alpha2 judge verdicts live in the verify phase, not assertions.
+        if not llm_judge_data:
+            llm_judge_data = [
+                {
+                    "type": "llmJudge",
+                    "passed": step.get("success", False),
+                    "reason": step.get("message"),
+                }
+                for step in (task_data.get("verifyOutput") or {}).get("Steps", [])
+                if step.get("type") == "llmJudge"
+            ]
 
         llm_judge_results = []
         for judge in llm_judge_data or []:
@@ -136,6 +158,7 @@ def extract_task_results(raw_output: dict) -> list[MCPCheckerTaskResult]:
                 tool_calls=len(tool_calls_data),
                 tool_call_records=tool_call_records,
                 llm_judge_results=llm_judge_results,
+                assertion_results=assertion_results,
                 duration_ms=task_data.get("durationMs", task_data.get("duration")),
                 error_message=task_data.get("error", task_data.get("errorMessage")),
                 agent_response=task_data.get("agentResponse", task_data.get("response", task_data.get("taskOutput"))),

@@ -20,7 +20,9 @@ from abevalflow.report import Provenance
 class LLMJudgeResult(BaseModel):
     """Result from a single LLM judge verification check."""
 
-    check_type: Literal["contains", "exact"] = Field(description="Type of LLM judge check: 'contains' or 'exact'")
+    check_type: Literal["contains", "exact", "llmJudge"] = Field(
+        description="Type of LLM judge check, including native llmJudge phase results"
+    )
     expected: str = Field(description="Expected content or reference answer")
     passed: bool = Field(description="Whether the check passed")
     reason: str | None = Field(
@@ -52,6 +54,10 @@ class MCPCheckerTaskResult(BaseModel):
     llm_judge_results: list[LLMJudgeResult] = Field(
         default_factory=list,
         description="Results from LLM judge verification checks",
+    )
+    assertion_results: dict[str, dict] = Field(
+        default_factory=dict,
+        description="Named MCPChecker assertions, including their verdicts and failure reasons",
     )
     duration_ms: int | None = Field(
         default=None,
