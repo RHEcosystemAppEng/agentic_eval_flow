@@ -1,0 +1,9 @@
+FROM registry.access.redhat.com/ubi9/python-311:9.6
+USER root
+RUN pip install --no-cache-dir mcp==2.3.0
+COPY . /opt/fixture/
+WORKDIR /opt/fixture
+ENV PYTHONPATH=/opt/fixture PYTHONDONTWRITEBYTECODE=1
+USER 1001
+EXPOSE 8000
+CMD ["python","-u","entrypoint.py"]

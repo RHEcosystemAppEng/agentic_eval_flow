@@ -1,0 +1,55 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: start-harbor-mcp
+spec:
+  params:
+  - name: pipeline-run-uid
+    type: string
+  - name: pipeline-run-id
+    type: string
+  - name: submission-dir
+    type: string
+  - name: submission-name
+    type: string
+  workspaces:
+  - name: source
+  steps:
+  - name: provision
+    image: image-registry.openshift-image-registry.svc:5000/ab-eval-flow/harbor-mcp-ci@sha256:e8b281f9b197986e3c86ca7ebc467076eb528ed1699c1fed5b42a4af91325931
+    env:
+    - name: POD_NAME
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.name
+    - name: POD_NAMESPACE
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.namespace
+    - name: POD_UID
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.uid
+    computeResources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+    command:
+    - python
+    - -m
+    - abevalflow.mcp_ci
+    args:
+    - setup
+    - --workspace
+    - $(workspaces.source.path)
+    - --uid
+    - $(params.pipeline-run-uid)
+    - --run-name
+    - $(params.pipeline-run-id)
+    - --submission-dir
+    - $(params.submission-dir)
+    - --submission
+    - $(params.submission-name)

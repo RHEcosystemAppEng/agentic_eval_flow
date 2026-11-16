@@ -1,0 +1,40 @@
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: harbor-osac-create-
+spec:
+  pipelineRef:
+    name: abevalflow-pipeline-harbor-mcp
+  params:
+  - name: repo-url
+    value: https://github.com/RHEcosystemAppEng/skill-submissions.git
+  - name: revision
+    value: main
+  - name: submission-dir
+    value: osac-vm-create
+  - name: pipeline-repo-revision
+    value: main
+  - name: harbor-agent-image
+    value: image-registry.openshift-image-registry.svc:5000/ab-eval-flow/harbor-mcp-agent@sha256:df7314514385ad2875f8dfa05c24563647a2b6330803bac7ea206e33ecececc2
+  taskRunTemplate:
+    serviceAccountName: pipeline
+  taskRunSpecs:
+  - pipelineTaskName: start-mcp
+    serviceAccountName: harbor-mcp-lifecycle
+  - pipelineTaskName: evaluate-harbor
+    serviceAccountName: harbor-mcp-lifecycle
+  - pipelineTaskName: cleanup
+    serviceAccountName: harbor-mcp-lifecycle
+  timeouts:
+    pipeline: 4h
+    tasks: 3h
+    finally: 15m
+  workspaces:
+  - name: shared-workspace
+    volumeClaimTemplate:
+      spec:
+        accessModes:
+        - ReadWriteOnce
+        resources:
+          requests:
+            storage: 1Gi

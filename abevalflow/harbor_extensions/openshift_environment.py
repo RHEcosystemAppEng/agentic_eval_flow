@@ -47,6 +47,18 @@ _HARBOR_PATHS = (
 class OpenShiftEnvironment(KubernetesEnvironment):
     """KubernetesEnvironment with OpenShift trial-pod prep."""
 
+    def __init__(self, *args, mcp_run_uid=None, mcp_run_name=None, **kwargs):
+        if bool(mcp_run_uid) != bool(mcp_run_name):
+            raise ValueError("managed MCP needs both run UID and name")
+        if mcp_run_uid:
+            from abevalflow.harbor_extensions.mcp_connection import LABEL_VALUE
+
+            if not all(LABEL_VALUE.fullmatch(value) for value in (mcp_run_uid, mcp_run_name)):
+                raise ValueError("invalid managed MCP identity")
+        self._mcp_run_uid = mcp_run_uid
+        self._mcp_run_name = mcp_run_name
+        super().__init__(*args, **kwargs)
+
     def _pod_manifest(self, image: str, env: dict) -> dict:
         """Build pod manifest with emptyDir volumes for writable workdirs."""
         manifest = super()._pod_manifest(image, env)
@@ -67,6 +79,21 @@ class OpenShiftEnvironment(KubernetesEnvironment):
             ]
         )
 
+        if getattr(self, "_mcp_run_uid", None):
+            # The orchestrator keeps Kubernetes access; its agent child does not.
+            if container.get("envFrom") or any("secret" in volume for volume in pod_spec.get("volumes", [])):
+                raise ValueError("managed Harbor trials must not inherit cluster Secret mounts/envFrom")
+            manifest.setdefault("metadata", {}).setdefault("labels", {}).update(
+                {
+                    "tekton.dev/pipelineRun": self._mcp_run_name,
+                    "tekton.dev/pipelineTask": "evaluate",
+                    "abevalflow.io/mcp-run": self._mcp_run_uid,
+                    "abevalflow.io/mcp-role": "harbor-client",
+                }
+            )
+            pod_spec["automountServiceAccountToken"] = False
+            pod_spec["serviceAccountName"] = "mcpchecker-evaluator"
+
         mount_paths = [m.get("mountPath") for m in container.get("volumeMounts", [])]
         logger.info("OpenShiftEnvironment injected mounts: %s", mount_paths)
 
@@ -75,6 +102,10 @@ class OpenShiftEnvironment(KubernetesEnvironment):
     async def start(self, force_build: bool) -> None:
         """Start the pod, then create Harbor paths needed for verifier redirect."""
         await super().start(force_build)
+        if getattr(self, "_mcp_run_uid", None):
+            # Pinned AEH environments do not auto-upload task environment files.
+            # Native agent setup happens later, after these docs/skills arrive.
+            await self.upload_dir(self.environment_dir, self.task_env_config.workdir or "/workspace")
         dirs = " ".join(shlex.quote(p) for p in _HARBOR_PATHS)
         # mkdir only — image paths are already group-writable; chmod can fail
         # with EPERM under OpenShift SCC-assigned UIDs (including on /solution).

@@ -1,0 +1,102 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: evaluate-harbor-mcp
+spec:
+  params:
+  - name: pipeline-run-uid
+    type: string
+  - name: pipeline-run-id
+    type: string
+  - name: submission-dir
+    type: string
+  - name: submission-name
+    type: string
+  - name: harbor-agent-image
+    type: string
+  - name: harbor-case
+    type: string
+  - name: harbor-model
+    type: string
+  workspaces:
+  - name: source
+  results:
+  - name: treatment-mean-reward
+  - name: control-mean-reward
+  - name: recommendation
+  - name: results-dir
+  steps:
+  - name: native-harbor-pair
+    image: image-registry.openshift-image-registry.svc:5000/ab-eval-flow/harbor-mcp-ci@sha256:e8b281f9b197986e3c86ca7ebc467076eb528ed1699c1fed5b42a4af91325931
+    computeResources: &id001
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: '1'
+        memory: 1Gi
+    env:
+    - name: ANTHROPIC_API_KEY
+      valueFrom:
+        secretKeyRef:
+          name: llm-credentials
+          key: api-key
+    - name: ANTHROPIC_BASE_URL
+      value: http://litellm.ab-eval-flow.svc:4000
+    - name: POD_NAMESPACE
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.namespace
+    - name: MINIO_ENDPOINT
+      valueFrom:
+        secretKeyRef:
+          name: minio-credentials
+          key: endpoint-url
+    - name: MINIO_ACCESS_KEY
+      valueFrom:
+        secretKeyRef:
+          name: minio-credentials
+          key: root-user
+    - name: MINIO_SECRET_KEY
+      valueFrom:
+        secretKeyRef:
+          name: minio-credentials
+          key: root-password
+    command:
+    - python
+    - -m
+    - scripts.run_harbor_mcp
+    args:
+    - --workspace
+    - $(workspaces.source.path)
+    - --uid
+    - $(params.pipeline-run-uid)
+    - --run-name
+    - $(params.pipeline-run-id)
+    - --submission-dir
+    - $(params.submission-dir)
+    - --case
+    - $(params.harbor-case)
+    - --image
+    - $(params.harbor-agent-image)
+    - --model
+    - $(params.harbor-model)
+  - name: publish-results
+    image: image-registry.openshift-image-registry.svc:5000/ab-eval-flow/harbor-mcp-ci@sha256:e8b281f9b197986e3c86ca7ebc467076eb528ed1699c1fed5b42a4af91325931
+    computeResources: *id001
+    command:
+    - python
+    - -m
+    - abevalflow.mcp_ci
+    args:
+    - bridge
+    - --workspace
+    - $(workspaces.source.path)
+    - --uid
+    - $(params.pipeline-run-uid)
+    - --run-name
+    - $(params.pipeline-run-id)
+    - --engine
+    - harbor
+    - --submission
+    - $(params.submission-name)

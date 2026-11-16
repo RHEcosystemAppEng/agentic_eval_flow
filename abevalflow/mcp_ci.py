@@ -344,7 +344,10 @@ def setup(cluster, workspace, uid, attempt, run_name, mock, timeout=120):
             tools = asyncio.run(asyncio.wait_for(probe(target["endpoint"]), timeout=8))
             if not tools:
                 raise ValueError("mock exposed no MCP tools")
-            atomic_json(root / "readiness.json", {"ready": True, "tools": tools, "uid": uid})
+            atomic_json(
+                root / "readiness.json",
+                {"ready": True, "tools": tools, "uid": uid, "name": name, "endpoint": target["endpoint"]},
+            )
             return target
         except Exception as exc:
             error = type(exc).__name__
@@ -764,6 +767,8 @@ def collect_logs(cluster, pods, root):
             root / "pod-status" / f"{pod.metadata.name}.json",
             {
                 "name": pod.metadata.name,
+                "pod_uid": getattr(pod.metadata, "uid", None),
+                "labels": getattr(pod.metadata, "labels", None) or {},
                 "taskrun_uid": next(
                     (
                         ref.uid
@@ -820,6 +825,18 @@ def finalize(cluster, workspace, uid, run_name, submission="", archive_factory=A
             raise RuntimeError("completed evaluation lacks preserved Pod identity/status evidence")
         if any(not path.is_file() for path in required):
             raise RuntimeError("completed evaluation is missing required raw evidence")
+    if complete and header.get("engine") == "harbor":
+        if not submission:
+            raise ValueError("completed Harbor evaluation lacks submission context")
+        required = [
+            Path(workspace) / "reports" / submission / "report.json",
+            Path(workspace) / "eval-results" / submission / "harbor-pairs.json",
+        ]
+        if any(not path.is_file() for path in required):
+            raise RuntimeError("completed Harbor evaluation lacks raw pair evidence")
+        from scripts.run_harbor_mcp import verify_pair_archives
+
+        verify_pair_archives(workspace, uid, submission)
     atomic_json(
         root / "lifecycle.json",
         {
@@ -835,7 +852,11 @@ def finalize(cluster, workspace, uid, run_name, submission="", archive_factory=A
     for dirname in selected:
         if dirname.is_dir():
             for path in sorted(dirname.rglob("*")):
-                if path.is_file() and path.suffix in {".json", ".log"} and path.name != "mcp-config.yaml":
+                if (
+                    path.is_file()
+                    and path.suffix in {".json", ".jsonl", ".log", ".txt", ".md"}
+                    and path.name != "mcp-config.yaml"
+                ):
                     archive.put(f"workspace/{path.relative_to(workspace)}", path.read_bytes())
     # If normal store was skipped after evaluation, persist any valid reports idempotently.
     reports = Path(workspace) / "reports"
@@ -844,7 +865,8 @@ def finalize(cluster, workspace, uid, run_name, submission="", archive_factory=A
     if os.environ.get("DATABASE_URL") and reports.is_dir():
         from scripts.store_results import store
 
-        for report in [reports / submission / "mcpchecker-report.json"] if submission else []:
+        report_name = "report.json" if header.get("engine") == "harbor" else "mcpchecker-report.json"
+        for report in [reports / submission / report_name] if submission else []:
             if not report.exists():
                 continue
             if not store(report.parent, run_id=uid):

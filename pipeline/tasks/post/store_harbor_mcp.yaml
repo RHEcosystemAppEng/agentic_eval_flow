@@ -1,0 +1,37 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: store-harbor-mcp
+spec:
+  params:
+  - name: submission-name
+    type: string
+  - name: pipeline-run-uid
+    type: string
+  workspaces:
+  - name: source
+  steps:
+  - name: persist-native-report
+    image: image-registry.openshift-image-registry.svc:5000/ab-eval-flow/harbor-mcp-ci@sha256:e8b281f9b197986e3c86ca7ebc467076eb528ed1699c1fed5b42a4af91325931
+    computeResources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: '1'
+        memory: 1Gi
+    env:
+    - name: DATABASE_URL
+      valueFrom:
+        secretKeyRef:
+          name: ab-eval-db-credentials
+          key: database-url
+    command:
+    - python
+    - -m
+    - scripts.store_results
+    args:
+    - --report-dir
+    - $(workspaces.source.path)/reports/$(params.submission-name)
+    - --run-id
+    - $(params.pipeline-run-uid)

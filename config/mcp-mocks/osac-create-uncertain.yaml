@@ -1,0 +1,6 @@
+image: image-registry.openshift-image-registry.svc:5000/ab-eval-flow/osac-tenant-vm-mock@sha256:b5d2414d319f8c57d2b7dd08f33f682e2bcda3f1b25fb0b3b1bede9bb3acbac4
+port: 8000
+path: /mcp
+env:
+  OSAC_FIXTURE: CREATE-UNCERTAIN
+deadline_seconds: 14400

@@ -1,0 +1,8 @@
+{
+  "source": "osac-ai-skills/evals/tenant_vm/mock_server",
+  "sha256": {
+    "server.py": "e9091e0b7c1fe77eb42626256a2fb378b25197955b54bdf201c8078869fbc5b9",
+    "fixtures.py": "71730fc40ada1ab7c12a22580fa0c0cb663fd5766ebf8720910609a169ff12df"
+  },
+  "note": "Unchanged source snapshot; container wrapper configures internal-network binding."
+}
