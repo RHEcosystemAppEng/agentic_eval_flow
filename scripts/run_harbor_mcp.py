@@ -18,8 +18,10 @@ from pathlib import Path
 
 import yaml
 
+from abevalflow.harbor_extensions.enmaas_egress import allow_enmaas
 from abevalflow.harbor_extensions.harbor_evidence import validate_attempt, validate_judge
 from abevalflow.harbor_extensions.mcp_connection import configure_job
+from abevalflow.harbor_extensions.native_agent import configure_native_agent
 from abevalflow.mcp_ci import (
     LABEL,
     Archive,
@@ -41,7 +43,7 @@ TEXT_SUFFIXES = {".json", ".jsonl", ".log", ".txt", ".md", ".yaml", ".yml"}
 
 
 def redact_text(text, *, include_access_key=False):
-    keys = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "MINIO_SECRET_KEY", "DATABASE_URL"]
+    keys = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "ENMAAS_KEY", "JUDGE_API_KEY", "MINIO_SECRET_KEY", "DATABASE_URL"]
     # A storage username can overlap structural evidence keys (e.g. label domains).
     # Mask it only in process/console text, never across identity proof documents.
     if include_access_key:
@@ -186,7 +188,18 @@ def verify_pair_archives(workspace, uid, submission):
         pod_uids.update(current)
 
 
-def run(workspace, uid, run_name, submission_dir, case, image, model="claude-sonnet"):
+def run(
+    workspace,
+    uid,
+    run_name,
+    submission_dir,
+    case,
+    image,
+    model="claude-sonnet",
+    agent="claude-code",
+    judge_model=None,
+):
+    judge_model = judge_model or ("gpt-6.1-terra" if agent == "codex" else "claude-sonnet")
     workspace = Path(workspace)
     source = submission_path(workspace, submission_dir)
     meta = SubmissionMetadata(**yaml.safe_load((source / "metadata.yaml").read_text()))
@@ -207,6 +220,8 @@ def run(workspace, uid, run_name, submission_dir, case, image, model="claude-son
             "uid": uid,
             "case": case,
             "model": model,
+            "agent": agent,
+            "judge_model": judge_model,
             "order": order,
             "files": {
                 str(p.relative_to(native)): hashlib.sha256(p.read_bytes()).hexdigest()
@@ -236,20 +251,10 @@ def run(workspace, uid, run_name, submission_dir, case, image, model="claude-son
         set_task_docker_image(task, image)
         # Keep the completed child until trusted archival captures terminal logs/status.
         config["environment"]["delete"] = False
-        config["agents"][0]["env"] = {
-            "ANTHROPIC_API_KEY": "${ANTHROPIC_API_KEY}",
-            "ANTHROPIC_BASE_URL": os.environ["ANTHROPIC_BASE_URL"],
-            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
-            "DISABLE_AUTOUPDATER": "1",
-        }
+        configure_native_agent(config, task, agent=agent, model=model, judge_model=judge_model)
         configure_job(config, task, root / "target.json", uid, run_name)
-        config["verifier"] = {
-            "env": {
-                "ANTHROPIC_API_KEY": "${ANTHROPIC_API_KEY}",
-                "JUDGE_MODEL": model,
-                "JUDGE_BASE_URL": os.environ["ANTHROPIC_BASE_URL"],
-            }
-        }
+        if agent == "codex":
+            allow_enmaas(cluster, uid, variant, root / "attempts" / variant)
         config_file = root / (variant + "-job.yaml")
         config_file.write_text(yaml.safe_dump(config))
         (out / variant).mkdir(parents=True)
@@ -340,8 +345,20 @@ def main():
     for arg in ["workspace", "uid", "run-name", "submission-dir", "case", "image"]:
         parser.add_argument("--" + arg, required=True)
     parser.add_argument("--model", default="claude-sonnet")
+    parser.add_argument("--agent", choices=["claude-code", "codex"], default="claude-code")
+    parser.add_argument("--judge-model", default="")
     args = parser.parse_args()
-    run(args.workspace, args.uid, args.run_name, args.submission_dir, args.case, args.image, args.model)
+    run(
+        args.workspace,
+        args.uid,
+        args.run_name,
+        args.submission_dir,
+        args.case,
+        args.image,
+        args.model,
+        args.agent,
+        args.judge_model,
+    )
 
 
 if __name__ == "__main__":

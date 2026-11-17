@@ -59,6 +59,11 @@ class OpenShiftEnvironment(KubernetesEnvironment):
         self._mcp_run_name = mcp_run_name
         super().__init__(*args, **kwargs)
 
+    @classmethod
+    def preflight(cls, kwargs=None) -> None:
+        """Adapt Harbor 0.26's kwargs hook to the pinned AEH no-argument hook."""
+        super().preflight()
+
     def _pod_manifest(self, image: str, env: dict) -> dict:
         """Build pod manifest with emptyDir volumes for writable workdirs."""
         manifest = super()._pod_manifest(image, env)
@@ -80,6 +85,10 @@ class OpenShiftEnvironment(KubernetesEnvironment):
         )
 
         if getattr(self, "_mcp_run_uid", None):
+            # Codex keeps its private home below /installed-agent. An emptyDir
+            # stays writable for SCC-assigned UIDs without a writable rootfs.
+            container["volumeMounts"].append({"name": "installed-agent", "mountPath": "/installed-agent"})
+            pod_spec["volumes"].append({"name": "installed-agent", "emptyDir": {}})
             # The orchestrator keeps Kubernetes access; its agent child does not.
             if container.get("envFrom") or any("secret" in volume for volume in pod_spec.get("volumes", [])):
                 raise ValueError("managed Harbor trials must not inherit cluster Secret mounts/envFrom")

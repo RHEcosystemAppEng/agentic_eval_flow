@@ -488,3 +488,91 @@ def test_v2_explicit_codex_trace_uses_actual_events(failed_turn, trailing_empty)
             validate_attempt(objects, "uid", "control", "mock")
     else:
         validate_attempt(objects, "uid", "control", "mock")
+
+
+def responses_judge_evidence(trace_format="claude-code"):
+    """Use native Responses transport without altering the grading evidence."""
+    objects = numeric_evidence()
+    chat = json.loads(objects["root/llm-judge-input.json"])
+    supplied = json.loads(chat["messages"][1]["content"])
+    if trace_format == "codex":
+        final = {"type": "item.completed", "item": {"id": "last", "type": "agent_message", "text": "Actual answer"}}
+        raw = json.dumps(final) + "\n" + json.dumps({"type": "turn.completed"}) + "\n"
+        supplied.update(native_trace_format="codex", final_result=final, full_native_trace=raw)
+        objects["root/agent/codex.txt"] = raw.encode()
+        del objects["root/agent/claude-code.txt"]
+    messages = [chat["messages"][0], {"role": "user", "content": json.dumps(supplied)}]
+    payload = {
+        "model": "gpt-6.1-terra",
+        "reasoning": {"effort": "low"},
+        "max_output_tokens": 4096,
+        "input": messages,
+    }
+    objects["root/llm-judge-input.json"] = json.dumps(payload).encode()
+    return objects
+
+
+@pytest.mark.parametrize("trace_format", ["claude-code", "codex"])
+def test_v2_responses_judge_preserves_exact_trace_and_scoring(trace_format):
+    objects = responses_judge_evidence(trace_format)
+    assert validate_attempt(objects, "uid", "control", "mock")["client"] == "client"
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("model", "gpt-6.1-sol"),
+        ("model", " "),
+        ("reasoning", {"effort": "high"}),
+        ("reasoning", {"effort": "low", "extra": True}),
+        ("reasoning", "low"),
+        ("max_output_tokens", 4096.0),
+        ("max_output_tokens", "4096"),
+        ("max_output_tokens", True),
+        ("max_output_tokens", 4095),
+        ("input", []),
+        ("input", "not structured messages"),
+        ("temperature", 0),
+        ("tools", []),
+        ("messages", []),
+    ],
+)
+def test_v2_responses_judge_rejects_unapproved_request_shapes(field, value):
+    objects = responses_judge_evidence()
+    change_evidence(objects, "llm-judge-input.json", [field], value)
+    with pytest.raises(RuntimeError):
+        validate_attempt(objects, "uid", "control", "mock")
+
+
+@pytest.mark.parametrize("problem", ["partial-trace", "wrong-result", "hidden-assessment", "missing-context"])
+def test_v2_responses_judge_cannot_bypass_evidence_checks(problem):
+    objects = responses_judge_evidence("codex")
+    payload = json.loads(objects["root/llm-judge-input.json"])
+    supplied = json.loads(payload["input"][1]["content"])
+    if problem == "partial-trace":
+        supplied["full_native_trace"] = json.dumps(supplied["final_result"]) + "\n"
+    elif problem == "wrong-result":
+        supplied["final_result"]["item"]["text"] = "Invented answer"
+    elif problem == "hidden-assessment":
+        supplied["expected_score"] = 1.0
+    else:
+        supplied["task_context"].pop("task_request")
+    payload["input"][1]["content"] = json.dumps(supplied)
+    objects["root/llm-judge-input.json"] = json.dumps(payload).encode()
+    with pytest.raises(RuntimeError):
+        validate_attempt(objects, "uid", "control", "mock")
+
+
+@pytest.mark.parametrize("temperature", [True, "0", float("nan"), float("inf"), 0.1])
+def test_v2_legacy_chat_temperature_remains_strict(temperature):
+    objects = numeric_evidence()
+    change_evidence(objects, "llm-judge-input.json", ["temperature"], temperature)
+    with pytest.raises(RuntimeError):
+        validate_attempt(objects, "uid", "control", "mock")
+
+
+def test_v2_legacy_chat_does_not_accept_responses_fields():
+    objects = numeric_evidence()
+    change_evidence(objects, "llm-judge-input.json", ["reasoning"], {"effort": "low"})
+    with pytest.raises(RuntimeError):
+        validate_attempt(objects, "uid", "control", "mock")

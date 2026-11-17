@@ -89,3 +89,29 @@ class TestDownloadDir:
         env.exec = AsyncMock(return_value=MagicMock(return_code=1, stdout="", stderr="boom"))
         with pytest.raises(RuntimeError, match="rc=1"):
             await OpenShiftEnvironment.download_dir(env, "/logs/verifier", tmp_path / "out")
+
+
+def test_preflight_accepts_harbor_026_kwargs_and_delegates_pinned_aeh(monkeypatch):
+    called = []
+    monkeypatch.setattr(
+        _FakeKubernetesEnvironment, "preflight", classmethod(lambda cls: called.append(cls)), raising=False
+    )
+    OpenShiftEnvironment.preflight(kwargs={"mcp_run_uid": "run-id"})
+    assert called == [OpenShiftEnvironment]
+
+
+def test_managed_native_agent_home_is_writable_empty_dir():
+    env = OpenShiftEnvironment.__new__(OpenShiftEnvironment)
+    env._mcp_run_uid = "uid"
+    env._mcp_run_name = "run"
+    manifest = OpenShiftEnvironment._pod_manifest(env, "image", {})
+    container = manifest["spec"]["containers"][0]
+    assert {"name": "installed-agent", "mountPath": "/installed-agent"} in container["volumeMounts"]
+    assert {"name": "installed-agent", "emptyDir": {}} in manifest["spec"]["volumes"]
+    assert manifest["spec"]["automountServiceAccountToken"] is False
+
+
+def test_generic_native_agent_home_mount_unchanged():
+    env = OpenShiftEnvironment.__new__(OpenShiftEnvironment)
+    manifest = OpenShiftEnvironment._pod_manifest(env, "image", {})
+    assert not any(v["name"] == "installed-agent" for v in manifest["spec"]["volumes"])

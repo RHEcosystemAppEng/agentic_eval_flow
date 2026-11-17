@@ -131,13 +131,26 @@ def validate_assessments(behavior, judge, breakdown=None):
 
 def validate_judge_input(payload, read_trace):
     """Check the saved full-trace request structurally, without grading its text."""
-    if not isinstance(payload, dict) or set(payload) != {"model", "temperature", "messages"}:
+    if not isinstance(payload, dict):
+        raise RuntimeError("invalid full-trace judge request")
+    if set(payload) == {"model", "temperature", "messages"}:
+        # Preserve the exact historical Chat Completions request contract.
+        if type(payload["temperature"]) not in (int, float) or payload["temperature"] != 0:
+            raise RuntimeError("unexpected semantic judge temperature")
+        messages = payload["messages"]
+    elif set(payload) == {"model", "reasoning", "max_output_tokens", "input"}:
+        # Native ENMAAS judging uses Responses, without tools or agent access.
+        if payload["model"] != "gpt-6.1-terra":
+            raise RuntimeError("unexpected native semantic judge model")
+        if payload["reasoning"] != {"effort": "low"}:
+            raise RuntimeError("unexpected native semantic judge reasoning")
+        if type(payload["max_output_tokens"]) is not int or payload["max_output_tokens"] != 4096:
+            raise RuntimeError("unexpected native semantic judge output limit")
+        messages = payload["input"]
+    else:
         raise RuntimeError("invalid full-trace judge request")
     if not isinstance(payload["model"], str) or not payload["model"].strip():
         raise RuntimeError("missing semantic judge model route")
-    if type(payload["temperature"]) not in (int, float) or payload["temperature"] != 0:
-        raise RuntimeError("unexpected semantic judge temperature")
-    messages = payload["messages"]
     if not isinstance(messages, list) or len(messages) != 2:
         raise RuntimeError("missing semantic judge messages")
     for message, role in zip(messages, ("system", "user"), strict=True):

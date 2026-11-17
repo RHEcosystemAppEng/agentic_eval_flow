@@ -20,6 +20,12 @@ spec:
     type: string
   - name: mcp-catalog-configmap
     type: string
+  - name: harbor-agent
+    type: string
+    default: claude-code
+  - name: harbor-judge-model
+    type: string
+    default: ''
   workspaces:
   - name: source
   results:
@@ -64,6 +70,12 @@ spec:
         secretKeyRef:
           name: minio-credentials
           key: root-password
+    - name: ENMAAS_KEY
+      valueFrom:
+        secretKeyRef:
+          name: enmaas-credentials
+          key: api-key
+          optional: true
     command:
     - python
     - -m
@@ -83,6 +95,10 @@ spec:
     - $(params.harbor-agent-image)
     - --model
     - $(params.harbor-model)
+    - --agent
+    - $(params.harbor-agent)
+    - --judge-model
+    - $(params.harbor-judge-model)
     volumeMounts:
     - name: trusted-mcp-catalog
       mountPath: /opt/ci/config/mcp-mocks

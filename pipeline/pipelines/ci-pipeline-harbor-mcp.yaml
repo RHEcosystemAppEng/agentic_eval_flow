@@ -78,6 +78,12 @@ spec:
     default: 'true'
     description: Keep Tekton Task Pods and workspace after archival for console debugging.
       Disable only when ready to release evidence.
+  - name: harbor-agent
+    type: string
+    default: claude-code
+  - name: harbor-judge-model
+    type: string
+    default: ''
   results:
   - name: treatment-mean-reward
     value: $(tasks.evaluate-harbor.results.treatment-mean-reward)
@@ -203,6 +209,10 @@ spec:
       value: $(params.harbor-model)
     - name: mcp-catalog-configmap
       value: $(params.mcp-catalog-configmap)
+    - name: harbor-agent
+      value: $(params.harbor-agent)
+    - name: harbor-judge-model
+      value: $(params.harbor-judge-model)
     workspaces:
     - name: source
       workspace: shared-workspace
