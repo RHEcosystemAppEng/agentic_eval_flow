@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from abevalflow.harbor_extensions.harbor_evidence import validate_attempt
+from abevalflow.harbor_extensions.harbor_evidence import validate_attempt, validate_judge
 from abevalflow.harbor_extensions.mcp_connection import configure_job
 from scripts.run_harbor_mcp import prepare_task
 
@@ -119,12 +119,23 @@ def test_configure_native_job_preserves_task_and_rejects_stale(tmp_path):
     task = tmp_path / "task"
     task.mkdir()
     (task / "task.toml").write_text('version="1.0"\n[agent]\ntimeout_sec=600\n')
+    (task / "instruction.md").write_text("Use the named skill.\nActual task request.")
+    (task / "environment").mkdir()
+    (task / "environment" / "CLAUDE.md").write_text("The shared context, verbatim.")
     target = tmp_path / "target.json"
     target.write_text(json.dumps({"uid": "uid", "name": "mock", "endpoint": "http://mock.ns.svc:8000/mcp"}))
     config = {"tasks": [{"path": str(task)}]}
     result = configure_job(deepcopy(config), task, target, "uid", "run")
     assert result["environment"]["kwargs"]["mcp_run_uid"] == "uid"
     assert "timeout_sec=600" in (task / "task.toml").read_text()
+    assert json.loads((task / "tests" / "judge-context.json").read_text()) == {
+        "task_request": "Use the named skill.\nActual task request.",
+        "shared_environment_context": "The shared context, verbatim.",
+    }
+    assert not (task / "environment" / "judge-context.json").exists()
+    (task / "environment" / "CLAUDE.md").unlink()
+    configure_job(deepcopy(config), task, target, "uid", "run")
+    assert json.loads((task / "tests" / "judge-context.json").read_text())["shared_environment_context"] == ""
     with pytest.raises(ValueError, match="stale"):
         configure_job(config, task, target, "other", "run")
     with pytest.raises(ValueError, match="one case"):
@@ -216,3 +227,264 @@ def test_evidence_redaction_preserves_structural_storage_username_overlap(tmp_pa
     saved = json.loads(snapshot.read_text())
     assert saved["labels"] == {"abevalflow.io/mcp-run": "run-uid"}
     assert saved["error"] == "[REDACTED]"
+
+
+def numeric_evidence():
+    objects = evidence()
+    behavior = json.loads(objects["root/behavior.json"])
+    behavior.update(
+        scoring_version=2,
+        task_completion={"checks": {"created": True, "read": False}, "score": 0.5, "passed": False},
+        protocol_compliance={"checks": {"connection": True}, "score": 1.0, "passed": True},
+        score=0.75,
+        passed=False,
+        failures=[{"check": "read"}],
+    )
+    judge = {
+        "scoring_version": 2,
+        "score": 0.7,
+        "passed": False,
+        "reason": "Partially supported reasoning",
+        "findings": [{"issue": "unsupported claim", "evidence": "observed mismatch", "deduction": 0.3}],
+    }
+    breakdown = {
+        "scoring_version": 2,
+        "weights": dict.fromkeys(("task_completion", "protocol_compliance", "llm_judgment"), 1 / 3),
+        "task_completion": behavior["task_completion"],
+        "protocol_compliance": behavior["protocol_compliance"],
+        "llm_judgment": judge,
+        "failures": behavior["failures"],
+        "overall_score": (0.5 + 1 + 0.7) / 3,
+        "overall_passed": False,
+    }
+    for name, value in (("behavior", behavior), ("answer-judge", judge), ("evaluation-breakdown", breakdown)):
+        objects[f"root/{name}.json"] = json.dumps(value).encode()
+    objects["root/trial/result.json"] = json.dumps(
+        {"verifier_result": {"rewards": {"reward": breakdown["overall_score"]}}, "exception_info": None}
+    ).encode()
+    final = {"type": "result", "result": "Actual final answer", "is_error": False}
+    raw = json.dumps({"type": "system", "subtype": "init"}) + "\n" + json.dumps(final) + "\n"
+    objects["root/agent/claude-code.txt"] = raw.encode()
+    supplied = {
+        "task_context": {"task_request": "Actual task", "shared_environment_context": "Shared instructions"},
+        "full_native_trace": raw,
+        "final_result": final,
+        "native_trace_format": "claude-code",
+    }
+    objects["root/llm-judge-input.json"] = json.dumps(
+        {
+            "model": "claude-sonnet",
+            "temperature": 0,
+            "messages": [
+                {"role": "system", "content": "Semantic rubric"},
+                {"role": "user", "content": json.dumps(supplied)},
+            ],
+        }
+    ).encode()
+    return objects
+
+
+def change_evidence(objects, path, keys, value):
+    item = json.loads(objects["root/" + path])
+    cursor = item
+    for key in keys[:-1]:
+        cursor = cursor[key]
+    cursor[keys[-1]] = value
+    objects["root/" + path] = json.dumps(item).encode()
+
+
+def test_numeric_evidence_retains_partial_credit_and_legacy_binary_compatibility():
+    assert validate_attempt(numeric_evidence(), "uid", "control", "mock")["client"] == "client"
+    objects = evidence()
+    change_evidence(objects, "behavior.json", ["passed"], False)
+    change_evidence(objects, "trial/result.json", ["verifier_result", "rewards", "reward"], 0)
+    assert validate_attempt(objects, "uid", "control", "mock")["client"] == "client"
+
+
+@pytest.mark.parametrize("value", [True, "0.7", None, float("nan"), float("inf"), -0.1, 1.1, 10**400])
+def test_numeric_judge_rejects_invalid_scores(value):
+    judge = json.loads(numeric_evidence()["root/answer-judge.json"])
+    judge["score"] = value
+    with pytest.raises(RuntimeError):
+        validate_judge(judge)
+
+
+@pytest.mark.parametrize(
+    "path,keys,value",
+    [
+        ("behavior.json", ["task_completion", "score"], 0.9),
+        ("behavior.json", ["task_completion", "checks"], {}),
+        ("behavior.json", ["task_completion", "checks", "created"], 1),
+        ("behavior.json", ["task_completion", "passed"], True),
+        ("behavior.json", ["score"], 0.9),
+        ("behavior.json", ["passed"], True),
+        ("answer-judge.json", ["passed"], True),
+        ("answer-judge.json", ["reason"], None),
+        ("answer-judge.json", ["reason"], "  "),
+        ("answer-judge.json", ["findings"], [{"issue": "", "evidence": "y", "deduction": 0.3}]),
+        ("answer-judge.json", ["findings"], [{"issue": "x", "evidence": "  ", "deduction": 0.3}]),
+        ("answer-judge.json", ["findings"], []),
+        ("answer-judge.json", ["findings"], [{"issue": "x", "evidence": "y", "deduction": 0}]),
+        ("evaluation-breakdown.json", ["overall_score"], 0.8),
+        ("evaluation-breakdown.json", ["overall_passed"], True),
+        ("evaluation-breakdown.json", ["weights", "task_completion"], 0.5),
+        ("evaluation-breakdown.json", ["llm_judgment", "score"], 0.8),
+        ("evaluation-breakdown.json", ["llm_judgment", "scoring_version"], 2.0),
+        ("evaluation-breakdown.json", ["task_completion", "checks", "read"], True),
+        ("evaluation-breakdown.json", ["failures"], []),
+        ("trial/result.json", ["verifier_result", "rewards", "reward"], 1.0),
+    ],
+)
+def test_numeric_evidence_rejects_inconsistent_assessments(path, keys, value):
+    objects = numeric_evidence()
+    change_evidence(objects, path, keys, value)
+    with pytest.raises(RuntimeError):
+        validate_attempt(objects, "uid", "control", "mock")
+
+
+@pytest.mark.parametrize("version", [1, 3, True, "2", None])
+def test_unknown_explicit_scoring_versions_fail(version):
+    objects = numeric_evidence()
+    change_evidence(objects, "behavior.json", ["scoring_version"], version)
+    with pytest.raises(RuntimeError, match="version"):
+        validate_attempt(objects, "uid", "control", "mock")
+
+
+@pytest.mark.parametrize("remove_all", [False, True])
+def test_scored_fields_cannot_downgrade_to_legacy(remove_all):
+    objects = numeric_evidence()
+    for name in (
+        ["behavior.json", "answer-judge.json", "evaluation-breakdown.json"] if remove_all else ["behavior.json"]
+    ):
+        item = json.loads(objects["root/" + name])
+        item.pop("scoring_version")
+        objects["root/" + name] = json.dumps(item).encode()
+    with pytest.raises(RuntimeError):
+        validate_attempt(objects, "uid", "control", "mock")
+
+
+def test_numeric_evidence_requires_breakdown_and_semantic_findings():
+    objects = numeric_evidence()
+    del objects["root/evaluation-breakdown.json"]
+    with pytest.raises(RuntimeError):
+        validate_attempt(objects, "uid", "control", "mock")
+    judge = {"scoring_version": 2, "score": 1, "passed": True, "reason": "All supported", "findings": []}
+    assert validate_judge(judge) == 1
+    judge.update(score=0.8, passed=False, findings=[{"issue": "x", "evidence": "y", "deduction": 0.2}])
+    assert validate_judge(judge) == 0.8
+    judge["findings"][0]["deduction"] = 0.1
+    with pytest.raises(RuntimeError, match="deductions"):
+        validate_judge(judge)
+    judge["findings"] = [
+        {"issue": "x", "evidence": "y", "deduction": 0.6},
+        {"issue": "z", "evidence": "w", "deduction": 0.5},
+    ]
+    with pytest.raises(RuntimeError, match="deductions"):
+        validate_judge(judge)
+
+
+@pytest.mark.parametrize("perfect", [False, True])
+def test_versioned_minimum_and_maximum_score_are_valid(perfect):
+    objects = numeric_evidence()
+    behavior = json.loads(objects["root/behavior.json"])
+    for key in ("task_completion", "protocol_compliance"):
+        category = behavior[key]
+        category["checks"] = dict.fromkeys(category["checks"], perfect)
+        category.update(score=float(perfect), passed=perfect)
+    behavior.update(score=float(perfect), passed=perfect, failures=[] if perfect else [{"check": "all"}])
+    judge = {
+        "scoring_version": 2,
+        "score": float(perfect),
+        "passed": perfect,
+        "reason": "Observed score boundary",
+        "findings": [] if perfect else [{"issue": "not done", "evidence": "trace", "deduction": 1.0}],
+    }
+    breakdown = json.loads(objects["root/evaluation-breakdown.json"])
+    breakdown.update(
+        task_completion=behavior["task_completion"],
+        protocol_compliance=behavior["protocol_compliance"],
+        llm_judgment=judge,
+        failures=behavior["failures"],
+        overall_score=float(perfect),
+        overall_passed=perfect,
+    )
+    for name, value in (("behavior", behavior), ("answer-judge", judge), ("evaluation-breakdown", breakdown)):
+        objects[f"root/{name}.json"] = json.dumps(value).encode()
+    change_evidence(objects, "trial/result.json", ["verifier_result", "rewards", "reward"], float(perfect))
+    validate_attempt(objects, "uid", "control", "mock")
+
+
+def test_nested_judge_boolean_cannot_impersonate_numeric_zero():
+    objects = numeric_evidence()
+    judge = json.loads(objects["root/answer-judge.json"])
+    judge.update(score=0.0, findings=[{"issue": "failed", "evidence": "trace", "deduction": 1.0}])
+    objects["root/answer-judge.json"] = json.dumps(judge).encode()
+    breakdown = json.loads(objects["root/evaluation-breakdown.json"])
+    breakdown.update(llm_judgment=deepcopy(judge), overall_score=0.5)
+    breakdown["llm_judgment"]["score"] = False
+    objects["root/evaluation-breakdown.json"] = json.dumps(breakdown).encode()
+    change_evidence(objects, "trial/result.json", ["verifier_result", "rewards", "reward"], 0.5)
+    with pytest.raises(RuntimeError, match="bounded numeric"):
+        validate_attempt(objects, "uid", "control", "mock")
+
+
+@pytest.mark.parametrize(
+    "problem",
+    [
+        "missing",
+        "empty-model",
+        "partial-trace",
+        "wrong-result",
+        "missing-context",
+        "hidden-assessment",
+        "unknown-format",
+    ],
+)
+def test_v2_requires_full_trace_judge_request(problem):
+    objects = numeric_evidence()
+    key = "root/llm-judge-input.json"
+    if problem == "missing":
+        del objects[key]
+    else:
+        payload = json.loads(objects[key])
+        supplied = json.loads(payload["messages"][1]["content"])
+        if problem == "empty-model":
+            payload["model"] = " "
+        elif problem == "partial-trace":
+            supplied["full_native_trace"] = json.dumps(supplied["final_result"]) + "\n"
+        elif problem == "wrong-result":
+            supplied["final_result"]["result"] = "Invented answer"
+        elif problem == "missing-context":
+            supplied["task_context"].pop("task_request")
+        elif problem == "hidden-assessment":
+            supplied["expected_passed"] = True
+        else:
+            supplied["native_trace_format"] = "guessed-format"
+        payload["messages"][1]["content"] = json.dumps(supplied)
+        objects[key] = json.dumps(payload).encode()
+    with pytest.raises(RuntimeError):
+        validate_attempt(objects, "uid", "control", "mock")
+
+
+@pytest.mark.parametrize("failed_turn", [False, True])
+@pytest.mark.parametrize("trailing_empty", [False, True])
+def test_v2_explicit_codex_trace_uses_actual_events(failed_turn, trailing_empty):
+    objects = numeric_evidence()
+    payload = json.loads(objects["root/llm-judge-input.json"])
+    supplied = json.loads(payload["messages"][1]["content"])
+    final = {"type": "item.completed", "item": {"id": "item_1", "type": "agent_message", "text": "Actual answer"}}
+    rows = [final]
+    if trailing_empty:
+        rows.append({"type": "item.completed", "item": {"id": "empty", "type": "agent_message", "text": " "}})
+    rows.append({"type": "turn.failed" if failed_turn else "turn.completed"})
+    raw = "".join(json.dumps(row) + "\n" for row in rows)
+    supplied.update(native_trace_format="codex", final_result=final, full_native_trace=raw)
+    objects["root/agent/codex.txt"] = raw.encode()
+    del objects["root/agent/claude-code.txt"]
+    payload["messages"][1]["content"] = json.dumps(supplied)
+    objects["root/llm-judge-input.json"] = json.dumps(payload).encode()
+    if failed_turn:
+        with pytest.raises(RuntimeError, match="Codex trace"):
+            validate_attempt(objects, "uid", "control", "mock")
+    else:
+        validate_attempt(objects, "uid", "control", "mock")

@@ -51,6 +51,17 @@ def configure_job(config, task_dir, target_file, uid, run_name):
         raise ValueError("managed Harbor mock requires a single task package")
     connection = managed_connection(target_file, uid, run_name)
     configure_task(task_dir, connection)
+    # Native agent transcripts omit the initial user prompt. Supply the exact
+    # task/shared context through Harbor's verifier-only tests directory.
+    task_dir = Path(task_dir)
+    shared_context = task_dir / "environment" / "CLAUDE.md"
+    context = {
+        "task_request": (task_dir / "instruction.md").read_text(),
+        "shared_environment_context": shared_context.read_text() if shared_context.exists() else "",
+    }
+    tests = task_dir / "tests"
+    tests.mkdir(exist_ok=True)
+    (tests / "judge-context.json").write_text(json.dumps(context, indent=2))
     kwargs = config.setdefault("environment", {}).setdefault("kwargs", {})
     kwargs.update(mcp_run_uid=uid, mcp_run_name=run_name)
     return config

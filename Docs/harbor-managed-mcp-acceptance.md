@@ -1,6 +1,83 @@
 # Native Harbor managed-MCP acceptance evidence
 
-## Latest paired rerun with corrected catalog verification
+## Continuous full-trace scoring: local validation before CI
+
+The source profile now supports explicit scoring version 2. A Sonnet LLM judge
+receives the exact task and shared context, complete original native trace and
+actual final result. It assesses the whole trajectory and reporting, not only
+the last answer. Deterministic checks separately verify concrete actions.
+Parsing validates JSON, types, range and arithmetic; it does not infer semantic
+correctness from keywords. The exact nonsecret judge request is archived.
+
+Three scores range from 0.0 to 1.0: the fraction of task checks satisfied, the
+fraction of protocol checks satisfied, and the LLM's holistic judgment. Their
+equally weighted arithmetic mean is the native reward. The LLM provides
+trace-grounded findings and deductions reconciling with its score. Full-credit
+flags are diagnostic and do not force partial rewards to zero. Invalid output,
+provider failure or incomplete execution remains an unscored infrastructure
+failure. Legacy binary archives keep their original validation and values.
+
+The profile's new scoring-summary artifact reports dimension means and explicit
+full-credit counts. Generic database/report `passed` fields retain their older
+reward-greater-than-zero meaning, which the report now explicitly identifies as
+nonzero credit, not full success. Numeric rewards and means remain numeric in
+the existing persistence schema; no global engine or database schema changed.
+
+At the user's request, validation ran locally before any new pipeline attempt:
+
+- Updated `/Users/gziv/Dev/harbor` by fast-forward from upstream main to
+  `a468a753c`, Harbor 0.26.0; existing untracked files were preserved.
+- Used native Codex CLI 0.169.0 with `gpt-6.1-terra`, low reasoning, routed through
+  the user's configured provider. Sonnet remained the full-trace judge.
+- Each arm used a fresh separate Podman mock/container network. The agent had
+  no mock source or container-management socket. Both received identical six
+  real reference files and shared instructions; the latter were additionally
+  exposed as AGENTS.md for Codex's native discovery. Only treatment had the
+  unchanged create skill, registered at `/root/.agents/skills/tenant-vm-create`.
+- Local ARM64 images differ from the CI images. The local mock used identical
+  fixture source/MCP version with `OPENSSL_armcap=0` for its virtual CPU. A clean
+  temporary Harbor runtime and temporary Compose provider avoided changing
+  global runtime defaults. These are local integration checks, not a matched
+  Sonnet/CI benchmark.
+
+Actual run `validation-20261117-064818` completed both native trials normally
+with zero exceptions. Each performed exactly one create, received the intended
+timeout, found the VM and verified STARTING. All task and protocol checks passed.
+Baseline made seven MCP calls and treatment six. Treatment read the skill once;
+neither read the separate reference library. Independent review verified the
+native adapter against actual Codex events, mock-audit order/outcomes, exact
+full-trace judge inputs, final-event identity and equal reference hashes.
+
+Original continuous scores were **baseline 1.00 / skilled 0.99**. The LLM gave
+treatment 0.97, deducting 0.03 for not explicitly narrating a correctly handled
+tenant check. That narration is not required. A separate judge-only replay
+preserved both original traces/results, changed only a general fairness rule,
+and again returned 1.00/0.99. Its skilled explanation said the omission was
+not a deficiency, while still deducting credit for it. This is a documented
+judge inconsistency, not evidence that the skill worsens performance. No score
+was manually overwritten and no additional agent runs sought a better result.
+The final rubric retains the general rule against invented requirements;
+an ambiguous draft sentence about skill instructions was removed after review.
+No further paid replay followed that cleanup.
+
+Local artifacts, original scores and separate judge-only replay are retained at
+`/private/tmp/harbor-mcp-implementation/local-harbor/validation-20261117-064818/`.
+Earlier local setup/provider failures remain unscored, with no valid benchmark
+result attributed to them. Every local mock used by the driver was removed
+after collecting evidence. No new pipeline run or deployed image update has
+been performed for scoring v2: deployed `jj2rz` below remains scoring v1.
+Judge consistency needs further calibration before interpreting small score gaps
+as skill benefit.
+
+Executed source verification: 83 submission verifier/shell/native-adapter checks
+and 1,283 CI tests passed, with 10 skips. The optional MLflow observer selection
+was excluded as in the repository's standard core CI selection. Full repository
+Ruff lint/format and diff checks passed. Three independent reviewers checked
+native trace/scoring, adapter/backward compatibility, and reporting/persistence
+boundaries. Live fractional-score PostgreSQL/MinIO acceptance remains pending;
+unit checks establish the arithmetic/adapter path, not a deployed storage run.
+
+## Earlier paired rerun with corrected catalog verification
 
 PipelineRun `harbor-osac-create-jj2rz`, UID
 `d789441a-a4fd-48ce-8daa-409110dabf9b`, uses submission

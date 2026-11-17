@@ -18,7 +18,7 @@ from pathlib import Path
 
 import yaml
 
-from abevalflow.harbor_extensions.harbor_evidence import validate_attempt
+from abevalflow.harbor_extensions.harbor_evidence import validate_attempt, validate_judge
 from abevalflow.harbor_extensions.mcp_connection import configure_job
 from abevalflow.mcp_ci import (
     LABEL,
@@ -268,8 +268,9 @@ def run(workspace, uid, run_name, submission_dir, case, image, model="claude-son
         if any(item.get("exception_info") for item in raw_trials):
             raise RuntimeError("Harbor reported a trial infrastructure exception")
         judges = list((out / variant).rglob("answer-judge.json"))
-        if len(judges) != 1 or not isinstance(json.loads(judges[0].read_text()).get("passed"), bool):
-            raise RuntimeError("answer judge did not complete; this is not a scored agent failure")
+        if len(judges) != 1:
+            raise RuntimeError("semantic judge did not complete; this is not a scored agent failure")
+        validate_judge(json.loads(judges[0].read_text()))
         trajectories = list((out / variant).rglob("trajectory.json"))
         if len(trajectories) != 1:
             raise RuntimeError("Harbor did not preserve exactly one native agent trajectory")
@@ -304,8 +305,23 @@ def run(workspace, uid, run_name, submission_dir, case, image, model="claude-son
     )
     report_dir = workspace / "reports" / meta.name
     report_dir.mkdir(parents=True, exist_ok=True)
+    # Legacy submissions retain their original report. Numeric submissions also
+    # distinguish partial credit from generic reward>0 pass-rate fields.
+    breakdowns = {
+        variant: [json.loads(p.read_text()) for p in (out / variant).rglob("evaluation-breakdown.json")]
+        for variant in ("control", "treatment")
+    }
+    versions = [item.get("scoring_version") for items in breakdowns.values() for item in items]
+    scoring_note = ""
+    if 2 in versions:
+        from abevalflow.harbor_extensions.scoring_report import build_scoring_summary, render_scoring_note
+
+        scoring_summary = build_scoring_summary(breakdowns)
+        atomic_json(out / "scoring-summary.json", scoring_summary)
+        atomic_json(report_dir / "scoring-summary.json", scoring_summary)
+        scoring_note = render_scoring_note(scoring_summary)
     (report_dir / "report.json").write_text(result.model_dump_json(indent=2))
-    (report_dir / "report.md").write_text(render_markdown(result))
+    (report_dir / "report.md").write_text(render_markdown(result) + scoring_note)
     handoff(
         workspace,
         uid,
