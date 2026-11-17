@@ -38,8 +38,62 @@ is archived, and gateway IP changes fail closed until a fresh attempt.
 
 Three independent reviews covered native agent/trace handling, YAML/runtime
 and egress, and strict Responses evidence/persistence compatibility. Core CI
-checks: 1,333 passed and 10 skipped; submission checks: 86 passed. The new
-cluster images and deployed acceptance run are still pending at this point.
+checks: 1,333 passed and 10 skipped; submission checks: 86 passed. Deployed acceptance completed in PipelineRun `harbor-osac-codex-dhvdw`, UID
+`6feb256e-a1e2-4b92-882f-f8bfaa5413fa`: all six Tasks succeeded. Both native
+trials completed normally, with zero Harbor exceptions. Composite scores were
+baseline **0.95** (stored float `0.9500000000000001`) and skilled **1.0**.
+Deterministic task and protocol dimensions were 1.0 for both; Terra judged the
+baseline 0.85 and skilled 1.0. Baseline made seven MCP calls; skilled made six
+plus one successful native skill read. Neither read the reference library.
+
+The baseline deduction was for saying “not yet ready” after observing STARTING
+without a readiness condition. Independent review found this arguable: OSAC's
+READY contract lists “still starting” under FALSE, so the cautious wording may
+be a reasonable inference. Preserve the raw score, but do not present this
+five-point difference as established skill benefit. The skilled final response
+reported STARTING and explicitly left timeout/request association unconfirmed.
+
+Independent readback verified 88 root archive entries and 29 entries per
+attempt; all 149 downloaded objects, including three manifests, were retained
+locally. Every archive entry's length and SHA256 matched. The actual ENMAAS key
+was absent from all downloaded objects. Strict evidence validation matched both
+judge requests to the original full native trace, final event and task context.
+PostgreSQL contained exactly one run and two trials with the same numeric
+rewards. Authorized storage replay preserved the exact row IDs and counts.
+Both scoring-summary copies agree with the native results and database.
+
+Live inspection confirmed the skilled Pod's arbitrary UID 1001390000, Codex
+0.169.0, readable native skill and absent Kubernetes service-account token.
+The actual successful skill read returned the unchanged 7,238-byte skill with
+SHA256 `ee2dcb2c6eb27a2cc7569e2c1cf8a82b39540e2ac95b65a378c5f804939d0f14`.
+The deployed Codex adapter's SHA256 exactly matches the local adapter; this
+proves adapter parity, not identity of every package or operating-system byte.
+Archived status snapshots omit Pod specs, so the live token check and source
+configuration are separate evidence. Producer Pods are distinct per condition.
+
+After verified archival, no run-specific managed Pods, Services or NetworkPolicies
+remained. All six completed Task Pods and Bound workspace `pvc-6a76a2c337` were
+retained for debugging. Archived managed producer DeadlineExceeded/137 statuses
+come from deliberate post-trial quiescing; both trials finished normally first.
+The existing recovery CronJob was left suspended. Concurrent-run acceptance
+remains outside this sequential smoke.
+
+MinIO console folder:
+https://minio-console-ab-eval-flow.apps.cn-ai-lab.2vn8.p1.openshiftapps.com/browser/ab-eval-reports/mcp-runs%2F6feb256e-a1e2-4b92-882f-f8bfaa5413fa%2F
+
+Deployed immutable controller image digest:
+`sha256:c0a2d54dbe0b80531d871d98640349a6430087eae9e1791e92618cbc451d3d07`.
+Agent image digest:
+`sha256:edfaa3671d2ce2c0504bf1a5c103aa1462a5e0482d19cae92bf7d51d442044cf`.
+Source revisions: CI `9dfd7b5c007dbbe8d441f6be381ab43c337a1ef6`, submission
+`58d9c93` (feature branches; no PR opened). Three independent final reviews
+checked traces/configuration, runtime/YAML/cleanup, and artifacts/scoring/storage.
+
+Nonblocking observations: the existing test Task's metrics checkpoint warned
+that its Python environment lacked PyYAML; the native controller's optional
+remote cost-map fetch fell back after a CA error. Neither prevented the scored
+runs, verified archives or database persistence. Cost estimation and that
+separate metrics-checkpoint path are not established by this acceptance.
 
 ## Continuous full-trace scoring: local validation before CI
 
@@ -105,8 +159,8 @@ Local artifacts, original scores and separate judge-only replay are retained at
 `/private/tmp/harbor-mcp-implementation/local-harbor/validation-20261117-064818/`.
 Earlier local setup/provider failures remain unscored, with no valid benchmark
 result attributed to them. Every local mock used by the driver was removed
-after collecting evidence. No new pipeline run or deployed image update has
-been performed for scoring v2: deployed `jj2rz` below remains scoring v1.
+after collecting evidence. At this earlier checkpoint no new pipeline run or deployed image update had
+been performed for scoring v2; `jj2rz` below was still scoring v1.
 Judge consistency needs further calibration before interpreting small score gaps
 as skill benefit.
 
@@ -115,8 +169,8 @@ and 1,283 CI tests passed, with 10 skips. The optional MLflow observer selection
 was excluded as in the repository's standard core CI selection. Full repository
 Ruff lint/format and diff checks passed. Three independent reviewers checked
 native trace/scoring, adapter/backward compatibility, and reporting/persistence
-boundaries. Live fractional-score PostgreSQL/MinIO acceptance remains pending;
-unit checks establish the arithmetic/adapter path, not a deployed storage run.
+boundaries. At this earlier checkpoint fractional-score PostgreSQL/MinIO acceptance was
+pending; the later Terra cluster pair above establishes the deployed storage path.
 
 ## Earlier paired rerun with corrected catalog verification
 
