@@ -1,5 +1,46 @@
 # Native Harbor managed-MCP acceptance evidence
 
+## Codex/Terra agent and Terra judge through ENMAAS (2026-11-17)
+
+The requested agent setup matches the earlier local native Codex run: Harbor
+0.26.0, Codex CLI 0.169.0, `openai/gpt-6.1-terra`, low reasoning, native Responses
+provider at `https://api.enmaas.devshift.net/v1`. The judge now also uses Terra
+through ENMAAS Responses, low reasoning, with a 4096-token output limit. The
+previous local run used Sonnet as judge; it is retained below as historical
+evidence and is not the same configuration.
+
+Fresh local pair `validation-20261117-071042` completed with no trial exceptions:
+baseline **1.0**, skilled **1.0**, with all three scoring dimensions 1.0. Each
+made six MCP calls, including one create, the expected timeout, and readback.
+The skilled agent successfully read the original unchanged skill once through
+its native `$HOME/.agents/skills/tenant-vm-create/SKILL.md` location. Neither
+read the separate reference library. Both received identical real documents
+and shared context, additionally exposed verbatim as `AGENTS.md` for Codex.
+
+Independent trace review reproduced the deterministic results and verified the
+judge's exact original full trace, final event and task context. It identified
+a semantic limitation despite the judge's 1.0: baseline's final “Created” claim
+is stronger than its post-timeout observation establishes; it did not first
+inventory existing VMs. Skilled explicitly disclosed that the observed VM's
+association with its timed-out write could not be confirmed. No stored score
+was overwritten. This single pair demonstrates execution, not skill uplift.
+
+Cluster support preserves Claude defaults and adds opt-in `harbor-agent=codex`,
+`harbor-model=openai/gpt-6.1-terra`, and `harbor-judge-model=gpt-6.1-terra`.
+Only this ENMAAS judge model is currently accepted by the evidence validator.
+The key is held in the `enmaas-credentials` Secret, never source or parameters.
+The agent receives no orchestration/storage credentials or Kubernetes token.
+The trusted controller resolves the fixed gateway per attempt and allows only
+its public unicast IPs on TCP443. This is an IP/port boundary, potentially
+shared hosting, not FQDN isolation; normal TLS hostname checks remain enabled.
+DNS, LiteLLM and own-mock rules are retained. Per-attempt DNS/policy evidence
+is archived, and gateway IP changes fail closed until a fresh attempt.
+
+Three independent reviews covered native agent/trace handling, YAML/runtime
+and egress, and strict Responses evidence/persistence compatibility. Core CI
+checks: 1,333 passed and 10 skipped; submission checks: 86 passed. The new
+cluster images and deployed acceptance run are still pending at this point.
+
 ## Continuous full-trace scoring: local validation before CI
 
 The source profile now supports explicit scoring version 2. A Sonnet LLM judge
