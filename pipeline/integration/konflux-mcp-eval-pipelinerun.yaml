@@ -32,8 +32,8 @@ metadata:
   name: abevalflow-mcp-eval
 spec:
   timeouts:
-    pipeline: "1h"
-    tasks: "45m"
+    pipeline: "3h"
+    tasks: "2h30m"
   pipelineSpec:
     params:
       # === Konflux integration ===
@@ -91,10 +91,6 @@ spec:
           into the ephemeral namespace for registry authentication.
 
       # === MCP Behavioral evaluation ===
-      - name: JOB_TIMEOUT
-        type: string
-        default: "1800"
-        description: Timeout in seconds for the mcpchecker Job
       - name: LLM_AGENT_SECRET
         type: string
         default: "mcp-eval-llm-agent"
@@ -362,8 +358,6 @@ spec:
             value: $(params.SERVICE_NAME)
           - name: service-port
             value: $(params.SERVICE_PORT)
-          - name: job-timeout
-            value: $(params.JOB_TIMEOUT)
           - name: llm-agent-secret
             value: $(params.LLM_AGENT_SECRET)
           - name: llm-judge-secret
