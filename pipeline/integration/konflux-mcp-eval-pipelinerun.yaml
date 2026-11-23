@@ -320,16 +320,14 @@ spec:
           resolver: bundles
           params:
             - name: name
-              value: check-label
+              value: check-pr-label
             - name: bundle
-              value: quay.io/ecosystem-appeng/abevalflow-task-check-label:0.1
+              value: quay.io/ecosystem-appeng/konflux-skill-evaluation/check-pr-label:0.1.0
             - name: kind
               value: task
         params:
           - name: git-url
             value: $(tasks.parse-snapshot.results.git-url)
-          - name: git-revision
-            value: $(tasks.parse-snapshot.results.git-revision)
           - name: target-label
             value: $(params.MCPCHECKER_LABEL)
 
@@ -544,3 +542,11 @@ spec:
     - name: target-kubeconfig
       secret:
         secretName: mcp-eval-target-kubeconfig
+  taskRunSpecs:
+    - pipelineTaskName: check-label
+      podTemplate:
+        env:
+          - name: CONTEXT_PR_NUMBER
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.labels['pac.test.appstudio.openshift.io/pull-request']
