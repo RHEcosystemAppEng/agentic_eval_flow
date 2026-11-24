@@ -189,6 +189,8 @@ spec:
         params:
           - name: mcp-eval-image
             value: $(params.MCP_EVAL_IMAGE)
+          - name: source-subdir
+            value: mcp-server-repo
         workspaces:
           - name: source
             workspace: shared-workspace
@@ -251,6 +253,8 @@ spec:
             value: $(params.IMAGE_REF_KEY)
           - name: image-pull-secret
             value: $(params.IMAGE_PULL_SECRET)
+          - name: repo-subdir
+            value: mcp-server-repo
         workspaces:
           - name: source
             workspace: shared-workspace
