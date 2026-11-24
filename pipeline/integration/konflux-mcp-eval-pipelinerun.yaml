@@ -194,6 +194,8 @@ spec:
         workspaces:
           - name: source
             workspace: shared-workspace
+          - name: reports
+            workspace: shared-workspace
 
       # ================================================================
       # Stage 4: Create ephemeral namespace on target cluster
@@ -310,7 +312,7 @@ spec:
           - name: timeout
             value: "30"
         workspaces:
-          - name: source
+          - name: reports
             workspace: shared-workspace
           - name: target-kubeconfig
             workspace: target-kubeconfig
@@ -371,7 +373,7 @@ spec:
           - name: submission-name
             value: $(tasks.parse-snapshot.results.component-name)
         workspaces:
-          - name: source
+          - name: reports
             workspace: shared-workspace
           - name: target-kubeconfig
             workspace: target-kubeconfig
@@ -396,7 +398,7 @@ spec:
           - name: component-name
             value: openshift-mcp-server
         workspaces:
-          - name: source
+          - name: reports
             workspace: shared-workspace
 
       # ================================================================
@@ -406,7 +408,7 @@ spec:
         runAfter: [generate-compass-facts]
         taskSpec:
           workspaces:
-            - name: source
+            - name: reports
           steps:
             - name: print-directory-tree
               image: $(params.MCP_EVAL_IMAGE)
@@ -414,7 +416,7 @@ spec:
                 #!/bin/bash
                 set -e
 
-                WORKSPACE_PATH="$(workspaces.source.path)"
+                WORKSPACE_PATH="$(workspaces.reports.path)"
                 FACTS_DIR="${WORKSPACE_PATH}/facts"
                 REPORTS_DIR="${WORKSPACE_PATH}/reports"
 
@@ -484,7 +486,7 @@ spec:
                 echo "Debug output complete"
                 echo "========================================="
         workspaces:
-          - name: source
+          - name: reports
             workspace: shared-workspace
 
       # ================================================================
@@ -509,7 +511,7 @@ spec:
           - name: dry-run
             value: $(params.COMPASS_DRY_RUN)
         workspaces:
-          - name: source
+          - name: reports
             workspace: shared-workspace
           - name: target-kubeconfig
             workspace: target-kubeconfig
