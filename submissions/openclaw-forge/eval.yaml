@@ -87,6 +87,12 @@ outputs:
       response.txt: agent final response (morning briefing or analysis panel)
   - path: brief.json
     schema: Canonical published morning briefing, when produced
+  # Collector artifacts are private M365 data. AEH stages them for scoring;
+  # keep downloaded run artifacts in the ignored private archive, not Git.
+  - path: .openclaw/tmp/brief.index.json
+    schema: Collector index with coverage and evidence ID, when produced
+  - path: .openclaw/tmp/brief.evidence.json
+    schema: Sealed collector evidence, when produced
 
 judges:
   # --- Prioritization judges (morning-briefing case) ---
@@ -349,61 +355,1033 @@ judges:
     score_range: [1, 5]
     feedback_type: int
 
-  # --- Generic judges (both cases) ---
+  # --- Non-LLM checks (case-scoped where specified) ---
   - name: used_m365_tools
+    # The analysis-panel case has no collector artifact contract yet.
+    if: "annotations.get('expected_top_of_mind')"
+    arguments:
+      expected_account: tbx-demo2@dev.mscloud.ibm.com  # scenes/monday-acquisition.yaml
     check: |
-      blob = ""
-      names = set()
-      for t in outputs.get("tool_calls") or []:
-        n = str(t.get("name") or t.get("tool") or "").lower()
-        names.add(n)
-        blob += " " + n + " " + str(t.get("arguments") or t.get("input") or "")
+      import json
+
+      # Match the collector command to its successful result by tool ID.
+      pending = set()
+      completed = False
       for ev in outputs.get("events") or []:
-        for t in ev.get("tools") or []:
-          n = str(t.get("name") or "").lower()
-          names.add(n)
-          blob += " " + n
-        blob += " " + str(ev)
-      blob += " " + str(outputs.get("output_content") or "")
-      blob = blob.lower()
-      return any(k in blob for k in (
-        "graph.microsoft", "m365", "outlook", "/me/messages", "/me/events",
-        "calendarview", "login.microsoftonline", "mail.read", "calendars.read"))
+        if not isinstance(ev, dict):
+          continue
+        if ev.get("type") == "assistant":
+          for tool in ev.get("tools") or []:
+            if not isinstance(tool, dict) or tool.get("name") != "exec":
+              continue
+            command = (tool.get("input") or {}).get("command")
+            if (isinstance(command, str)
+                and command.strip() in (
+                    "node tools/collect-brief-evidence.mjs",
+                    "cd ~ && node tools/collect-brief-evidence.mjs",
+                )
+                and tool.get("id")):
+              pending.add(tool["id"])
+        elif (ev.get("type") == "tool_result"
+              and ev.get("tool_use_id") in pending
+              and ev.get("tool_name") == "exec"
+              and ev.get("is_error") is False):
+          completed = True
+      if not completed:
+        return False
+
+      # OpenShell downloads individual files into a same-named directory.
+      # Also accept flat paths from locally archived diagnostic runs.
+      def artifact(filename):
+        prefix = ".openclaw/tmp/" + filename
+        files = outputs.get("files") or {}
+        for path in (prefix + "/" + filename, prefix):
+          content = files.get(path)
+          if isinstance(content, str):
+            try:
+              return json.loads(content)
+            except (TypeError, ValueError):
+              return None
+        return None
+
+      evidence = artifact("brief.evidence.json")
+      index = artifact("brief.index.json")
+      if not isinstance(evidence, dict) or not isinstance(index, dict):
+        return False
+      if evidence.get("sealed") is not True:
+        return False
+      if "microsoft365" not in (evidence.get("requestedSources") or []):
+        return False
+      if "microsoft365" in (evidence.get("unavailable") or []):
+        return False
+      evidence_id = evidence.get("evidenceId")
+      if not evidence_id or index.get("evidenceId") != evidence_id:
+        return False
+      m365 = evidence.get("microsoft365") or {}
+      if (m365.get("account") or {}).get("mail") != arguments["expected_account"]:
+        return False
+      messages, meetings = m365.get("messages"), m365.get("events")
+      if not isinstance(messages, list) or not isinstance(meetings, list):
+        return False
+      def unique_count(records):
+        ids = [item.get("id") for item in records if isinstance(item, dict)]
+        if len(ids) != len(records) or any(not ident for ident in ids):
+          return None
+        return len(set(ids))
+      email_count, meeting_count = unique_count(messages), unique_count(meetings)
+      if email_count is None or meeting_count is None:
+        return False
+      if email_count + meeting_count == 0:
+        return False  # Completed collection, but no M365 evidence retrieved.
+      def coverage(manifest, source):
+        for row in manifest.get("coverage") or []:
+          if isinstance(row, dict) and row.get("id") == source:
+            try:
+              return int(row.get("value"))
+            except (TypeError, ValueError):
+              return None
+        return None
+      for manifest in (evidence, index):
+        if (coverage(manifest, "email") != email_count
+            or coverage(manifest, "meetings") != meeting_count):
+          return False
+      return True
     feedback_type: bool
 
   - name: used_catalog_skills
     check: |
-      blob = " " + str(outputs.get("output_content") or "")
+      # A skill name in the response does not prove the file was read.
+      required = {"daily-briefing", "microsoft365"}
+      pending = {}
+      succeeded = set()
       for ev in outputs.get("events") or []:
-        blob += " " + str(ev)
-        for t in ev.get("tools") or []:
-          blob += " " + str(t)
-      blob = blob.lower()
-      return "daily-briefing" in blob and (
-        "microsoft365" in blob or "microsoft 365" in blob
-      )
+        if not isinstance(ev, dict):
+          continue
+        if ev.get("type") == "assistant":
+          for tool in ev.get("tools") or []:
+            if not isinstance(tool, dict) or tool.get("name") != "read":
+              continue
+            path = (tool.get("input") or {}).get("path")
+            for skill in required:
+              if path in (
+                "$WORKSPACE_DIR/skills/" + skill + "/SKILL.md",
+                "/sandbox/skills/" + skill + "/SKILL.md",
+              ) and tool.get("id"):
+                pending[tool["id"]] = skill
+        elif ev.get("type") == "tool_result":
+          skill = pending.pop(ev.get("tool_use_id"), None)
+          if skill and ev.get("tool_name") == "read" and ev.get("is_error") is False:
+            succeeded.add(skill)
+      return required.issubset(succeeded)
     feedback_type: bool
 
   - name: response_received
     check: |
-      response = outputs.get("output_content", "") or ""
-      return bool(response.strip()) and "The tool run finished, but no final summary was produced" not in response
+      response = outputs.get("output_content")
+      if not isinstance(response, str):
+        return False
+      response = response.strip()
+      if not response or response == "NO_REPLY" or "The tool run finished, but no final summary was produced" in response:
+        return False
+
+      # A trailing user/status event can follow the final assistant message.
+      final = None
+      for ev in reversed(outputs.get("events") or []):
+        if isinstance(ev, dict) and ev.get("type") == "assistant":
+          final = ev
+          break
+      if not final or final.get("tools") or final.get("parent_tool_use_id"):
+        return False
+      text = final.get("text")
+      if not isinstance(text, str) or not text.strip():
+        return False
+      text = text.strip()
+      if text == "NO_REPLY":
+        return False
+
+      # AEH caps archived event text; compare its recorded prefix if capped.
+      marker = "...<truncated>"
+      if text.endswith(marker):
+        prefix = text[:-len(marker)]
+        return bool(prefix) and response.startswith(prefix)
+      return response == text
+    feedback_type: bool
+
+  - name: attention_brief_published
+    # This current evaluation starts each morning-briefing case in a fresh sandbox.
+    if: "annotations.get('requires_published_brief')"
+    check: |
+      import re
+
+      pending = set()
+      for ev in outputs.get("events") or []:
+        if not isinstance(ev, dict):
+          continue
+        if ev.get("type") == "assistant":
+          for tool in ev.get("tools") or []:
+            if not isinstance(tool, dict) or tool.get("name") != "exec":
+              continue
+            command = (tool.get("input") or {}).get("command")
+            call_id = tool.get("id")
+            if not isinstance(command, str) or not isinstance(call_id, str) or not call_id:
+              continue
+            bare = re.sub(r"^cd ~ && ", "", command.strip())
+            if bare == "node tools/publish-brief.mjs":
+              pending.add(call_id)
+        elif ev.get("type") == "tool_result":
+          call_id = ev.get("tool_use_id")
+          if call_id not in pending:
+            continue
+          pending.remove(call_id)
+          if ev.get("tool_name") != "exec" or ev.get("is_error") is not False:
+            continue
+          result = ev.get("result")
+          if not isinstance(result, str):
+            continue
+          if ("published governed brief.json, verified after write" in result
+              and re.search(
+                  r'--- brief\.json \(summary\) ---\s*\{"evidenceId":"[0-9a-fA-F-]{36}","scope":"attention"',
+                  result,
+              )):
+            return True
+      return False
+    feedback_type: bool
+
+  - name: continued_to_full_run
+    # Current fresh-sandbox cases require a later full sweep. This check uses
+    # collector evidence only; later compose/publish steps score separately.
+    if: "annotations.get('requires_published_brief')"
+    check: |
+      import json
+      import re
+
+      pending = {}
+      sweep_count = 0
+      later_sweep = False
+      for ev in outputs.get("events") or []:
+        if not isinstance(ev, dict):
+          continue
+        if ev.get("type") == "assistant":
+          for tool in ev.get("tools") or []:
+            if not isinstance(tool, dict) or tool.get("name") != "exec":
+              continue
+            command = (tool.get("input") or {}).get("command")
+            call_id = tool.get("id")
+            if not isinstance(command, str) or not isinstance(call_id, str) or not call_id:
+              continue
+            bare = re.sub(r"^cd ~ && ", "", command.strip())
+            if bare == "node tools/collect-brief-evidence.mjs":
+              sweep_count += 1
+              pending[call_id] = sweep_count
+        elif ev.get("type") == "tool_result":
+          ordinal = pending.pop(ev.get("tool_use_id"), None)
+          if (ordinal is None or ordinal < 2 or ev.get("tool_name") != "exec"
+              or ev.get("is_error") is not False):
+            continue
+          result = ev.get("result")
+          if not isinstance(result, str):
+            continue
+          direct = re.search(
+              r"this is a full run\s+collected governed briefing evidence ([0-9a-fA-F-]{36}) ",
+              result,
+          )
+          if direct:
+            return True
+          if not any(marker in result for marker in (
+              "brief evidence collection failed", "Command failed", "Error:",
+          )):
+            later_sweep = True
+      if not later_sweep:
+        return False
+
+      # A redacted result needs the collector's retained manifest and index.
+      # The previous-brief field identifies this as full, not a repeated
+      # first-run attempt after a failed initial sweep.
+      files = outputs.get("files") or {}
+      def artifact(path):
+        name = path.rsplit("/", 1)[-1]
+        for key in (path + "/" + name, path):
+          value = files.get(key)
+          if isinstance(value, str):
+            try:
+              return json.loads(value)
+            except ValueError:
+              return None
+        return None
+      evidence = artifact(".openclaw/tmp/brief.evidence.json")
+      index = artifact(".openclaw/tmp/brief.index.json")
+      if not isinstance(evidence, dict) or not isinstance(index, dict):
+        return False
+      full_id = evidence.get("evidenceId")
+      previous = (evidence.get("reconciliation") or {}).get("previous") or {}
+      return bool(
+          isinstance(full_id, str) and re.fullmatch(r"[0-9a-fA-F-]{36}", full_id)
+          and index.get("evidenceId") == full_id
+          and evidence.get("collectedAt") == index.get("collectedAt")
+          and evidence.get("schemaVersion") == index.get("schemaVersion") == 1
+          and previous.get("scope") in ("attention", "full")
+          and isinstance(previous.get("evidenceId"), str)
+          and previous.get("evidenceId") != full_id
+      )
+    feedback_type: bool
+
+  - name: full_evidence_sealed
+    # Assess the full-run seal itself; attention and later publication score
+    # separately. The collector manifest identifies a prior published brief.
+    if: "annotations.get('requires_published_brief')"
+    check: |
+      import json
+      import re
+
+      pending = {}
+      swept = False
+      sealed_result_ids = set()
+      paired_redacted_seal = False
+      for ev in outputs.get("events") or []:
+        if not isinstance(ev, dict):
+          continue
+        if ev.get("type") == "assistant":
+          for tool in ev.get("tools") or []:
+            if not isinstance(tool, dict) or tool.get("name") != "exec":
+              continue
+            command = (tool.get("input") or {}).get("command")
+            call_id = tool.get("id")
+            if not isinstance(command, str) or not isinstance(call_id, str) or not call_id:
+              continue
+            bare = re.sub(r"^cd ~ && ", "", command.strip())
+            if bare == "node tools/collect-brief-evidence.mjs":
+              # A later sweep starts a new manifest. Earlier seal evidence
+              # cannot prove that the latest full-run manifest was sealed.
+              swept = False
+              paired_redacted_seal = False
+              sealed_result_ids.clear()
+              pending[call_id] = "sweep"
+            elif bare == "node tools/collect-brief-evidence.mjs seal":
+              pending[call_id] = "seal" if swept else "early-seal"
+        elif ev.get("type") == "tool_result":
+          kind = pending.pop(ev.get("tool_use_id"), None)
+          if (not kind or ev.get("tool_name") != "exec"
+              or ev.get("is_error") is not False):
+            continue
+          result = ev.get("result")
+          if not isinstance(result, str):
+            continue
+          failed = any(marker in result for marker in (
+              "brief evidence collection failed", "brief evidence seal failed",
+              "Command failed", "Error:",
+          ))
+          if kind == "sweep" and not failed:
+            swept = True
+          elif kind == "seal" and not failed:
+            match = re.search(
+                r"(?m)^(?:sealed|already sealed) governed briefing evidence ([0-9a-fA-F-]{36}) .*; full run,",
+                result,
+            )
+            if match:
+              sealed_result_ids.add(match.group(1))
+            else:
+              # The archived seal body may be redacted. It is an observation
+              # only when a retained artifact or later result proves sealing.
+              paired_redacted_seal = True
+      if sealed_result_ids:
+        return True
+      if not paired_redacted_seal:
+        return False
+
+      files = outputs.get("files") or {}
+      def artifact(path):
+        name = path.rsplit("/", 1)[-1]
+        for key in (path + "/" + name, path):
+          value = files.get(key)
+          if isinstance(value, str):
+            try:
+              return json.loads(value)
+            except ValueError:
+              return None
+        return None
+      evidence = artifact(".openclaw/tmp/brief.evidence.json")
+      index = artifact(".openclaw/tmp/brief.index.json")
+      if isinstance(evidence, dict) and isinstance(index, dict):
+        evidence_id = evidence.get("evidenceId")
+        previous = (evidence.get("reconciliation") or {}).get("previous") or {}
+        if (isinstance(evidence_id, str)
+            and re.fullmatch(r"[0-9a-fA-F-]{36}", evidence_id)
+            and evidence.get("sealed") is True and index.get("sealed") is True
+            and index.get("evidenceId") == evidence_id
+            and evidence.get("collectedAt") == index.get("collectedAt")
+            and evidence.get("sealedAt") == index.get("sealedAt")
+            and isinstance(evidence.get("sealedAt"), str)
+            and previous.get("scope") in ("attention", "full")
+            and isinstance(previous.get("evidenceId"), str)
+            and previous.get("evidenceId") != evidence_id):
+          return True
+      return False
+    feedback_type: bool
+
+  - name: full_batches_reviewed
+    # Each sealed batch must have an accepted reader spawn and a later parent
+    # read of that batch's result. An empty sealed plan needs no readers.
+    if: "annotations.get('requires_published_brief')"
+    check: |
+      import json
+      import re
+
+      files = outputs.get("files") or {}
+      def artifact(path):
+        name = path.rsplit("/", 1)[-1]
+        for key in (path + "/" + name, path):
+          value = files.get(key)
+          if isinstance(value, str):
+            try:
+              return json.loads(value)
+            except ValueError:
+              return None
+        return None
+
+      evidence = artifact(".openclaw/tmp/brief.evidence.json")
+      index = artifact(".openclaw/tmp/brief.index.json")
+      if not isinstance(evidence, dict) or not isinstance(index, dict):
+        return False
+      evidence_id = evidence.get("evidenceId")
+      batches = evidence.get("batches")
+      if (not isinstance(evidence_id, str)
+          or not re.fullmatch(r"[0-9a-fA-F-]{36}", evidence_id)
+          or evidence.get("sealed") is not True or index.get("sealed") is not True
+          or index.get("evidenceId") != evidence_id
+          or evidence.get("sealedAt") != index.get("sealedAt")
+          or not isinstance(evidence.get("sealedAt"), str)
+          or not isinstance(batches, list)):
+        return False
+      expected = {}
+      for batch in batches:
+        if not isinstance(batch, dict):
+          return False
+        batch_id = batch.get("id")
+        path = batch.get("path")
+        if (not isinstance(batch_id, str)
+            or not re.fullmatch(r"batch-[1-9][0-9]*", batch_id)
+            or path != ".openclaw/tmp/batches/" + batch_id + ".json"
+            or batch_id in expected):
+          return False
+        expected[batch_id] = path
+      if not expected:
+        return True
+
+      pending = {}
+      accepted = set()
+      reviewed = set()
+      for ev in outputs.get("events") or []:
+        if not isinstance(ev, dict):
+          continue
+        if ev.get("type") == "assistant":
+          for tool in ev.get("tools") or []:
+            if not isinstance(tool, dict):
+              continue
+            call_id = tool.get("id")
+            inp = tool.get("input") or {}
+            if not isinstance(call_id, str) or not isinstance(inp, dict):
+              continue
+            if tool.get("name") == "sessions_spawn":
+              task = inp.get("task")
+              if inp.get("agentId") != "brief-reader" or not isinstance(task, str):
+                continue
+              paths = re.findall(r"\.openclaw/tmp/batches/batch-[1-9][0-9]*\.json", task)
+              if len(paths) != 1:
+                continue
+              for batch_id, path in expected.items():
+                if paths[0] == path:
+                  pending[call_id] = ("spawn", batch_id)
+                  break
+            elif tool.get("name") == "read":
+              path = inp.get("path")
+              if not isinstance(path, str):
+                continue
+              for batch_id in accepted:
+                result_path = ".openclaw/tmp/batches/" + batch_id + ".result.json"
+                if path in (result_path, "$WORKSPACE_DIR/" + result_path):
+                  pending[call_id] = ("read", batch_id)
+                  break
+        elif ev.get("type") == "tool_result":
+          item = pending.pop(ev.get("tool_use_id"), None)
+          if item is None or ev.get("is_error") is not False:
+            continue
+          kind, batch_id = item
+          if ev.get("tool_name") != ("sessions_spawn" if kind == "spawn" else "read"):
+            continue
+          try:
+            result = json.loads(ev.get("result"))
+          except (TypeError, ValueError):
+            continue
+          if kind == "spawn":
+            if isinstance(result, dict) and result.get("status") == "accepted":
+              accepted.add(batch_id)
+          elif (batch_id in accepted and isinstance(result, dict)
+                and result.get("schemaVersion") == 1
+                and result.get("evidenceId") == evidence_id
+                and result.get("batchId") == batch_id
+                and isinstance(result.get("items"), list)):
+            reviewed.add(batch_id)
+      return reviewed == set(expected)
+    feedback_type: bool
+
+  - name: full_candidate_composed
+    # The composer itself reports success only after writing the candidate and
+    # its provenance. Match that result to the current sealed full-run ledger.
+    if: "annotations.get('requires_published_brief')"
+    check: |
+      import json
+      import re
+
+      files = outputs.get("files") or {}
+      def artifact(path):
+        name = path.rsplit("/", 1)[-1]
+        for key in (path + "/" + name, path):
+          value = files.get(key)
+          if isinstance(value, str):
+            try:
+              return json.loads(value)
+            except ValueError:
+              return None
+        return None
+
+      evidence = artifact(".openclaw/tmp/brief.evidence.json")
+      index = artifact(".openclaw/tmp/brief.index.json")
+      if not isinstance(evidence, dict) or not isinstance(index, dict):
+        return False
+      evidence_id = evidence.get("evidenceId")
+      previous = (evidence.get("reconciliation") or {}).get("previous") or {}
+      if (not isinstance(evidence_id, str)
+          or not re.fullmatch(r"[0-9a-fA-F-]{36}", evidence_id)
+          or evidence.get("sealed") is not True or index.get("sealed") is not True
+          or index.get("evidenceId") != evidence_id
+          or evidence.get("sealedAt") != index.get("sealedAt")
+          or not isinstance(evidence.get("sealedAt"), str)
+          or previous.get("scope") not in ("attention", "full")
+          or not isinstance(previous.get("evidenceId"), str)
+          or not re.fullmatch(r"[0-9a-fA-F-]{36}", previous.get("evidenceId"))
+          or previous.get("evidenceId") == evidence_id):
+        return False
+
+      pending = set()
+      for ev in outputs.get("events") or []:
+        if not isinstance(ev, dict):
+          continue
+        if ev.get("type") == "assistant":
+          for tool in ev.get("tools") or []:
+            if not isinstance(tool, dict) or tool.get("name") != "exec":
+              continue
+            call_id = tool.get("id")
+            command = (tool.get("input") or {}).get("command")
+            if not isinstance(call_id, str) or not isinstance(command, str):
+              continue
+            bare = re.sub(r"^cd ~ && ", "", command.strip())
+            if re.fullmatch(r"node tools/compose-brief\.mjs [^\s;&|]+\.json", bare):
+              pending.add(call_id)
+        elif ev.get("type") == "tool_result":
+          call_id = ev.get("tool_use_id")
+          if call_id not in pending:
+            continue
+          pending.remove(call_id)
+          if ev.get("tool_name") != "exec" or ev.get("is_error") is not False:
+            continue
+          result = ev.get("result")
+          if not isinstance(result, str) or "(Command exited with code " in result:
+            continue
+          match = re.search(
+              r"(?m)^composed full brief candidate for evidence ([0-9a-fA-F-]{36}) "
+              r"\([^\n]+\)\n"
+              r"publish it with: node tools/publish-brief\.mjs(?:\n|$)",
+              result,
+          )
+          if match and match.group(1) == evidence_id:
+            return True
+      return False
+    feedback_type: bool
+
+  - name: full_publisher_succeeded
+    # Distinguish agent invocation from the publisher's disk write. A redacted
+    # result needs the retained full brief as independent write evidence.
+    if: "annotations.get('requires_published_brief')"
+    check: |
+      import json
+      import re
+      from datetime import datetime
+
+      files = outputs.get("files") or {}
+      def artifact(path):
+        name = path.rsplit("/", 1)[-1]
+        for key in (path + "/" + name, path):
+          value = files.get(key)
+          if isinstance(value, str):
+            try:
+              return json.loads(value)
+            except ValueError:
+              return None
+        return None
+
+      evidence = artifact(".openclaw/tmp/brief.evidence.json")
+      index = artifact(".openclaw/tmp/brief.index.json")
+      evidence_id = evidence.get("evidenceId") if isinstance(evidence, dict) else None
+      sealed_at = evidence.get("sealedAt") if isinstance(evidence, dict) else None
+      try:
+        seal_time = datetime.fromisoformat(sealed_at.replace("Z", "+00:00"))
+      except (AttributeError, ValueError):
+        seal_time = None
+
+      pending = set()
+      called = False
+      matched = False
+      succeeded = False
+      redacted = False
+      failed = False
+      for ev in outputs.get("events") or []:
+        if not isinstance(ev, dict):
+          continue
+        if ev.get("type") == "assistant":
+          for tool in ev.get("tools") or []:
+            if not isinstance(tool, dict) or tool.get("name") != "exec":
+              continue
+            call_id = tool.get("id")
+            command = (tool.get("input") or {}).get("command")
+            if not isinstance(call_id, str) or not isinstance(command, str):
+              continue
+            bare = re.sub(r"^cd ~ && ", "", command.strip())
+            if bare == "node tools/publish-brief.mjs":
+              # This run may also publish an earlier attention brief. Only a
+              # call after the current full-run seal can write its final brief.
+              try:
+                call_time = datetime.fromisoformat(ev.get("timestamp", "").replace("Z", "+00:00"))
+              except (AttributeError, ValueError):
+                continue
+              if (seal_time is None or seal_time.tzinfo is None
+                  or call_time.tzinfo is None or call_time < seal_time):
+                continue
+              called = True
+              pending.add(call_id)
+        elif ev.get("type") == "tool_result":
+          call_id = ev.get("tool_use_id")
+          if call_id not in pending:
+            continue
+          pending.remove(call_id)
+          matched = True
+          result = ev.get("result")
+          if (ev.get("tool_name") != "exec" or ev.get("is_error") is not False
+              or not isinstance(result, str)
+              or "(Command exited with code " in result):
+            failed = True
+            continue
+          marker = "--- brief.json (summary) ---\n"
+          if "published governed brief.json, verified after write\n" in result and marker in result:
+            try:
+              summary = json.loads(result.split(marker, 1)[1].splitlines()[0])
+            except (ValueError, IndexError):
+              failed = True
+              continue
+            if (isinstance(summary, dict) and summary.get("scope") == "full"
+                and isinstance(summary.get("evidenceId"), str)):
+              succeeded = summary.get("evidenceId")
+            else:
+              failed = True
+          elif re.fullmatch(r"\[(?:Malformed|Oversized) diagnostic JSON redacted\]", result.strip()):
+            redacted = True
+          else:
+            failed = True
+      if not called:
+        return False, "Agent did not call the full-brief publisher."
+      if not matched:
+        return False, "Publisher was called, but its matching tool result is missing."
+
+      if (not isinstance(evidence_id, str)
+          or not re.fullmatch(r"[0-9a-fA-F-]{36}", evidence_id)
+          or evidence.get("sealed") is not True or not isinstance(index, dict)
+          or index.get("sealed") is not True or index.get("evidenceId") != evidence_id):
+        return False, "Publisher was called, but the current sealed full-run evidence is unavailable."
+
+      brief = artifact("brief.json")
+      if not isinstance(brief, dict):
+        return False, "Publisher was called, but no readable brief.json was saved."
+      if brief.get("scope") != "full" or brief.get("evidenceId") != evidence_id:
+        return False, "Publisher was called, but saved brief.json is not the current full brief."
+      if succeeded == evidence_id:
+        return True, "Publisher call and read-back succeeded; saved full brief.json matches the current evidence."
+      if redacted:
+        return True, "Publisher call was matched; its result was redacted, and saved full brief.json matches the current evidence."
+      if failed:
+        return False, "Publisher was called but reported failure; no successful retry was verified."
+      return False, "Publisher was called, but successful publication was not verified."
+    feedback_type: bool
+
+  - name: full_workflow_order
+    # This is a standalone sequence check. Every stage needs its own proof;
+    # failed attempts may be followed by successful retries.
+    if: "annotations.get('requires_published_brief')"
+    check: |
+      import json
+      import re
+      from datetime import datetime
+
+      files = outputs.get("files") or {}
+      def artifact(path):
+        name = path.rsplit("/", 1)[-1]
+        for key in (path + "/" + name, path):
+          value = files.get(key)
+          if isinstance(value, str):
+            try:
+              return json.loads(value)
+            except ValueError:
+              return None
+        return None
+
+      evidence = artifact(".openclaw/tmp/brief.evidence.json")
+      index = artifact(".openclaw/tmp/brief.index.json")
+      brief = artifact("brief.json")
+      if not isinstance(evidence, dict) or not isinstance(index, dict):
+        return False, "Current full-run evidence plan is unavailable."
+      evidence_id = evidence.get("evidenceId")
+      previous = (evidence.get("reconciliation") or {}).get("previous") or {}
+      if (not isinstance(evidence_id, str)
+          or not re.fullmatch(r"[0-9a-fA-F-]{36}", evidence_id)
+          or evidence.get("schemaVersion") != 1 or index.get("schemaVersion") != 1
+          or evidence.get("sealed") is not True or index.get("sealed") is not True
+          or index.get("evidenceId") != evidence_id
+          or evidence.get("collectedAt") != index.get("collectedAt")
+          or evidence.get("sealedAt") != index.get("sealedAt")
+          or previous.get("scope") not in ("attention", "full")
+          or not isinstance(previous.get("evidenceId"), str)
+          or previous.get("evidenceId") == evidence_id):
+        return False, "Current sealed full-run evidence and index do not agree."
+      batches = evidence.get("batches")
+      if not isinstance(batches, list):
+        return False, "The sealed plan has no readable batch list."
+      expected = {}
+      for batch in batches:
+        if not isinstance(batch, dict):
+          return False, "The sealed batch plan is malformed."
+        bid = batch.get("id")
+        if (not isinstance(bid, str)
+            or not re.fullmatch(r"batch-[1-9][0-9]*", bid)
+            or batch.get("path") != ".openclaw/tmp/batches/" + bid + ".json"
+            or bid in expected):
+          return False, "The sealed batch plan is malformed."
+        expected[bid] = batch["path"]
+
+      def parse_time(value):
+        try:
+          parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+          return parsed if parsed.tzinfo else None
+        except (AttributeError, ValueError):
+          return None
+      def redacted_window(call, result, when):
+        moment = parse_time(when)
+        start = parse_time(call["event"].get("timestamp"))
+        end = parse_time(result["event"].get("timestamp"))
+        return bool(moment and start and end and start <= moment <= end)
+      def paired(call, tool_name):
+        found = results.get(call["id"])
+        if (not found or found["position"] <= call["position"]
+            or found["event"].get("tool_name") != tool_name
+            or found["event"].get("is_error") is not False):
+          return None
+        return found
+      def text_result(call):
+        found = paired(call, "exec")
+        if not found:
+          return None, None
+        body = found["event"].get("result")
+        if (not isinstance(body, str) or "(Command exited with code " in body):
+          return None, None
+        return found, body
+      def is_redacted(body):
+        return bool(re.fullmatch(
+            r"\[(?:Malformed|Oversized) diagnostic JSON redacted\]", body.strip()))
+
+      calls = []
+      results = {}
+      for position, ev in enumerate(outputs.get("events") or []):
+        if not isinstance(ev, dict):
+          continue
+        if ev.get("type") == "assistant":
+          for tool in ev.get("tools") or []:
+            if (isinstance(tool, dict) and isinstance(tool.get("id"), str)
+                and isinstance(tool.get("input"), dict)):
+              calls.append({"position": position, "event": ev,
+                            "id": tool["id"], "name": tool.get("name"),
+                            "input": tool["input"]})
+        elif ev.get("type") == "tool_result" and isinstance(ev.get("tool_use_id"), str):
+          results[ev["tool_use_id"]] = {"position": position, "event": ev}
+
+      def command(call):
+        if call["name"] != "exec":
+          return ""
+        value = call["input"].get("command")
+        return re.sub(r"^cd ~ && ", "", value.strip()) if isinstance(value, str) else ""
+
+      stage = 0
+      for sweep in calls:
+        if command(sweep) != "node tools/collect-brief-evidence.mjs":
+          continue
+        sweep_result, body = text_result(sweep)
+        if not sweep_result:
+          continue
+        direct = re.search(
+            r"this is a full run\s+collected governed briefing evidence ([0-9a-fA-F-]{36}) ", body)
+        if not ((direct and direct.group(1) == evidence_id)
+                or (is_redacted(body) and redacted_window(
+                    sweep, sweep_result, evidence.get("collectedAt")))):
+          continue
+        stage = max(stage, 1)
+        for seal in calls:
+          if (seal["position"] <= sweep_result["position"]
+              or command(seal) != "node tools/collect-brief-evidence.mjs seal"):
+            continue
+          seal_result, seal_body = text_result(seal)
+          if not seal_result:
+            continue
+          direct_seal = re.search(
+              r"(?m)^(?:sealed|already sealed) governed briefing evidence ([0-9a-fA-F-]{36}) .*; full run,",
+              seal_body)
+          if not ((direct_seal and direct_seal.group(1) == evidence_id)
+                  or (is_redacted(seal_body) and redacted_window(
+                      seal, seal_result, evidence.get("sealedAt")))):
+            continue
+          stage = max(stage, 2)
+          after_batches = seal_result["position"]
+          complete = True
+          for bid, path in expected.items():
+            reads = []
+            for spawn in calls:
+              if (spawn["name"] != "sessions_spawn"
+                  or spawn["position"] <= seal_result["position"]
+                  or spawn["input"].get("agentId") != "brief-reader"):
+                continue
+              task = spawn["input"].get("task")
+              if (not isinstance(task, str)
+                  or re.findall(r"\.openclaw/tmp/batches/batch-[1-9][0-9]*\.json", task) != [path]):
+                continue
+              spawn_result = paired(spawn, "sessions_spawn")
+              if not spawn_result:
+                continue
+              try:
+                accepted = json.loads(spawn_result["event"].get("result"))
+              except (TypeError, ValueError):
+                continue
+              if not isinstance(accepted, dict) or accepted.get("status") != "accepted":
+                continue
+              for read in calls:
+                target = read["input"].get("path")
+                result_path = path[:-5] + ".result.json"
+                if (read["name"] != "read" or read["position"] <= spawn_result["position"]
+                    or target not in (result_path, "$WORKSPACE_DIR/" + result_path)):
+                  continue
+                read_result = paired(read, "read")
+                if not read_result:
+                  continue
+                try:
+                  report = json.loads(read_result["event"].get("result"))
+                except (TypeError, ValueError):
+                  continue
+                if (isinstance(report, dict) and report.get("schemaVersion") == 1
+                    and report.get("evidenceId") == evidence_id
+                    and report.get("batchId") == bid
+                    and isinstance(report.get("items"), list)):
+                  reads.append(read_result["position"])
+            if not reads:
+              complete = False
+              break
+            after_batches = max(after_batches, min(reads))
+          if not complete:
+            continue
+          stage = max(stage, 3)
+          for compose in calls:
+            if (compose["position"] <= after_batches
+                or not re.fullmatch(r"node tools/compose-brief\.mjs [^\s;&|]+\.json", command(compose))):
+              continue
+            compose_result, composed = text_result(compose)
+            if (not compose_result or not re.search(
+                r"(?m)^composed full brief candidate for evidence " + re.escape(evidence_id)
+                + r" \([^\n]+\)\npublish it with: node tools/publish-brief\.mjs(?:\n|$)",
+                composed)):
+              continue
+            stage = max(stage, 4)
+            for publish in calls:
+              if (publish["position"] <= compose_result["position"]
+                  or command(publish) != "node tools/publish-brief.mjs"):
+                continue
+              publish_result, published = text_result(publish)
+              if not publish_result:
+                continue
+              if not (isinstance(brief, dict) and brief.get("scope") == "full"
+                      and brief.get("evidenceId") == evidence_id):
+                continue
+              marker = "--- brief.json (summary) ---\n"
+              verified = False
+              if "published governed brief.json, verified after write\n" in published and marker in published:
+                try:
+                  summary = json.loads(published.split(marker, 1)[1].splitlines()[0])
+                  verified = (isinstance(summary, dict)
+                              and summary.get("scope") == "full"
+                              and summary.get("evidenceId") == evidence_id)
+                except (ValueError, IndexError):
+                  pass
+              elif is_redacted(published):
+                verified = True  # The matching saved brief supplies write evidence.
+              if verified:
+                return True, "Full sweep, seal, batch review, compose, and publication completed in order."
+      missing = ("full sweep", "full seal", "batch review", "successful full compose",
+                 "full publication")
+      return False, "No verified in-order sequence reaches " + missing[stage] + "."
     feedback_type: bool
 
   - name: published_brief
-    if: "annotations.get('expected_top_of_mind')"
+    if: "annotations.get('requires_published_brief')"
     check: |
       import json
+      import re
+      from datetime import datetime
+
+      # Required Forge briefing v1 contract from the image publisher:
+      # openclaw-saw-image/.../schemas/briefing-v1.md and
+      # tools/publish-brief.mjs validateBriefCandidate(). The image publisher
+      # owns deeper source/quote and draft-state validation.
       files = outputs.get("files") or {}
-      briefs = [content for path, content in files.items() if path.endswith("brief.json")]
-      if len(briefs) != 1:
+      def artifact(path):
+        # OpenShell nests a downloaded file inside a same-named directory.
+        for key in (path + "/" + path.rsplit("/", 1)[-1], path):
+          content = files.get(key)
+          if isinstance(content, str):
+            try:
+              return json.loads(content)
+            except (TypeError, ValueError):
+              return None
+        return None
+      brief = artifact("brief.json")
+      evidence = artifact(".openclaw/tmp/brief.evidence.json")
+      index = artifact(".openclaw/tmp/brief.index.json")
+      if not all(isinstance(item, dict) for item in (brief, evidence, index)):
+        return False
+
+      def nonempty(value):
+        return isinstance(value, str) and bool(value.strip())
+      def instant(value):
+        if not isinstance(value, str) or not re.fullmatch(
+            r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})", value):
           return False
-      try:
-          brief = json.loads(briefs[0]) if isinstance(briefs[0], str) else briefs[0]
-      except (TypeError, ValueError):
+        try:
+          datetime.fromisoformat(value.replace("Z", "+00:00"))
+          return True
+        except ValueError:
           return False
-      return (isinstance(brief, dict) and bool(brief.get("evidenceId"))
-              and brief.get("scope") == "full")
+      if (type(brief.get("schemaVersion")) is not int
+          or brief["schemaVersion"] != 1
+          or not nonempty(brief.get("evidenceId"))
+          or brief.get("scope") != "full"
+          or "refiningUntil" in brief
+          or not instant(brief.get("generatedAt"))
+          or not nonempty(brief.get("generatedFor"))):
+        return False
+      if (evidence.get("sealed") is not True
+          or brief["evidenceId"] != evidence.get("evidenceId")
+          or brief["evidenceId"] != index.get("evidenceId")):
+        return False
+
+      greeting = brief.get("greeting")
+      if not isinstance(greeting, dict) or any(
+          not nonempty(greeting.get(field)) for field in ("name", "role", "initials", "date")):
+        return False
+      summary = greeting.get("summary")
+      if (not isinstance(summary, dict)
+          or not isinstance(summary.get("lead"), str)
+          or not isinstance(summary.get("tail"), str)
+          or ("highlight" in summary and not isinstance(summary["highlight"], str))):
+        return False
+      highlight = summary.get("highlight", "")
+      if (not (summary["lead"] + highlight + summary["tail"]).strip()
+          or (highlight.strip() and highlight.strip() in (
+              summary["lead"].strip(), summary["tail"].strip()))):
+        return False
+
+      limits = {"notifications": 1, "topOfMind": 3, "fyi": 5, "lookingAhead": 5}
+      for name in (*limits, "coverage"):
+        section = brief.get(name)
+        if not isinstance(section, list):
+          return False
+        if name in limits and len(section) > limits[name]:
+          return False
+        ids = [item.get("id") for item in section if isinstance(item, dict)]
+        if (len(ids) != len(section) or any(not nonempty(item_id) for item_id in ids)
+            or len(set(ids)) != len(ids)):
+          return False
+
+      coverage = brief["coverage"]
+      expected_rows = (("email", "Email"), ("slack", "Slack Messages"),
+                       ("meetings", "Meetings"), ("library", "Library Artifacts"))
+      if (len(coverage) != 4 or any(
+          row.get("id") != source or row.get("label") != label
+          or not isinstance(row.get("value"), str)
+          or not re.fullmatch(r"\d+", row["value"])
+          for row, (source, label) in zip(coverage, expected_rows))
+          or coverage[3]["value"] != "0"
+          or coverage != index.get("coverage")
+          or coverage != evidence.get("coverage")):
+        return False
+
+      def valid_source(item):
+        source = item.get("source")
+        if source not in ("email", "slack", "calendar"):
+          return False
+        if "provider" in item and (source != "email" or item["provider"] not in (
+            "microsoft365", "gmail")):
+          return False
+        if "sourceKey" in item and (source not in ("email", "slack") or
+            not isinstance(item["sourceKey"], str) or not re.fullmatch(
+                r"forge-source:v1:[0-9a-f]{64}", item["sourceKey"])):
+          return False
+        return True
+
+      proposals = 0
+      for item in brief["topOfMind"]:
+        if not valid_source(item) or any(
+            not nonempty(item.get(field)) for field in ("meta", "title", "description")):
+          return False
+        if "quote" in item and not isinstance(item["quote"], str):
+          return False
+        if "draftId" in item or "actions" in item:
+          actions = item.get("actions")
+          if (not nonempty(item.get("draftId")) or not isinstance(actions, list)
+              or len(actions) != 2 or not all(isinstance(a, dict) for a in actions)
+              or actions[0].get("label") != "Review draft"
+              or actions[0].get("isPrimary") is not True
+              or actions[1].get("label") != "Dismiss"
+              or "isPrimary" in actions[1]):
+            return False
+          proposals += 1
+
+      for name in ("fyi", "lookingAhead"):
+        for item in brief[name]:
+          if not valid_source(item) or any(
+              not nonempty(item.get(field)) for field in ("meta", "body")):
+            return False
+          if "title" in item and not nonempty(item["title"]):
+            return False
+          if any(field in item and not isinstance(item[field], str)
+                 for field in ("quote", "timing")):
+            return False
+          if "whenAt" in item and not instant(item["whenAt"]):
+            return False
+          if "highlight" in item and (not isinstance(item["highlight"], str)
+              or item["highlight"] not in item["body"]):
+            return False
+
+      notifications = brief["notifications"]
+      if len(notifications) != (1 if proposals else 0):
+        return False
+      if proposals:
+        notification = notifications[0]
+        label = f"{proposals} draft{' needs' if proposals == 1 else 's need'} review"
+        if (notification.get("id") != "drafts" or notification.get("to") != "/messages"
+            or notification.get("label") != label):
+          return False
+      return True
     feedback_type: bool
 
 thresholds:
