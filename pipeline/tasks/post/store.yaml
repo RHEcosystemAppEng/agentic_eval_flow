@@ -13,6 +13,9 @@ spec:
     - name: submission-name
       type: string
       description: Submission name
+    - name: pipeline-run-uid
+      type: string
+      default: ""
     - name: pipeline-run-id
       type: string
       description: Tekton PipelineRun name
@@ -131,9 +134,13 @@ spec:
         REPORT_DIR="$(workspaces.source.path)/reports/$(params.submission-name)"
         echo "Storing results for submission=$(params.submission-name) run=$(params.pipeline-run-id)"
         echo "Report dir: $REPORT_DIR"
+        STORE_RUN_ID="$(params.pipeline-run-id)"
+        if [ "$(params.eval-engine)" = mcpchecker ] && [ -n "$(params.pipeline-run-uid)" ]; then
+          STORE_RUN_ID="$(params.pipeline-run-uid)"
+        fi
         python scripts/store_results.py \
           --report-dir "$REPORT_DIR" \
-          --run-id "$(params.pipeline-run-id)"
+          --run-id "$STORE_RUN_ID"
 
         echo "Results stored successfully"
 

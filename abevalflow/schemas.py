@@ -254,21 +254,17 @@ class LlmConfig(BaseModel):
 
 
 class McpConfig(BaseModel):
-    """MCP server configuration for MCPChecker evaluations.
+    """Select an existing external connection or an opt-in trusted mock."""
 
-    Users must create the referenced secret in the ab-eval-flow namespace
-    before submitting. The secret should contain:
-    - MCP_URL: The MCP server endpoint URL
-    - MCP_BEARER_TOKEN: Authentication token (optional, if server requires auth)
-    """
+    model_config = ConfigDict(extra="forbid")
+    credentials_secret: str | None = Field(default=None, min_length=1)
+    mock: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9-]{0,48}$")
 
-    credentials_secret: str = Field(
-        description=(
-            "Name of the Kubernetes secret containing MCP server credentials. "
-            "The secret must exist in the ab-eval-flow namespace and contain "
-            "MCP_URL (required) and MCP_BEARER_TOKEN (optional) keys."
-        ),
-    )
+    @model_validator(mode="after")
+    def exactly_one_target(self):
+        if bool(self.credentials_secret) == bool(self.mock):
+            raise ValueError("select exactly one of mcp.credentials_secret or mcp.mock")
+        return self
 
 
 class ExperimentType(StrEnum):
@@ -618,7 +614,7 @@ class SubmissionMetadata(BaseModel):
         default=None,
         description=(
             "MCP server configuration for MCPChecker evaluations. "
-            "Required when eval_engine is 'mcpchecker'. The referenced secret "
+            "Required when eval_engine is 'mcpchecker'. An external referenced secret "
             "must be created by the user in the ab-eval-flow namespace."
         ),
     )

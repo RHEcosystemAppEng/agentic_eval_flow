@@ -102,6 +102,7 @@ def _run_step(name: str, workspace: Path, env: dict[str, str]) -> subprocess.Com
         "$(params.submission-dir)": "probe",
         "$(params.submission-name)": "probe",
         "$(params.pipeline-run-id)": "unit-test-run",
+        "$(params.pipeline-run-uid)": "",
         "$(workspaces.source.path)": str(workspace),
         "/tmp/mcpchecker-": str(workspace.parent / "mcpchecker-"),
         "/tmp/mcp-result.json": str(workspace.parent / "mcp-result.json"),
@@ -206,6 +207,7 @@ def test_store_task_persists_mcpchecker_reports(execution, task_path, passed):
         "$(params.pipeline-repo-url)": "https://fixture.invalid/repo.git",
         "$(params.submission-name)": "probe",
         "$(params.pipeline-run-id)": "unit-test-run",
+        "$(params.pipeline-run-uid)": "",
     }.items():
         script = script.replace(old, new)
     assert not re.search(r"\$\((params|workspaces|results)\.", script)

@@ -1,0 +1,36 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: mcp-evidence-recovery
+spec:
+  schedule: '*/5 * * * *'
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        spec:
+          serviceAccountName: mcp-lifecycle
+          restartPolicy: Never
+          containers:
+          - name: recover
+            image: image-registry.openshift-image-registry.svc:5000/ab-eval-flow/mcpchecker-ci@sha256:d74842d2ee9fa8955349ccda7a47d589856c1f1cf81ae0dcc59921524e85bfda
+            command:
+            - python
+            - -m
+            - abevalflow.mcp_ci
+            - sweep
+            - --image
+            - image-registry.openshift-image-registry.svc:5000/ab-eval-flow/mcpchecker-ci@sha256:d74842d2ee9fa8955349ccda7a47d589856c1f1cf81ae0dcc59921524e85bfda
+            resources:
+              requests:
+                cpu: 50m
+                memory: 128Mi
+              limits:
+                cpu: 500m
+                memory: 512Mi
+            env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace

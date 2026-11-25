@@ -273,13 +273,14 @@ class TestOpenshellPipelineProfile:
         assert '[ "$archived" -ne "$expected" ]' in script
         assert 'elif [ "$expected" -eq 0 ]' in script
         # The local pull side exists and reads the same layout.
-        fetch = (REPO / "scripts" / "fetch_run_logs.sh").read_text()
+        wrapper = (REPO / "scripts" / "fetch_run_logs.sh").read_text()
+        fetch = (REPO / "scripts" / "fetch_run_logs.py").read_text()
+        assert "fetch_run_logs.py" in wrapper
         assert "debug/pod-logs" in fetch
-        assert "deploy/minio" in fetch
-        # No pinned namespace default: the current context's, or an
-        # explicit one.
-        assert ":-forge-nommen" not in fetch
-        assert "oc config view --minify" in fetch
+        assert "Minio(" in fetch
+        assert "exec" not in fetch
+        assert "forge-nommen" not in fetch
+        assert '["oc", "config", "view", "--minify"' in fetch
 
     def test_rbac_applies_into_any_namespace(self):
         # metadata.namespace would make `oc apply -n X` fail, and a subject

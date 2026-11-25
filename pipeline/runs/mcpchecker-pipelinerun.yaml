@@ -1,0 +1,42 @@
+# Select an existing MCP submission; install the profile and shared Tasks first.
+# Before merge, pin pipeline-repo-revision to the reviewed feature commit.
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: mcpchecker-
+spec:
+  pipelineRef:
+    name: abevalflow-pipeline-mcpchecker
+  params:
+  - name: repo-url
+    value: https://github.com/RHEcosystemAppEng/skill-submissions.git
+  - name: revision
+    value: main
+  - name: submission-dir
+    value: REPLACE_WITH_MCP_SUBMISSION
+  - name: pipeline-repo-revision
+    value: main
+  taskRunTemplate:
+    serviceAccountName: pipeline
+  taskRunSpecs:
+  - pipelineTaskName: start-mcp
+    serviceAccountName: mcp-lifecycle
+  - pipelineTaskName: evaluate
+    serviceAccountName: mcpchecker-evaluator
+    podTemplate:
+      automountServiceAccountToken: false
+  - pipelineTaskName: cleanup
+    serviceAccountName: mcp-lifecycle
+  timeouts:
+    pipeline: 4h
+    tasks: 3h
+    finally: 15m
+  workspaces:
+  - name: shared-workspace
+    volumeClaimTemplate:
+      spec:
+        accessModes:
+        - ReadWriteOnce
+        resources:
+          requests:
+            storage: 1Gi

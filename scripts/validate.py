@@ -741,12 +741,20 @@ def validate_submission(
 
     if run_mcpchecker:
         errors.extend(_check_mcpchecker_eval_yaml(submission_dir))
-        errors.extend(_check_mcpchecker_mcp_config(submission_dir))
+        if not (metadata and metadata.mcp and metadata.mcp.mock):
+            errors.extend(_check_mcpchecker_mcp_config(submission_dir))
+        else:
+            from abevalflow.mcp_ci import descriptor
+
+            try:
+                descriptor(metadata.mcp.mock)
+            except (ValueError, OSError) as exc:
+                errors.append(f"Invalid managed MCP mock: {exc}")
         errors.extend(_check_mcpchecker_tasks(submission_dir))
         # Validate mcp.credentials_secret is provided
         if metadata and not metadata.mcp:
             errors.append("mcp.credentials_secret is required for MCPChecker evaluation")
-        elif metadata and metadata.mcp and not metadata.mcp.credentials_secret:
+        elif metadata and metadata.mcp and not (metadata.mcp.credentials_secret or metadata.mcp.mock):
             errors.append("mcp.credentials_secret must not be empty")
 
     if run_a2a:

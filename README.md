@@ -6,6 +6,11 @@ Automated Tekton-orchestrated pipeline on OpenShift for evaluating AI artifacts:
 - **MCP Servers** -- Validates MCP server implementations via task-based verification
 - **Agents** -- Evaluates full agent behavior using Harbor (general agents) or A2A protocol (A2A-compliant agents)
 
+For MCPChecker, select the [dedicated profile](pipeline/pipelines/ci-pipeline-mcpchecker.yaml)
+with its [PipelineRun template](pipeline/runs/mcpchecker-pipelinerun.yaml).
+See the [managed MCP guide](Docs/managed-mcp-mocks.md) for optional mocks and deployment.
+
+
 Produces statistical reports with pass rates, uplift metrics, significance tests, and a unified scorecard.
 
 ## Pipelines
